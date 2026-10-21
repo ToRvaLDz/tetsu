@@ -1,0 +1,33 @@
+Tetsu licensing
+===============
+
+Copyright (c) 2026 Marco Migozzi and the Tetsu contributors
+
+Tetsu is licensed per component:
+
+- Everything in this repository, unless stated otherwise below, is dual
+  licensed under either of
+
+    * Apache License, Version 2.0 (LICENSE-APACHE or
+      https://www.apache.org/licenses/LICENSE-2.0)
+    * MIT License (LICENSE-MIT or https://opensource.org/licenses/MIT)
+
+  at your option (SPDX: MIT OR Apache-2.0). This covers the libraries
+  (tetsu-bus, the Varlink IDL files), the daemons and applications
+  (tetsu-tx, tetsu-agent, tetsu-secrets, tetsu-bar, the tetsu CLI) and the
+  image build pipeline (image/).
+
+- The compositor, crates/tetsu-comp, is licensed under the GNU General Public
+  License, version 3 or (at your option) any later version
+  (SPDX: GPL-3.0-or-later). Its license text lives in that crate's directory.
+
+Each crate declares its license in the `license` field of its Cargo.toml;
+that field is authoritative for the crate.
+
+Contributions
+-------------
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in a component of Tetsu is licensed under that
+component's license as stated above, without any additional terms or
+conditions.
