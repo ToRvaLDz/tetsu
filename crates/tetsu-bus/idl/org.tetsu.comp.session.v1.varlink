@@ -1,0 +1,18 @@
+# The session lock state.
+interface org.tetsu.comp.session.v1
+
+type SessionEvent (
+  kind: (initial, locked, unlocked),
+  # initial
+  locked: ?bool
+)
+
+# Tells whether the session is locked.
+method GetSession() -> (locked: bool)
+
+# Streams lock changes: `initial` first, then deltas.
+method WatchSession() -> (event: SessionEvent)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()

@@ -1,0 +1,28 @@
+# What the clipboard and the primary selection offer: MIME types only,
+# never the content. There is no call to read the content.
+interface org.tetsu.comp.clipboard.v1
+
+type Offer (
+  selection: (clipboard, primary),
+  # Empty when nothing is offered.
+  # @untrusted
+  mime_types: []string
+)
+
+type ClipboardEvent (
+  kind: (initial, changed),
+  # initial: one offer per selection.
+  offers: ?[]Offer,
+  # changed
+  offer: ?Offer
+)
+
+# Lists the current offer of each selection.
+method ListOffers() -> (offers: []Offer)
+
+# Streams offer changes: `initial` first, then deltas.
+method WatchClipboard() -> (event: ClipboardEvent)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()

@@ -1,0 +1,78 @@
+# Outputs (monitors) of the compositor and their configuration.
+interface org.tetsu.comp.output.v1
+
+type Mode (width: int, height: int, refresh_mhz: int, preferred: bool)
+
+# A mode named by its values, never by its index in a list that may have
+# changed since it was read.
+type ModeSpec (width: int, height: int, refresh_mhz: int)
+
+type Output (
+  # Opaque; compare for equality only.
+  id: string,
+  # Connector name, for example "DP-1".
+  name: string,
+  # From the EDID.
+  # @untrusted
+  make: ?string,
+  # @untrusted
+  model: ?string,
+  # @untrusted
+  serial: ?string,
+  enabled: bool,
+  modes: []Mode,
+  # Index into modes, null when disabled.
+  current_mode: ?int,
+  scale: float,
+  transform: (normal, rotate_90, rotate_180, rotate_270, flipped, flipped_90, flipped_180, flipped_270),
+  # Position in the global logical space.
+  x: int,
+  y: int
+)
+
+type OutputEvent (
+  kind: (initial, added, changed, removed),
+  # initial: every output.
+  outputs: ?[]Output,
+  # added, changed: the full new state of the output.
+  output: ?Output,
+  # removed
+  id: ?string
+)
+
+# Fields left null keep their current value.
+type OutputConfig (
+  enabled: ?bool,
+  # Must match one of the output's modes.
+  mode: ?ModeSpec,
+  scale: ?float,
+  transform: ?(normal, rotate_90, rotate_180, rotate_270, flipped, flipped_90, flipped_180, flipped_270),
+  x: ?int,
+  y: ?int
+)
+
+# Lists all outputs.
+method ListOutputs() -> (outputs: []Output)
+
+# Streams output changes (hotplug included): `initial` first, then deltas.
+method WatchOutputs() -> (event: OutputEvent)
+
+# Applies a configuration to several outputs at once, atomically: all of
+# it or none of it. A configuration that leaves no output enabled is
+# rejected.
+method ConfigureOutputs(
+  # output_id -> the configuration to apply to that output.
+  configs: [string]OutputConfig
+) -> ()
+
+# No output has this id.
+# @permanent
+error OutputNotFound (id: string)
+
+# The configuration cannot be applied.
+# @permanent
+error InvalidConfiguration (id: string, reason: string)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()
