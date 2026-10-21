@@ -17,7 +17,7 @@ and [Define the bus contract v1](https://github.com/ToRvaLDz/tetsu/issues/16).
 | `org.tetsu.comp.clipboard.v1` | compositor | session |
 | `org.tetsu.comp.session.v1` | compositor | session |
 | `org.tetsu.tx.v1` | `tetsu-tx` | system |
-| `org.tetsu.notify.v1` | notification server | session |
+| `org.tetsu.notify.v1` | `tetsu-notifyd` | session |
 
 The compositor serves its interfaces on one per-instance socket; every
 other service has one socket. Sockets and the registries follow #15.
@@ -31,7 +31,8 @@ other service has one socket. Sockets and the registries follow #15.
   values in `snake_case`.
 - **State families** have a plain read (`List<X>` for a collection,
   `Get<X>` for a singleton) and a `Watch<X>` stream returning the same
-  types. Call-only services (`notify`) have neither.
+  types. `notify` is call-only except for its pending count
+  (`GetPending`, `WatchPending`).
 - **Tools**: every method that is not `Watch*` maps 1:1 to an agent tool.
   A streaming call (`more`) is one tool that awaits the final reply. The
   first line of a method's doc comment is the tool description; parameter
@@ -74,7 +75,9 @@ Every error carries exactly one of `@transient` and `@permanent`.
 - A transaction runs to the end whoever started it; a disconnecting
   caller only stops receiving progress.
 - A notification with actions is withdrawn when its caller disconnects,
-  and its actions are not invocable while the session is locked.
+  and its actions are not invocable while the session is locked. Actions
+  are answered only by the user in the server's own surfaces; no call
+  invokes them.
 - A sender's identity comes from the socket credentials, never from a
   field the caller fills. Ownership (of a notification, for `Close`)
   belongs to the peer process, not to one connection.

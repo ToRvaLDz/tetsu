@@ -13,6 +13,12 @@ type NotifyReply (
   reason: ?(user, expired, closed)
 )
 
+type PendingEvent (
+  kind: (initial, changed),
+  # initial, changed: the number of notifications waiting for an answer.
+  count: ?int
+)
+
 # Shows a notification. Streams `shown`, then ends on `invoked` or
 # `dismissed`; invoking an action closes the notification. The
 # notification is withdrawn when the caller disconnects. The caller is
@@ -21,7 +27,9 @@ type NotifyReply (
 # invocable while the session is locked. The sender is taken from the
 # socket credentials, never from the caller. Called oneway, a
 # notification may carry no actions, may not be critical, and always
-# expires.
+# expires. A critical notification never expires: when its popup moves
+# into the panel it stays pending, with no `dismissed`. Actions are
+# answered only in the server's own surfaces, never through the bus.
 method Show(
   # One line.
   title: string,
@@ -34,6 +42,17 @@ method Show(
   # Null for the server default; ignored for critical.
   timeout_ms: ?int
 ) -> (reply: NotifyReply)
+
+# Tells how many notifications with actions wait for an answer, from
+# every caller; never their content.
+method GetPending() -> (count: int)
+
+# Streams the pending count: `initial` first, then `changed`.
+method WatchPending() -> (event: PendingEvent)
+
+# Opens the notification panel on the focused output. It never takes
+# keyboard focus by itself.
+method OpenPanel() -> ()
 
 # Withdraws a notification this caller showed; its stream gets
 # `dismissed` with reason `closed` and ends.
