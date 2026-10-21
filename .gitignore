@@ -3,3 +3,5 @@
 .trailhead/active-map
 .trailhead/label-guard-ack
 /target
+.trailhead/uat-backfill
+.trailhead/isolation-answer.json
