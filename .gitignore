@@ -1,0 +1,5 @@
+.trailhead/session-ticket
+.trailhead/work-state.json
+.trailhead/active-map
+.trailhead/label-guard-ack
+/target
