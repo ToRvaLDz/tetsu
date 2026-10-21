@@ -1,0 +1,190 @@
+# Transactions on the base image and the user layer (tetsu-tx).
+#
+# One transaction runs at a time. A transaction always runs to the end,
+# whoever started it: a caller that disconnects only stops receiving
+# progress, and can follow it again through WatchTransactions or
+# ListTransactions. A transaction takes effect at the next boot.
+interface org.tetsu.tx.v1
+
+type PackageChange (
+  name: string,
+  # Null when the package was added.
+  from: ?string,
+  # Null when the package was removed.
+  to: ?string
+)
+
+type Transaction (
+  # Opaque; compare for equality only.
+  id: string,
+  kind: (update, install, install_aur, remove, rollback),
+  # The packages asked for; empty for update and rollback.
+  packages: []string,
+  state: (running, succeeded, failed),
+  started_at: string,
+  finished_at: ?string,
+  # The snapshot produced, or the one targeted by a rollback.
+  snapshot: ?string,
+  # What the transaction changed, filled when it finishes.
+  changes: []PackageChange,
+  # May quote pacman or build output.
+  # @untrusted
+  failure: ?string
+)
+
+type Progress (
+  phase: (snapshot, build, packages, boot_entry, commit),
+  percent: ?int,
+  # @untrusted
+  message: ?string
+)
+
+type TxEvent (
+  kind: (initial, started, progress, finished),
+  # initial: the running transaction, zero or one entries.
+  running: ?[]Transaction,
+  # started, finished (its state tells success or failure).
+  transaction: ?Transaction,
+  # progress
+  id: ?string,
+  # progress
+  progress: ?Progress
+)
+
+type UserPackage (
+  name: string,
+  source: (repo, aur),
+  # The AUR commit the package is pinned to.
+  aur_commit: ?string
+)
+
+type AurFinding (
+  severity: (info, warning, critical),
+  # Stable identifier of the heuristic that fired.
+  rule: string,
+  # @untrusted
+  detail: string
+)
+
+type AurReview (
+  name: string,
+  version: string,
+  # The AUR git commit this review is about.
+  commit: string,
+  # @untrusted
+  maintainer: ?string,
+  submitted_at: string,
+  modified_at: string,
+  # Null when the maintainer never changed.
+  maintainer_changed_at: ?string,
+  votes: int,
+  popularity: float,
+  # @untrusted
+  sources: []string,
+  # @untrusted
+  pkgbuild: string,
+  # @untrusted
+  install_script: ?string,
+  # Changes since the installed version, null when not installed.
+  # @untrusted
+  diff: ?string,
+  # Signals for a human, never a verdict that the package is clean.
+  findings: []AurFinding
+)
+
+type AurPin (name: string, commit: string)
+
+# Updates the base image and the repo packages of the user layer. AUR
+# packages are not updated: they stay on their pinned commit until
+# InstallFromAur moves them. Streams progress, ends with the finished
+# transaction. Destructive because package hooks may migrate data in the
+# shared /var, which no rollback undoes.
+# @destructive
+method Update() -> (progress: ?Progress, transaction: ?Transaction)
+
+# Adds repo packages to the user layer. Streams progress, ends with the
+# finished transaction.
+method Install(
+  # Repo package names.
+  packages: []string
+) -> (progress: ?Progress, transaction: ?Transaction)
+
+# Removes packages from the user layer. Streams progress, ends with the
+# finished transaction.
+method Remove(
+  # User layer package names, see ListUserPackages.
+  packages: []string
+) -> (progress: ?Progress, transaction: ?Transaction)
+
+# Points the next boot at an earlier snapshot, the previous one when `to`
+# is null. Nothing is deleted. Streams progress, ends with the finished
+# transaction.
+method Rollback(
+  # Snapshot id, from GetStatus or a transaction; null for the previous one.
+  to: ?string
+) -> (progress: ?Progress, transaction: ?Transaction)
+
+# Fetches what a human needs to review AUR packages before installing.
+method ReviewAurPackages(
+  # AUR package names.
+  names: []string
+) -> (reviews: []AurReview)
+
+# Builds in a clean chroot and installs exactly the reviewed commits, or
+# moves already installed AUR packages to them. Streams progress, ends
+# with the finished transaction.
+# @destructive
+method InstallFromAur(
+  # Name and commit of each package, as returned by ReviewAurPackages.
+  packages: []AurPin
+) -> (progress: ?Progress, transaction: ?Transaction)
+
+# Lists transactions, newest first.
+method ListTransactions(
+  # Maximum number of transactions; null for all.
+  limit: ?int
+) -> (transactions: []Transaction)
+
+# Lists the packages of the user layer.
+method ListUserPackages() -> (packages: []UserPackage)
+
+# Tells which snapshot is booted and which one the next boot uses. A
+# reboot is pending when they differ; default_boot tells whether the
+# default entry already booted (good), failed and fell back (bad), or was
+# never tried (untried).
+method GetStatus() -> (booted: string, default: string, default_boot: (untried, good, bad))
+
+# Streams transaction changes: `initial` first, then deltas.
+method WatchTransactions() -> (event: TxEvent)
+
+# Another transaction is running.
+# @transient
+error TransactionInProgress (id: string)
+
+# No repo package has this name.
+# @permanent
+error PackageNotFound (name: string)
+
+# The package belongs to the base image, not the user layer.
+# @permanent
+error NotUserPackage (name: string)
+
+# No snapshot has this id.
+# @permanent
+error SnapshotNotFound (id: string)
+
+# The transaction failed; the system is unchanged.
+# @permanent
+error TransactionFailed (id: string, reason: string)
+
+# No AUR package has this name.
+# @permanent
+error AurPackageNotFound (name: string)
+
+# The AUR package moved past the reviewed commit; review it again.
+# @permanent
+error AurCommitMismatch (name: string, reviewed: string, current: string)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()

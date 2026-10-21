@@ -1,0 +1,52 @@
+# Notifications, with actions that flow back to the caller only.
+interface org.tetsu.notify.v1
+
+type Action (id: string, label: string)
+
+type NotifyReply (
+  kind: (shown, invoked, dismissed),
+  # shown
+  id: ?string,
+  # invoked
+  action_id: ?string,
+  # dismissed
+  reason: ?(user, expired, closed)
+)
+
+# Shows a notification. Streams `shown`, then ends on `invoked` or
+# `dismissed`; invoking an action closes the notification. The
+# notification is withdrawn when the caller disconnects. The caller is
+# the peer process, identified by the socket credentials, not the
+# connection: Close comes on another connection. Actions are not
+# invocable while the session is locked. The sender is taken from the
+# socket credentials, never from the caller. Called oneway, a
+# notification may carry no actions, may not be critical, and always
+# expires.
+method Show(
+  # One line.
+  title: string,
+  # Plain text, never markup.
+  body: ?string,
+  # Null for normal.
+  urgency: ?(low, normal, critical),
+  # The buttons; their ids come back in `invoked`.
+  actions: ?[]Action,
+  # Null for the server default; ignored for critical.
+  timeout_ms: ?int
+) -> (reply: NotifyReply)
+
+# Withdraws a notification this caller showed; its stream gets
+# `dismissed` with reason `closed` and ends.
+method Close(
+  # The id from the `shown` reply.
+  id: string
+) -> ()
+
+# No notification of this caller has this id (also for other callers'
+# ids, so their existence is not revealed).
+# @permanent
+error NotificationNotFound (id: string)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()

@@ -1,0 +1,47 @@
+# Windows managed by the compositor.
+#
+# Focus is separate state: it changes only through the `focused` kind,
+# never through `changed`. Within one stream, `opened` precedes any
+# `focused` that names the window, and when a focused window closes the
+# `focused` event for the new focus precedes its `closed`.
+interface org.tetsu.comp.window.v1
+
+type Window (
+  # Opaque; compare for equality only.
+  id: string,
+  # xdg app_id, or WM_CLASS for X11 windows.
+  # @untrusted
+  app_id: ?string,
+  # @untrusted
+  title: ?string,
+  # Null for Xwayland windows (they all belong to xwayland-satellite).
+  pid: ?int,
+  # Null while the window is not mapped on a workspace.
+  workspace_id: ?string,
+  placement: (tiled, floating),
+  fullscreen: bool,
+  xwayland: bool
+)
+
+type WindowEvent (
+  kind: (initial, opened, changed, closed, focused),
+  # initial: every window.
+  windows: ?[]Window,
+  # initial, focused: the focused window, null when nothing is focused.
+  focused_id: ?string,
+  # opened, changed: the full new state of the window.
+  window: ?Window,
+  # closed
+  id: ?string
+)
+
+# Lists all windows and the focused one.
+method ListWindows() -> (windows: []Window, focused_id: ?string)
+
+# Streams window changes: `initial` first, then deltas. Changes are
+# coalesced to at most one `changed` per window per frame.
+method WatchWindows() -> (event: WindowEvent)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()

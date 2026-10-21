@@ -1,0 +1,45 @@
+# Workspaces of the compositor, per output.
+#
+# The active workspace of each output and the globally focused workspace
+# are separate state, changed only through `activated` and `focused`.
+# Within one stream, `added` precedes any event that names the workspace,
+# and `removed` comes only once it is neither active nor focused.
+interface org.tetsu.comp.workspace.v1
+
+type Workspace (
+  # Opaque; compare for equality only.
+  id: string,
+  # From the user configuration, null when unnamed.
+  name: ?string,
+  output_id: ?string,
+  # Position on its output, 0-based. A reorder emits `changed` for every
+  # workspace whose index moved.
+  index: int
+)
+
+type WorkspaceEvent (
+  kind: (initial, added, changed, removed, activated, focused),
+  # initial: every workspace.
+  workspaces: ?[]Workspace,
+  # initial: output_id -> active workspace_id.
+  active: ?[string]string,
+  # initial, focused: the workspace of the output that has focus.
+  focused_id: ?string,
+  # added, changed: the full new state of the workspace.
+  workspace: ?Workspace,
+  # removed; activated (null: the output has no active workspace any
+  # more, drop its entry).
+  id: ?string,
+  # activated
+  output_id: ?string
+)
+
+# Lists all workspaces, the active one per output and the focused one.
+method ListWorkspaces() -> (workspaces: []Workspace, active: [string]string, focused_id: ?string)
+
+# Streams workspace changes: `initial` first, then deltas.
+method WatchWorkspaces() -> (event: WorkspaceEvent)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()
