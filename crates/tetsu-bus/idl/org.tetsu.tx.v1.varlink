@@ -23,7 +23,8 @@ type Transaction (
   state: (running, succeeded, failed),
   started_at: string,
   finished_at: ?string,
-  # The snapshot produced, or the one targeted by a rollback.
+  # The snapshot produced; for a rollback, the new one cloned from the
+  # target.
   snapshot: ?string,
   # What the transaction changed, filled when it finishes.
   changes: []PackageChange,
@@ -116,11 +117,12 @@ method Remove(
   packages: []string
 ) -> (progress: ?Progress, transaction: ?Transaction)
 
-# Points the next boot at an earlier snapshot, the previous one when `to`
-# is null. Nothing is deleted. Streams progress, ends with the finished
-# transaction.
+# Rolls back to an earlier snapshot by producing a new one cloned from it,
+# which the next boot uses. Nothing is deleted. Streams progress, ends
+# with the finished transaction.
 method Rollback(
-  # Snapshot id, from GetStatus or a transaction; null for the previous one.
+  # Snapshot id, from GetStatus or a transaction; null for the newest good
+  # snapshot older than the booted one.
   to: ?string
 ) -> (progress: ?Progress, transaction: ?Transaction)
 
