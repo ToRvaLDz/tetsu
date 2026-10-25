@@ -50,3 +50,4 @@ pub mod space;
 pub mod keys;
 pub mod tool;
 pub mod uki;
+pub mod install;
