@@ -21,7 +21,7 @@ use tetsu_bus::notify::Urgency;
 /// Colours, as plain values passed into the draw code (#12).
 mod palette {
     pub const CARD: [u8; 4] = [0x1e, 0x1f, 0x24, 0xf5];
-    pub const PANEL: [u8; 4] = [0x16, 0x17, 0x1b, 0xf5];
+    pub const PANEL: [u8; 4] = [0x16, 0x17, 0x1b, 0xff];
     pub const TEXT: [u8; 4] = [0xe8, 0xe8, 0xea, 0xff];
     pub const MUTED: [u8; 4] = [0x9a, 0xa0, 0xa6, 0xff];
     /// The Tetsu frame: only bus callers, named from their credentials.
