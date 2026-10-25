@@ -1,7 +1,6 @@
 //! What the installer reads from the live system around it.
 
 use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use tetsu_installer_core::secureboot::MicrosoftCerts;
@@ -16,27 +15,10 @@ pub fn payload_path(medium: &Path) -> PathBuf {
     medium.join(PAYLOAD_FILE)
 }
 
-fn der_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "der") && p.is_file())
-        .collect();
-    files.sort();
-    files
-}
-
 /// The Microsoft certificates found under `root`; none is fine, the keys
 /// enrolled are then our own only.
 pub fn microsoft_certs(root: &Path) -> MicrosoftCerts {
-    let base = root.join(MICROSOFT_CERTS_DIR);
-    MicrosoftCerts {
-        kek: der_files(&base.join("kek")),
-        db: der_files(&base.join("db")),
-    }
+    MicrosoftCerts::from_dir(&root.join(MICROSOFT_CERTS_DIR))
 }
 
 /// The partition the installer booted from: the source of the mount of the
@@ -52,6 +34,8 @@ pub fn boot_partition(runner: &dyn Runner, medium: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tetsu_tx::boot::BootError;
 
     use super::*;

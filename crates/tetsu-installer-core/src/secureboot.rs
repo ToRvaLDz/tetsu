@@ -44,6 +44,30 @@ pub struct MicrosoftCerts {
     pub db: Vec<PathBuf>,
 }
 
+impl MicrosoftCerts {
+    /// The certificates of an image directory: the sorted `*.der` files of
+    /// `kek/` and `db/`. A missing directory gives no certificates.
+    pub fn from_dir(base: &Path) -> Self {
+        Self {
+            kek: der_files(&base.join("kek")),
+            db: der_files(&base.join("db")),
+        }
+    }
+}
+
+fn der_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| is_der(p) && p.is_file())
+        .collect();
+    files.sort();
+    files
+}
+
 /// What to enroll and where the files live.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Enrollment {
