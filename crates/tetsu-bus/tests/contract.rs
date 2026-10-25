@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use tetsu_bus_contract::{
-    Kind, Violation, check_compat, check_fixtures, check_rules, load_dir, read_fixtures,
+    Violation, check_compat, check_fixtures, check_rules, load_dir, read_fixtures,
 };
 
 fn crate_dir() -> PathBuf {
@@ -31,12 +31,7 @@ fn current_idl_is_a_compatible_superset_of_the_baseline() {
 #[test]
 fn baseline_passes_the_rules_it_was_blessed_under() {
     let baseline = load_dir(&crate_dir().join("idl/baseline")).expect("baseline loads");
-    // The baseline predates @capability; the bless that tags it ends this.
-    let rules: Vec<Violation> = check_rules(&baseline)
-        .into_iter()
-        .filter(|v| v.kind != Kind::MissingCapability)
-        .collect();
-    report("baseline rules", &rules);
+    report("baseline rules", &check_rules(&baseline));
 }
 
 #[test]

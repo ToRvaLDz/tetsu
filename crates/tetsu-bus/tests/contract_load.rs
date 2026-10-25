@@ -18,8 +18,7 @@ fn current_idl_loads() {
 #[test]
 fn baseline_loads() {
     let contract = load_dir(&idl_dir().join("baseline")).expect("baseline loads");
-    // The baseline lags behind the IDL until the next bless.
-    assert!(contract.interfaces.len() >= 9);
+    assert_eq!(contract.interfaces.len(), 10);
 }
 
 #[cfg(unix)]

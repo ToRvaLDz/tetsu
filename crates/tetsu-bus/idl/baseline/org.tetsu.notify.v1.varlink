@@ -28,8 +28,11 @@ type PendingEvent (
 # socket credentials, never from the caller. Called oneway, a
 # notification may carry no actions, may not be critical, and always
 # expires. A critical notification never expires: when its popup moves
-# into the panel it stays pending, with no `dismissed`. Actions are
-# answered only in the server's own surfaces, never through the bus.
+# into the panel it stays pending, with no `dismissed`. A notification
+# from a caller in the agent unit is informational only: `actions` from
+# such a caller is rejected with PermissionDenied. Actions are answered
+# only in the server's own surfaces, never through the bus.
+# @capability notify.send
 method Show(
   # One line.
   title: string,
@@ -52,10 +55,12 @@ method WatchPending() -> (event: PendingEvent)
 
 # Opens the notification panel on the focused output. It never takes
 # keyboard focus by itself.
+# @capability notify.send
 method OpenPanel() -> ()
 
 # Withdraws a notification this caller showed; its stream gets
 # `dismissed` with reason `closed` and ends.
+# @capability notify.send
 method Close(
   # The id from the `shown` reply.
   id: string
@@ -66,6 +71,7 @@ method Close(
 # @permanent
 error NotificationNotFound (id: string)
 
-# The caller may not use this interface.
+# The caller may not use this interface, or sent actions from the agent
+# unit.
 # @permanent
 error PermissionDenied ()

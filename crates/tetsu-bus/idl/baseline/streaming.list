@@ -3,6 +3,7 @@
 # Every Watch* method is streaming and must be listed. The contract suite
 # rejects an entry that names no method; moving a method into or out of
 # the list is a breaking change.
+org.tetsu.cap.v1.WatchCapabilities
 org.tetsu.comp.clipboard.v1.WatchClipboard
 org.tetsu.comp.config.v1.WatchConfig
 org.tetsu.comp.output.v1.WatchOutputs
