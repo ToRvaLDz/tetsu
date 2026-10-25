@@ -1,0 +1,6 @@
+# Installed as /usr/share/dbus-1/services/org.freedesktop.Notifications.service:
+# the first Notify call starts tetsu-notifyd through systemd.
+[D-BUS Service]
+Name=org.freedesktop.Notifications
+Exec=/usr/bin/tetsu-notifyd
+SystemdService=tetsu-notifyd.service

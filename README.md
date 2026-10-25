@@ -10,6 +10,7 @@ The full (Italian) specification is in [specification](Distro%20Linux%20AI-nativ
 - `crates/tetsu-tx`: transactional system updates
 - `crates/tetsu-comp`: the Smithay compositor
 - `crates/tetsu-bar`: the status bar
+- `crates/tetsu-notifyd`: the notification server
 - `crates/tetsu-agent`: the AI agent daemon
 - `crates/tetsu-secrets`: the secrets daemon
 - `image/`: the mkosi image build pipeline (placeholder)

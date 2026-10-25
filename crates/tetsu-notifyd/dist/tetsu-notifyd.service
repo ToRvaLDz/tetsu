@@ -1,0 +1,17 @@
+# Installed as /usr/lib/systemd/user/tetsu-notifyd.service. Clients of
+# org.tetsu.notify.v1 verify the server runs as this unit (#28).
+[Unit]
+Description=Tetsu notification server
+Documentation=https://github.com/ToRvaLDz/tetsu
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.Notifications
+ExecStart=/usr/bin/tetsu-notifyd
+Restart=on-failure
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target
