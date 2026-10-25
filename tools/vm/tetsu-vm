@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# tetsu-vm: boot and control a QEMU VM with OVMF Secure Boot and a swtpm TPM 2.0.
+set -euo pipefail
+
+VM_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+# shellcheck source=lib/common.sh
+. "$VM_DIR/lib/common.sh"
+# shellcheck source=lib/start.sh
+. "$VM_DIR/lib/start.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: tetsu-vm <command> [options]
+
+Commands:
+  start       Boot the VM (swtpm + QEMU, daemonized)
+  wait-for    Wait until a regex shows up in the serial log
+  power-cut   SIGKILL QEMU (no flush, no ACPI), then stop swtpm
+  stop        Ask QEMU to quit via QMP, fall back to SIGKILL, then stop swtpm
+  status      Exit 0 if the VM is running, non-zero otherwise
+  console     Attach interactively to the serial console
+
+Run "tetsu-vm <command> --help" or see tools/vm/README.md for the options.
+USAGE
+}
+
+main() {
+  local cmd=${1:-}
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    start) cmd_start "$@" ;;
+    wait-for | power-cut | stop | status | console)
+      # shellcheck source=lib/ctl.sh
+      . "$VM_DIR/lib/ctl.sh"
+      "cmd_${cmd//-/_}" "$@"
+      ;;
+    -h | --help | help) usage ;;
+    "") usage >&2; exit 1 ;;
+    *) die "unknown command '$cmd' (try --help)" ;;
+  esac
+}
+
+main "$@"
