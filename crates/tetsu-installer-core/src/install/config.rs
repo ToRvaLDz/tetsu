@@ -141,8 +141,15 @@ pub fn fstab(mapper: &str, esp_label: &str) -> String {
 
 /// The base kernel command line. The snapshot's own `rootflags=subvol=`
 /// is appended per UKI by the builder, so it is not baked in here.
-pub fn cmdline(luks_uuid: &str, mapper_name: &str) -> String {
-    format!("rd.luks.name={luks_uuid}={mapper_name} root=/dev/mapper/{mapper_name} rw\n")
+pub fn cmdline(luks_uuid: &str, mapper_name: &str, console_args: &[String]) -> String {
+    let mut line =
+        format!("rd.luks.name={luks_uuid}={mapper_name} root=/dev/mapper/{mapper_name} rw");
+    for arg in console_args {
+        line.push(' ');
+        line.push_str(arg);
+    }
+    line.push('\n');
+    line
 }
 
 /// `etc/tetsu/agent-backend.toml`; the API key itself is staged elsewhere.
@@ -254,8 +261,17 @@ mod tests {
     #[test]
     fn cmdline_has_no_crypttab_and_no_root_subvolume() {
         assert_eq!(
-            cmdline("1234-uuid", "root"),
+            cmdline("1234-uuid", "root", &[]),
             "rd.luks.name=1234-uuid=root root=/dev/mapper/root rw\n"
+        );
+    }
+
+    #[test]
+    fn cmdline_keeps_the_consoles_in_order() {
+        let consoles = ["console=tty0".to_owned(), "console=ttyS0,115200".to_owned()];
+        assert_eq!(
+            cmdline("1234-uuid", "root", &consoles),
+            "rd.luks.name=1234-uuid=root root=/dev/mapper/root rw console=tty0 console=ttyS0,115200\n"
         );
     }
 

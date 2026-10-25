@@ -227,7 +227,7 @@ impl Executor<'_> {
             .luks_uuid
             .clone()
             .ok_or_else(|| InstallError::Failed("the LUKS UUID is not known".into()))?;
-        let text = config::cmdline(&uuid, MAPPER_NAME);
+        let text = config::cmdline(&uuid, MAPPER_NAME, &self.target.console_args);
         write_file(&self.etc().join("kernel/cmdline"), &text, 0o644)?;
         self.state.cmdline = Some(text.trim().to_owned());
         Ok(())

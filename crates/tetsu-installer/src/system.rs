@@ -21,6 +21,23 @@ pub fn microsoft_certs(root: &Path) -> MicrosoftCerts {
     MicrosoftCerts::from_dir(&root.join(MICROSOFT_CERTS_DIR))
 }
 
+/// The `console=` parameters of a kernel command line, in order. They are
+/// the only part of the installer's command line the installed system
+/// inherits; each is checked to hold nothing but plain characters.
+pub fn console_args(cmdline: &str) -> Vec<String> {
+    cmdline
+        .split_whitespace()
+        .filter(|w| {
+            w.strip_prefix("console=").is_some_and(|v| {
+                !v.is_empty()
+                    && v.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || ",.-_/".contains(c))
+            })
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
 /// The partition the installer booted from: the source of the mount of the
 /// medium. `None` when it is not a device (an ISO served from RAM), in
 /// which case no disk is excluded.
@@ -39,6 +56,15 @@ mod tests {
     use tetsu_tx::boot::BootError;
 
     use super::*;
+
+    #[test]
+    fn only_plain_console_parameters_are_inherited() {
+        assert_eq!(
+            console_args("BOOT_IMAGE=/x quiet console=tty0 console=ttyS0,115200n8 root=/dev/x"),
+            ["console=tty0", "console=ttyS0,115200n8"]
+        );
+        assert!(console_args("console= console=a;b console=$x consolefoo=1").is_empty());
+    }
 
     struct Findmnt(Result<&'static str, ()>);
 

@@ -39,6 +39,9 @@ pub struct InstallTarget {
     pub microsoft_certs: MicrosoftCerts,
     /// Firmware state found by the preflight.
     pub secure_boot: SecureBoot,
+    /// `console=` parameters of the installer's own kernel command line,
+    /// carried over so a machine driven over a serial line stays so.
+    pub console_args: Vec<String>,
 }
 
 impl InstallTarget {
@@ -51,6 +54,7 @@ impl InstallTarget {
             cache_dir: PathBuf::from(DEFAULT_CACHE),
             microsoft_certs: MicrosoftCerts::default(),
             secure_boot,
+            console_args: Vec::new(),
         }
     }
 

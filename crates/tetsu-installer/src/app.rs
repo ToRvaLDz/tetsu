@@ -89,7 +89,8 @@ fn run(opts: &Options) -> Result<(), String> {
             payload.display()
         ));
     }
-    let target = target(&answers, &payload, run_dir);
+    let mut target = target(&answers, &payload, run_dir);
+    target.console_args = system::console_args(&fs::read_to_string(CMDLINE).unwrap_or_default());
     // From here on Ctrl+C is held until the next safe point.
     let cancel = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel))
