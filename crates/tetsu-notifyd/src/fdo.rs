@@ -6,9 +6,9 @@ use std::collections::HashMap;
 
 use tetsu_bus::notify::Urgency;
 use tokio::sync::{mpsc, oneshot};
+use zbus::OwnedVariant;
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
-use zbus::OwnedVariant;
 
 use crate::core::{Effect, FdoShow};
 use crate::daemon::Command;

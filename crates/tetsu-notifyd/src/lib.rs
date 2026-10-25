@@ -7,4 +7,5 @@ pub mod fdo;
 pub mod icon;
 pub mod lock;
 pub mod markup;
+pub mod ui;
 pub mod varlink;
