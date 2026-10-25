@@ -78,19 +78,56 @@ impl Records {
     /// Every record, keyed by counter. A missing directory is empty;
     /// foreign files and staged `*.json.tmp` are ignored.
     pub fn load(&self) -> Result<BTreeMap<u64, Record>, StoreError> {
-        todo!()
+        let read = match fs::read_dir(&self.dir) {
+            Ok(r) => r,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(e) => return Err(StoreError::io(&self.dir, e)),
+        };
+        let mut all = BTreeMap::new();
+        for item in read {
+            let item = item.map_err(|e| StoreError::io(&self.dir, e))?;
+            let name = item.file_name();
+            let Some(counter) = name
+                .to_str()
+                .filter(|n| !n.ends_with(TMP_EXT))
+                .and_then(|n| n.strip_suffix(EXT))
+                .and_then(canonical)
+            else {
+                continue;
+            };
+            let record = read_record(&item.path())?;
+            if record.counter != counter {
+                return Err(StoreError::CorruptRecord {
+                    path: item.path(),
+                    reason: format!("holds counter {}", record.counter),
+                });
+            }
+            all.insert(counter, record);
+        }
+        Ok(all)
     }
 
     /// Write `record` atomically: stage, fsync, rename, fsync the directory.
     pub fn write(&self, record: &Record) -> Result<(), StoreError> {
-        let _ = record;
-        todo!()
+        fs::create_dir_all(&self.dir).map_err(|e| StoreError::io(&self.dir, e))?;
+        let json = serde_json::to_vec_pretty(record).expect("a record always serialises");
+        let tmp = self.dir.join(format!("{}{TMP_EXT}", record.counter));
+        let dest = self.path(record.counter);
+        fs::write(&tmp, json).map_err(|e| StoreError::io(&tmp, e))?;
+        sync_file(&tmp)?;
+        fs::rename(&tmp, &dest).map_err(|e| StoreError::io(&tmp, e))?;
+        sync_file(&self.dir)
     }
 
     /// Record the bless-time verdict of `counter`.
     pub fn set_boot(&self, counter: u64, verdict: BootVerdict) -> Result<(), StoreError> {
-        let _ = (counter, verdict);
-        todo!()
+        let path = self.path(counter);
+        if !path.is_file() {
+            return Err(StoreError::NotFound(counter));
+        }
+        let mut record = read_record(&path)?;
+        record.boot = Some(verdict);
+        self.write(&record)
     }
 
     /// [`Records::load`], first writing a record for every committed ESP
@@ -98,9 +135,44 @@ impl Records {
     /// commit and the record. The verdict comes from the entry's boot
     /// counting: blessed is good, exhausted is bad, anything else unknown.
     pub fn load_or_reconstruct(&self, esp: &EspState) -> Result<BTreeMap<u64, Record>, StoreError> {
-        let _ = esp;
-        todo!()
+        let mut all = self.load()?;
+        for entry in &esp.entries {
+            let counter = entry.name.counter;
+            if all.contains_key(&counter) {
+                continue;
+            }
+            let boot = match entry.state() {
+                BootState::Good => Some(BootVerdict::Good),
+                BootState::Bad => Some(BootVerdict::Bad),
+                BootState::Untried | BootState::Trying => None,
+            };
+            let record = Record {
+                counter,
+                kind: None,
+                source: None,
+                boot,
+                reconstructed: true,
+            };
+            self.write(&record)?;
+            all.insert(counter, record);
+        }
+        Ok(all)
     }
+}
+
+fn read_record(path: &Path) -> Result<Record, StoreError> {
+    let bytes = fs::read(path).map_err(|e| StoreError::io(path, e))?;
+    serde_json::from_slice(&bytes).map_err(|e| StoreError::CorruptRecord {
+        path: path.to_path_buf(),
+        reason: e.to_string(),
+    })
+}
+
+/// fsync a file or directory, as a store error.
+fn sync_file(path: &Path) -> Result<(), StoreError> {
+    fs::File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| StoreError::io(path, e))
 }
 
 #[cfg(test)]
