@@ -178,15 +178,55 @@ impl AnswerFile {
     }
 }
 
-/// Parse error with the line number and the parser's message, but not the
-/// source line: that may hold a secret.
+/// Parse error with the line number and the key path, never the parser's
+/// message: serde quotes the offending value (`invalid type: integer
+/// `1234`, expected a string`), and a passphrase or key may be that value.
+/// Only an unknown key is named, since a key is not a value.
 fn syntax_error(text: &str, e: &toml::de::Error) -> AnswerFileError {
-    let line = e
-        .span()
-        .map(|s| text[..s.start.min(text.len())].matches('\n').count() + 1);
-    match line {
-        Some(n) => bad(format!("line {n}: {}", e.message())),
-        None => bad(e.message().to_owned()),
+    let Some(span) = e.span() else {
+        return bad("not valid TOML");
+    };
+    let at = span.start.min(text.len());
+    let line = text[..at].matches('\n').count() + 1;
+    if let Some(unknown) = unknown_field(e.message()) {
+        return bad(format!("line {line}: unknown field `{unknown}`"));
+    }
+    match key_path(text, at) {
+        Some(path) => bad(format!("line {line}: wrong type or value for {path}")),
+        None => bad(format!("line {line}: not valid TOML")),
+    }
+}
+
+/// The key of serde's `unknown field `x`, expected ...` message.
+fn unknown_field(message: &str) -> Option<&str> {
+    let rest = message.strip_prefix("unknown field `")?;
+    let name = rest.split('`').next()?;
+    is_key(name).then_some(name)
+}
+
+fn is_key(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+/// `section.key` of the assignment on the line holding `offset`, read from
+/// the text itself: the key left of the `=` and the last table header above.
+/// `None` unless both look like plain names (so nothing odd is repeated).
+fn key_path(text: &str, offset: usize) -> Option<String> {
+    let start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    let line = text[start..].lines().next()?;
+    let key = line.split_once('=')?.0.trim();
+    let section = text[..start]
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find_map(|l| l.strip_prefix('[')?.strip_suffix(']'))
+        .map(str::trim);
+    match section {
+        Some(s) if s.split('.').all(is_key) && is_key(key) => Some(format!("{s}.{key}")),
+        None if is_key(key) => Some(key.to_owned()),
+        _ => None,
     }
 }
 
@@ -378,7 +418,7 @@ confirm = true
 
     #[test]
     fn the_disk_confirmation_is_a_by_id_name_not_a_boolean() {
-        assert!(err("[disk]\nconfirm_by_id = true\n").contains("invalid type"));
+        assert!(err("[disk]\nconfirm_by_id = true\n").contains("disk.confirm_by_id"));
         assert!(err("[disk]\nconfirm_by_id = \"\"\n").contains("confirm_by_id"));
         assert!(err("[disk]\nconfirm_by_id = \"/dev/sda\"\n").contains("without a path"));
     }
@@ -423,6 +463,44 @@ confirm = true
         assert_eq!(f.agent, Some(AgentAnswer::Cli(CliTool::Codex)));
         let f = AnswerFile::parse("[agent]\nbackend = \"api\"\nprovider = \"google\"\n").unwrap();
         assert!(matches!(f.agent, Some(AgentAnswer::Api { key: None, .. })));
+    }
+
+    #[test]
+    fn type_errors_name_the_key_and_never_the_value() {
+        // A passphrase or a key written as a number, a string where a
+        // boolean belongs: serde would quote each of them.
+        for (text, line, path, secret) in [
+            (
+                "[unlock]\npassphrase = 1234567890123\n",
+                2,
+                "unlock.passphrase",
+                "1234567890123",
+            ),
+            (
+                "[agent]\nbackend = \"api\"\nprovider = \"openai\"\nkey = 98765432109876\n",
+                4,
+                "agent.key",
+                "98765432109876",
+            ),
+            (
+                "[install]\nconfirm = \"Tetsu-Secret-Value\"\n",
+                2,
+                "install.confirm",
+                "Tetsu-Secret",
+            ),
+            (
+                "[unlock]\npassphrase = [\"Tetsu-Secret-Value\"]\n",
+                2,
+                "unlock.passphrase",
+                "Tetsu-Secret",
+            ),
+        ] {
+            let msg = err(text);
+            assert!(msg.contains(&format!("line {line}")), "{msg}");
+            assert!(msg.contains(path), "{msg}");
+            assert!(!msg.contains(secret), "{msg}");
+            assert!(!msg.contains("invalid type"), "{msg}");
+        }
     }
 
     #[test]
