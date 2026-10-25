@@ -41,6 +41,9 @@ pub struct InstallTarget {
     /// installer never sets it: without the certificates the enrollment
     /// is refused and the install takes the off path.
     pub without_microsoft: bool,
+    /// A certificate to add to the db after the keys (imported by the user
+    /// because another system needs it); read at that point.
+    pub trust_cert: Option<PathBuf>,
     /// Firmware state found by the preflight.
     pub secure_boot: SecureBoot,
     /// `console=` parameters of the installer's own kernel command line,
@@ -58,6 +61,7 @@ impl InstallTarget {
             cache_dir: PathBuf::from(DEFAULT_CACHE),
             microsoft_certs: MicrosoftCerts::default(),
             without_microsoft: false,
+            trust_cert: None,
             secure_boot,
             console_args: Vec::new(),
         }

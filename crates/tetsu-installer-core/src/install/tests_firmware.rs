@@ -336,6 +336,72 @@ fn an_ambiguous_boot_listing_creates_no_order_and_warns() {
 }
 
 #[test]
+fn an_imported_certificate_is_trusted_after_the_keys_with_the_kek() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, t| t.trust_cert = Some("/usb/vendor.crt".into()),
+        |_| {},
+    );
+    run.out.result.as_ref().unwrap();
+    let lines = run.lines();
+    let keys = run.work("top/@var/lib/tetsu/keys").display().to_string();
+    let pk = position(&lines, "efi-updatevar -f ");
+    let sign = lines
+        .iter()
+        .position(|l| l.contains("trust.esl") && l.starts_with("sign-efi-sig-list"))
+        .unwrap();
+    assert!(pk < sign);
+    assert!(lines[sign].contains(&format!("-k {keys}/KEK.key -c {keys}/KEK.crt db ")));
+    assert!(lines[sign - 1].starts_with("cert-to-efi-sig-list -g "));
+    assert!(lines[sign - 1].contains(" /usb/vendor.crt "));
+    assert!(lines[sign + 1].starts_with("efi-updatevar -a -f "));
+    assert!(lines[sign + 1].ends_with(" db"));
+    // The scratch files are gone and the boot entry follows.
+    assert!(!run.root.path().join("run/trust").exists());
+    assert!(position(&lines, "efibootmgr --create") > sign);
+}
+
+#[test]
+fn no_imported_certificate_or_no_enrollment_plans_no_trust_step() {
+    let none = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |_| {},
+    );
+    assert!(none.lines().iter().all(|l| !l.contains("trust.esl")));
+    // Without Setup Mode nothing is enrolled, so nothing is trusted either.
+    let off = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, t| t.trust_cert = Some("/usb/vendor.crt".into()),
+        |_| {},
+    );
+    assert!(off.lines().iter().all(|l| !l.contains("efi-sig-list")));
+}
+
+#[test]
+fn a_failed_trust_step_warns_and_the_install_completes_with_the_keys_kept() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, t| t.trust_cert = Some("/usb/vendor.crt".into()),
+        |m| m.fail_containing("trust.auth"),
+    );
+    run.out.result.as_ref().unwrap();
+    assert!(run.out.keys_enrolled);
+    assert!(
+        warnings(&run)
+            .iter()
+            .any(|w| w.contains("tetsu secureboot trust")),
+        "{:?}",
+        warnings(&run)
+    );
+    assert!(run.lines().iter().any(|l| l == "cryptsetup close root"));
+}
+
+#[test]
 fn the_plan_lists_every_program_the_run_calls() {
     for level in UnlockLevel::ALL {
         for sb in [SecureBoot::Off, SecureBoot::SetupMode] {
@@ -345,6 +411,7 @@ fn the_plan_lists_every_program_the_run_calls() {
                 let mut t = target(root.path(), sb);
                 if api {
                     with_api_key(&mut a, &mut t);
+                    t.trust_cert = Some("/usb/vendor.der".into());
                 }
                 let plan = InstallPlan::build(&a, &t);
                 let out = run_plan(&a, &t, &plan, NEVER);

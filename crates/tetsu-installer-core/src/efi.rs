@@ -47,6 +47,18 @@ pub fn x509_certificates(mut data: &[u8]) -> Vec<Vec<u8>> {
     found
 }
 
+/// `EFI_IMAGE_SECURITY_DATABASE_GUID`, the vendor of `db` and `dbx`.
+const IMAGE_SECURITY_GUID: &str = "d719b2cb-3d3a-4596-a3bc-dad00e67656f";
+
+/// Whether the firmware's `db` holds no entry: the variable is absent or
+/// only has its four attribute bytes.
+pub fn db_is_empty(root: &Path) -> bool {
+    let path = root
+        .join("sys/firmware/efi/efivars")
+        .join(format!("db-{IMAGE_SECURITY_GUID}"));
+    std::fs::read(path).map_or(true, |bytes| bytes.len() <= 4)
+}
+
 /// The certificates in the Platform Key variable; none when it is absent.
 pub fn platform_key_certificates(root: &Path) -> Vec<Vec<u8>> {
     let path = root

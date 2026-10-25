@@ -15,6 +15,7 @@ use tetsu_tx::boot::tool::Runner;
 
 use crate::error::InstallError;
 
+pub mod foreign;
 pub mod trust;
 
 /// Owner GUID efitools conventions use for Microsoft's certificates.

@@ -23,7 +23,7 @@ use tetsu_tx::boot::tool::SystemRunner;
 
 use crate::answer_file::AnswerFile;
 use crate::cli::{self, Command, Options, USAGE};
-use crate::collect::collect;
+use crate::collect::{Collected, collect};
 use crate::install::{Machine, Report, install};
 use crate::isolated::IsolatedRunner;
 use crate::locate::{self, Source};
@@ -80,8 +80,10 @@ fn run(opts: &Options) -> Result<(), String> {
         entropy: &SystemEntropy,
         boot_partition: system::boot_partition(&runner, &opts.medium),
     };
-    let answers = collect(&mut *fe.borrow_mut(), &env, &file.unwrap_or_default())
-        .map_err(|e| e.to_string())?;
+    let Collected {
+        answers,
+        trust_cert,
+    } = collect(&mut *fe.borrow_mut(), &env, file.as_ref()).map_err(|e| e.to_string())?;
 
     let payload = system::payload_path(&opts.medium);
     if !payload.is_file() {
@@ -91,6 +93,7 @@ fn run(opts: &Options) -> Result<(), String> {
         ));
     }
     let mut target = target(&answers, &payload, run_dir);
+    target.trust_cert = trust_cert;
     target.console_args = system::console_args(&fs::read_to_string(CMDLINE).unwrap_or_default());
     // From here on Ctrl+C is held until the next safe point.
     let cancel = Arc::new(AtomicBool::new(false));

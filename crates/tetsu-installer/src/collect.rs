@@ -3,7 +3,7 @@
 //! is skipped only when nothing had to be asked and the file says so.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tetsu_installer_core::agent::{self, AgentBackend};
 use tetsu_installer_core::answers::Answers;
@@ -13,8 +13,9 @@ use tetsu_installer_core::env::Env;
 use tetsu_installer_core::error::InstallError;
 use tetsu_installer_core::frontend::{Frontend, ask_valid};
 use tetsu_installer_core::keyboard::{self, Locale};
-use tetsu_installer_core::preflight::Preflight;
+use tetsu_installer_core::preflight::{Preflight, SecureBoot};
 use tetsu_installer_core::secret::Secret;
+use tetsu_installer_core::secureboot::foreign;
 use tetsu_installer_core::summary;
 use tetsu_installer_core::unlock::{self, Unlock, recovery};
 use tetsu_installer_core::user::{self, Password, UserAccount};
@@ -25,13 +26,25 @@ fn fail(msg: impl Into<String>) -> InstallError {
     InstallError::Failed(msg.into())
 }
 
-/// Run preflight, answer from `file`, ask the rest, and return the
-/// confirmed answers. Nothing is written anywhere.
+/// What the question flow produced.
+#[derive(Debug)]
+pub struct Collected {
+    pub answers: Answers,
+    /// A certificate to trust in the db after the keys, when the user
+    /// imported one for another system on the machine.
+    pub trust_cert: Option<PathBuf>,
+}
+
+/// Run preflight, answer from `file` (when one is in use), ask the rest,
+/// and return the confirmed answers. Nothing is written anywhere.
 pub fn collect(
     fe: &mut dyn Frontend,
     env: &Env<'_>,
-    file: &AnswerFile,
-) -> Result<Answers, InstallError> {
+    file: Option<&AnswerFile>,
+) -> Result<Collected, InstallError> {
+    let scripted = file.is_some();
+    let default = AnswerFile::default();
+    let file = file.unwrap_or(&default);
     fe.progress("preflight", "checking the machine");
     let pf = Preflight::detect(env)?;
     pf.check()?;
@@ -51,14 +64,26 @@ pub fn collect(
         hostname: user::hostname(env.entropy)?,
         agent,
     };
-    if file.confirm && !asked {
+    let answers = if file.confirm && !asked {
         fe.message(&answers.summary_lines().join("\n"));
-        return Ok(answers);
-    }
-    if file.confirm {
-        fe.message("install.confirm is ignored: some answers are not in the file.");
-    }
-    summary::run(fe, env, &pf, answers)
+        answers
+    } else {
+        if file.confirm {
+            fe.message("install.confirm is ignored: some answers are not in the file.");
+        }
+        summary::run(fe, env, &pf, answers)?
+    };
+    // Only a coming enrollment makes the empty db matter; the disk is final.
+    let trust_cert = if pf.secure_boot == SecureBoot::SetupMode {
+        let others = foreign::other_systems(&pf.disks, &answers.disk);
+        foreign::offer(fe, &env.root, &others, scripted)?
+    } else {
+        None
+    };
+    Ok(Collected {
+        answers,
+        trust_cert,
+    })
 }
 
 fn locale(
@@ -250,7 +275,13 @@ mod tests {
       {"name":"sda","path":"/dev/sda","size":512110190592,"model":"Virtual","type":"disk","rm":false},
       {"name":"sdb","path":"/dev/sdb","size":15609618432,"model":"USB","type":"disk","rm":true}]}"#;
 
-    struct LsblkOnly;
+    /// Same disks, with an NTFS partition on the stick-like second disk.
+    const LSBLK_WITH_WINDOWS: &str = r#"{"blockdevices":[
+      {"name":"sda","path":"/dev/sda","size":512110190592,"model":"Virtual","type":"disk","rm":false},
+      {"name":"sdb","path":"/dev/sdb","size":15609618432,"model":"USB","type":"disk","rm":true,
+       "children":[{"name":"sdb1","path":"/dev/sdb1","size":15609618432,"type":"part","fstype":"ntfs"}]}]}"#;
+
+    struct LsblkOnly(&'static str);
 
     impl Runner for LsblkOnly {
         fn run(&self, program: &str, _: &[OsString]) -> Result<(), BootError> {
@@ -259,7 +290,7 @@ mod tests {
 
         fn output(&self, program: &str, _: &[OsString]) -> Result<String, BootError> {
             assert_eq!(program, "lsblk");
-            Ok(LSBLK.to_owned())
+            Ok(self.0.to_owned())
         }
     }
 
@@ -285,10 +316,20 @@ mod tests {
         file: &str,
         input: &str,
     ) -> (Result<Answers, InstallError>, String) {
+        let (result, out) = run_on(t, LSBLK, file, input);
+        (result.map(|c| c.answers), out)
+    }
+
+    fn run_on(
+        t: &tempfile::TempDir,
+        lsblk: &'static str,
+        file: &str,
+        input: &str,
+    ) -> (Result<Collected, InstallError>, String) {
         let file = AnswerFile::parse(file).unwrap();
         let env = Env {
             root: t.path().to_owned(),
-            runner: &LsblkOnly,
+            runner: &LsblkOnly(lsblk),
             probe: &NullProbe,
             entropy: &SystemEntropy,
             boot_partition: None,
@@ -296,7 +337,7 @@ mod tests {
         let mut out = Vec::new();
         let result = {
             let mut fe = TextFrontend::new(input.as_bytes(), &mut out);
-            collect(&mut fe, &env, &file)
+            collect(&mut fe, &env, Some(&file))
         };
         (result, String::from_utf8(out).unwrap())
     }
@@ -317,6 +358,53 @@ backend = "none"
 [install]
 confirm = true
 "#;
+
+    /// `SetupMode` set, and a `db` of the given bytes when there are any.
+    fn setup_mode(t: &tempfile::TempDir, db: Option<&[u8]>) {
+        let dir = t.path().join("sys/firmware/efi/efivars");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SetupMode-8be4df61-93ca-11d2-aa0d-00e098032b8c"),
+            [6, 0, 0, 0, 1],
+        )
+        .unwrap();
+        if let Some(bytes) = db {
+            fs::write(dir.join("db-d719b2cb-3d3a-4596-a3bc-dad00e67656f"), bytes).unwrap();
+        }
+    }
+
+    #[test]
+    fn another_system_and_an_empty_db_warn_without_asking_when_a_file_is_used() {
+        let t = machine(true);
+        setup_mode(&t, None);
+        let (c, out) = run_on(&t, LSBLK_WITH_WINDOWS, COMPLETE, "");
+        let c = c.unwrap();
+        assert_eq!(c.trust_cert, None);
+        assert!(
+            out.contains("other systems were found: Windows (NTFS) (sdb)"),
+            "{out}"
+        );
+        assert!(out.contains("tetsu secureboot trust <file>"), "{out}");
+        assert!(!out.contains("Certificate to trust"), "{out}");
+    }
+
+    #[test]
+    fn the_warning_needs_setup_mode_another_system_and_an_empty_db() {
+        // Not in Setup Mode: nothing will be enrolled.
+        let t = machine(true);
+        let (_, out) = run_on(&t, LSBLK_WITH_WINDOWS, COMPLETE, "");
+        assert!(!out.contains("other systems"), "{out}");
+        // A db with entries.
+        let t = machine(true);
+        setup_mode(&t, Some(&[7, 0, 0, 0, 1, 2, 3]));
+        let (_, out) = run_on(&t, LSBLK_WITH_WINDOWS, COMPLETE, "");
+        assert!(!out.contains("other systems"), "{out}");
+        // No other system.
+        let t = machine(true);
+        setup_mode(&t, None);
+        let (_, out) = run_on(&t, LSBLK, COMPLETE, "");
+        assert!(!out.contains("other systems"), "{out}");
+    }
 
     #[test]
     fn a_complete_file_installs_without_a_single_question() {

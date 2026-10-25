@@ -5,6 +5,7 @@
 use std::fs;
 
 use crate::error::InstallError;
+use crate::secureboot::trust::{Trust, trust_steps};
 use crate::secureboot::{Enrollment, enrollment_steps, guid, run_steps};
 
 use super::exec::Executor;
@@ -80,6 +81,7 @@ impl Executor<'_> {
     pub(super) fn firmware_action(&mut self, action: Action) -> Result<(), InstallError> {
         match action {
             Action::EnrollKeys => self.enroll_keys(),
+            Action::TrustCertificate => self.trust_certificate(),
             Action::SecureBootOff => {
                 self.warn(
                     "firmware is not in Setup Mode: the Secure Boot keys are kept in \
@@ -111,6 +113,31 @@ impl Executor<'_> {
         };
         let result =
             enrollment_steps(&enrollment).and_then(|steps| run_steps(self.deps.runner, &steps));
+        let _ = fs::remove_dir_all(&work_dir);
+        result
+    }
+
+    /// Add the imported certificate to the db, signed with the KEK just
+    /// enrolled: the steps of `tetsu secureboot trust`.
+    fn trust_certificate(&mut self) -> Result<(), InstallError> {
+        let Some(cert) = self.target.trust_cert.clone() else {
+            return Ok(());
+        };
+        if !self.keys_enrolled() {
+            return Err(InstallError::Failed(
+                "the Secure Boot keys are not enrolled".into(),
+            ));
+        }
+        let mut bytes = [0u8; 16];
+        self.deps.entropy.fill(&mut bytes)?;
+        let work_dir = self.run.subdir("trust")?;
+        let result = trust_steps(&Trust {
+            cert,
+            keys_dir: self.target.keys_dir(),
+            work_dir: work_dir.clone(),
+            owner_guid: guid(bytes),
+        })
+        .and_then(|steps| run_steps(self.deps.runner, &steps));
         let _ = fs::remove_dir_all(&work_dir);
         result
     }

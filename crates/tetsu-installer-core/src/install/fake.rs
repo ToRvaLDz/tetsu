@@ -79,6 +79,8 @@ pub struct Machine {
     pub boot_output: RefCell<(String, String)>,
     /// A call whose joined line starts with one of these fails.
     pub fail: RefCell<Vec<String>>,
+    /// A call whose joined line contains one of these fails.
+    pub fail_containing: RefCell<Vec<String>>,
     /// Programs `check_tool` reports as missing.
     pub missing: RefCell<Vec<String>>,
 }
@@ -90,6 +92,7 @@ impl Machine {
             calls: RefCell::default(),
             seen: RefCell::default(),
             fail: RefCell::default(),
+            fail_containing: RefCell::default(),
             missing: RefCell::default(),
             boot_output: RefCell::new((FIRMWARE_BEFORE.to_owned(), FIRMWARE_AFTER.to_owned())),
         }
@@ -101,6 +104,10 @@ impl Machine {
 
     pub fn fail_on(&self, prefix: &str) {
         self.fail.borrow_mut().push(prefix.to_owned());
+    }
+
+    pub fn fail_containing(&self, part: &str) {
+        self.fail_containing.borrow_mut().push(part.to_owned());
     }
 
     fn snapshot_private_files(&self, args: &[String]) {
@@ -185,6 +192,11 @@ impl Machine {
             .borrow()
             .iter()
             .any(|p| joined.starts_with(p.as_str()))
+            || self
+                .fail_containing
+                .borrow()
+                .iter()
+                .any(|p| joined.contains(p.as_str()))
         {
             return Err(BootError::Tool {
                 tool: program.to_owned(),

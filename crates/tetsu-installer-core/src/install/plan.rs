@@ -99,6 +99,9 @@ pub enum Action {
     // Stage 3: firmware.
     /// Enroll our keys; a failure is not fatal (the off path).
     EnrollKeys,
+    /// Trust the certificate the user imported, in the db (after the keys,
+    /// so the KEK just enrolled signs it; planned only when one was given).
+    TrustCertificate,
     /// Secure Boot is not in Setup Mode: keep the keys, warn, carry on.
     SecureBootOff,
     CreateBootEntry,
@@ -118,6 +121,7 @@ impl Action {
             | Self::VerifySignatures
             | Self::WriteRecord => Stage::Boot,
             Self::EnrollKeys
+            | Self::TrustCertificate
             | Self::SecureBootOff
             | Self::CreateBootEntry
             | Self::SetBootOrder
@@ -132,7 +136,7 @@ impl Action {
     pub fn is_soft(self) -> bool {
         matches!(
             self,
-            Self::EnrollKeys | Self::CreateBootEntry | Self::SetBootOrder
+            Self::EnrollKeys | Self::TrustCertificate | Self::CreateBootEntry | Self::SetBootOrder
         )
     }
 
@@ -140,6 +144,10 @@ impl Action {
     pub fn soft_consequence(self) -> &'static str {
         match self {
             Self::EnrollKeys => "Secure Boot keys not enrolled; the install goes on without them",
+            Self::TrustCertificate => {
+                "the certificate was not added to the db; add it later with \
+                 `tetsu secureboot trust <file>`"
+            }
             Self::CreateBootEntry => {
                 "the firmware boot entry was not created; pick the disk in the firmware boot \
                  menu, \\EFI\\BOOT\\BOOTX64.EFI is the fallback"
@@ -171,7 +179,7 @@ impl Action {
             Self::BuildUki => &["ukify", "sbsign"],
             Self::InstallBootloader => &["sbsign"],
             Self::VerifySignatures => &["sbverify"],
-            Self::EnrollKeys => &[
+            Self::EnrollKeys | Self::TrustCertificate => &[
                 "openssl",
                 "cert-to-efi-sig-list",
                 "sign-efi-sig-list",
@@ -229,6 +237,7 @@ impl Action {
             Self::VerifySignatures => "verify every signature",
             Self::WriteRecord => "write the record of snapshot 1",
             Self::EnrollKeys => "enroll the Secure Boot keys in the firmware",
+            Self::TrustCertificate => "trust the imported certificate in the db",
             Self::SecureBootOff => {
                 "firmware is not in Setup Mode: keys are kept, Secure Boot stays off"
             }
@@ -346,17 +355,21 @@ fn stage_boot(answers: &Answers) -> Vec<Action> {
 }
 
 fn stage_firmware(target: &InstallTarget) -> Vec<Action> {
-    let first = if target.secure_boot == SecureBoot::SetupMode {
-        Action::EnrollKeys
+    let mut actions = if target.secure_boot == SecureBoot::SetupMode {
+        vec![Action::EnrollKeys]
     } else {
-        Action::SecureBootOff
+        vec![Action::SecureBootOff]
     };
-    vec![
-        first,
+    // Only an enrollment can be followed by a trusted certificate.
+    if target.trust_cert.is_some() && target.secure_boot == SecureBoot::SetupMode {
+        actions.push(Action::TrustCertificate);
+    }
+    actions.extend([
         Action::CreateBootEntry,
         Action::SetBootOrder,
         Action::Finish,
-    ]
+    ]);
+    actions
 }
 
 #[cfg(test)]
