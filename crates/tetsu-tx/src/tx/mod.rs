@@ -9,6 +9,7 @@ use crate::store::StoreError;
 
 #[cfg(test)]
 pub(crate) mod fake;
+pub mod nspawn;
 pub mod pkg;
 
 /// Errors a transaction step returns, shaped for the engine.
