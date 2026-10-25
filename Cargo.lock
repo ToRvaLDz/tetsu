@@ -995,6 +995,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tetsu-cli"
+version = "0.0.0"
+dependencies = [
+ "rustix",
+ "tempfile",
+ "tetsu-installer-core",
+ "tetsu-tx",
+]
+
+[[package]]
 name = "tetsu-comp"
 version = "0.0.0"
 

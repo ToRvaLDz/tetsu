@@ -1,0 +1,27 @@
+[package]
+name = "tetsu-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "tetsu_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tetsu"
+path = "src/main.rs"
+
+[dependencies]
+rustix = { version = "1.1.5", features = ["process"] }
+tetsu-installer-core = { path = "../tetsu-installer-core" }
+tetsu-tx = { path = "../tetsu-tx" }
+
+[dev-dependencies]
+tempfile = "3.27.0"
