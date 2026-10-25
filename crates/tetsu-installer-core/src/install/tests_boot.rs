@@ -181,6 +181,24 @@ fn every_signature_is_verified_after_the_files_exist() {
 }
 
 #[test]
+fn etc_base_is_captured_after_the_configuration_and_before_the_seal() {
+    let run = run_two_stages(UnlockLevel::Comfort, |_| {});
+    run.out.result.as_ref().unwrap();
+    let lines = run.lines();
+    let snap = run.work("top/@snapshots/1");
+    let want = format!(
+        "btrfs subvolume snapshot -r {} {}",
+        snap.join("root/etc").display(),
+        snap.join("etc-base").display()
+    );
+    let at = position(&lines, &want);
+    // After the last configuration step (the initrd build) and the seal next.
+    assert!(at > position(&lines, "systemd-nspawn"), "{lines:#?}");
+    assert!(at < position(&lines, "btrfs property set"));
+    assert_eq!(lines.iter().filter(|l| **l == want).count(), 1);
+}
+
+#[test]
 fn the_snapshot_is_sealed_before_the_uki_and_recorded_after() {
     let run = run_two_stages(UnlockLevel::Comfort, |_| {});
     run.out.result.as_ref().unwrap();

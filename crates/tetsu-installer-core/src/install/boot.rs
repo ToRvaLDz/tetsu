@@ -11,7 +11,7 @@ use tetsu_tx::boot::keys::SigningKeys;
 use tetsu_tx::boot::uki::{UkiSpec, sign_efi, verify_signature};
 use tetsu_tx::store::btrfs::CliBtrfs;
 use tetsu_tx::store::record::{Record, Records};
-use tetsu_tx::store::snapshot::{FIRST_COUNTER, mark_committed, seal};
+use tetsu_tx::store::snapshot::{FIRST_COUNTER, capture_etc_base, mark_committed, seal};
 
 use crate::error::InstallError;
 
@@ -133,8 +133,12 @@ impl Executor<'_> {
         CliBtrfs::new(Shared(self.deps.runner))
     }
 
+    /// The configuration is complete: take the read-only `etc-base` from
+    /// the snapshot's own `etc`, then make the root read-only.
     fn seal_snapshot(&mut self) -> Result<(), InstallError> {
-        seal(&self.target.layout(), &self.btrfs(), FIRST_COUNTER)?;
+        let (layout, btrfs) = (self.target.layout(), self.btrfs());
+        capture_etc_base(&layout, &btrfs, FIRST_COUNTER)?;
+        seal(&layout, &btrfs, FIRST_COUNTER)?;
         Ok(())
     }
 

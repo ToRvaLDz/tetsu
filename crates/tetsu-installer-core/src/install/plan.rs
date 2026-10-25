@@ -222,7 +222,7 @@ impl Action {
             Self::GenerateKey(KeyKind::Kek) => "generate the Secure Boot key exchange key",
             Self::GenerateKey(KeyKind::Db) => "generate the Secure Boot signing key",
             Self::GenerateKey(KeyKind::Pcr) => "generate the PCR policy key",
-            Self::SealSnapshot => "seal snapshot 1",
+            Self::SealSnapshot => "capture etc-base and seal snapshot 1",
             Self::BuildUki => "build and sign the unified kernel image",
             Self::InstallBootloader => "sign and install systemd-boot",
             Self::WriteLoaderConf => "write the boot loader configuration",
