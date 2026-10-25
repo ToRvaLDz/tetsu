@@ -2,6 +2,8 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::{self, Read};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use super::BootError;
@@ -31,6 +33,37 @@ impl UkiSpec {
         Ok(())
     }
 
+    /// Every input must be a regular file reached without any symlink
+    /// component below the snapshot root, so a planted link cannot pull a
+    /// host file into the signed image.
+    pub fn check_inputs(&self) -> Result<(), BootError> {
+        for path in [
+            self.kernel_path(),
+            self.initrd_path(),
+            self.os_release_path(),
+        ] {
+            let rel = path
+                .strip_prefix(&self.snapshot_root)
+                .expect("inputs are joined onto the snapshot root");
+            let mut cur = self.snapshot_root.clone();
+            for part in rel.components() {
+                cur.push(part);
+                let meta = fs::symlink_metadata(&cur).map_err(|e| BootError::io(&cur, e))?;
+                if meta.file_type().is_symlink() {
+                    return Err(BootError::InputEscapesSnapshot { path: cur });
+                }
+            }
+            if !fs::symlink_metadata(&cur)
+                .map_err(|e| BootError::io(&cur, e))?
+                .is_file()
+            {
+                let not_file = io::Error::new(io::ErrorKind::InvalidInput, "not a regular file");
+                return Err(BootError::io(&cur, not_file));
+            }
+        }
+        Ok(())
+    }
+
     pub fn kernel_path(&self) -> PathBuf {
         self.snapshot_root
             .join("usr/lib/modules")
@@ -54,6 +87,19 @@ impl UkiSpec {
             base => format!("{base} {root}"),
         }
     }
+}
+
+/// Read a text file, refusing a symlink at the last component (guards the
+/// window between [`UkiSpec::check_inputs`] and the read).
+fn read_no_follow(path: &Path) -> Result<String, BootError> {
+    let mut text = String::new();
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(path)
+        .and_then(|mut f| f.read_to_string(&mut text))
+        .map_err(|e| BootError::io(path, e))?;
+    Ok(text)
 }
 
 /// `os_release` with `IMAGE_VERSION=<counter>` set, replacing any existing one.
@@ -101,8 +147,9 @@ pub fn ukify_args(spec: &UkiSpec, os_release: &str, out: &Path) -> Vec<OsString>
 /// Build and sign the UKI into `out`.
 pub fn build_uki(runner: &dyn Runner, spec: &UkiSpec, out: &Path) -> Result<(), BootError> {
     spec.validate()?;
+    spec.check_inputs()?;
     let path = spec.os_release_path();
-    let text = fs::read_to_string(&path).map_err(|e| BootError::io(&path, e))?;
+    let text = read_no_follow(&path)?;
     let os_release = with_image_version(&text, spec.counter);
     runner.run("ukify", &ukify_args(spec, &os_release, out))
 }
@@ -314,7 +361,10 @@ mod tests {
     fn assert_refused(snap: &TempDir) {
         let rec = Recorder::default();
         let err = build_uki(&rec, &spec(snap.path(), false), Path::new("/o")).unwrap_err();
-        assert!(matches!(err, BootError::InputEscapesSnapshot { .. }), "{err:?}");
+        assert!(
+            matches!(err, BootError::InputEscapesSnapshot { .. }),
+            "{err:?}"
+        );
         assert!(rec.0.borrow().is_empty(), "ukify must not run");
     }
 

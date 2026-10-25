@@ -83,7 +83,10 @@ mod tests {
             fs::write(dir.join(f), vec![0u8; 100]).unwrap();
         }
         let snap = t.path().join("snap");
-        fs::create_dir_all(snap.join("usr/lib")).unwrap();
+        fs::create_dir_all(snap.join("usr/lib/modules/6.1")).unwrap();
+        fs::create_dir_all(snap.join("usr/lib/tetsu")).unwrap();
+        fs::write(snap.join("usr/lib/modules/6.1/vmlinuz"), b"k").unwrap();
+        fs::write(snap.join("usr/lib/tetsu/initrd.img"), b"i").unwrap();
         fs::write(snap.join("usr/lib/os-release"), "NAME=T\n").unwrap();
         let spec = UkiSpec {
             counter: 10,
