@@ -632,3 +632,39 @@ fn the_category_reaches_the_view() {
         Some("transfer.complete")
     );
 }
+
+#[test]
+fn a_closed_panel_does_not_disarm_a_popup_that_stayed_put() {
+    let clock = Clock::new();
+    let mut core = Core::new();
+    let (collapsed, _) = core
+        .show_tetsu(&caller(10), approval(), false, clock.at(0))
+        .unwrap();
+    core.collapse(collapsed, clock.at(0));
+    let (visible, _) = core
+        .show_tetsu(&caller(11), approval(), false, clock.at(0))
+        .unwrap();
+    core.caller_gone(collapsed, clock.at(2_000));
+    assert!(core.click(visible, "approve", clock.at(2_000)).is_ok());
+}
+
+#[test]
+fn an_open_panel_re_arms_the_cards_that_move_in_it() {
+    let clock = Clock::new();
+    let mut core = Core::new();
+    let (first, _) = core
+        .show_tetsu(&caller(10), approval(), false, clock.at(0))
+        .unwrap();
+    core.collapse(first, clock.at(0));
+    let (second, _) = core
+        .show_tetsu(&caller(11), approval(), false, clock.at(0))
+        .unwrap();
+    core.collapse(second, clock.at(0));
+    core.panel_opened(clock.at(0));
+    core.caller_gone(first, clock.at(2_000));
+    assert_eq!(
+        core.click(second, "approve", clock.at(2_000)),
+        Err(Refused::NotArmed)
+    );
+    core.panel_closed();
+}
