@@ -21,8 +21,28 @@ pub const PACMAN_DB: &str = "/usr/lib/pacman";
 /// `etc`, and the `/var/lib/pacman` compatibility symlink in `@var`. The
 /// payload is extracted afterwards, then [`capture_etc_base`] runs.
 pub fn init_layout(layout: &Layout, btrfs: &dyn Btrfs) -> Result<u64, StoreError> {
-    let _ = (layout, btrfs);
-    todo!()
+    let snapshots = layout.snapshots_dir();
+    let shared = SHARED.map(|s| layout.shared(s));
+    for p in std::iter::once(&snapshots).chain(&shared) {
+        match fs::symlink_metadata(p) {
+            Ok(_) => return Err(StoreError::LayoutExists { path: p.clone() }),
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(StoreError::io(p, e)),
+        }
+    }
+    btrfs.create(&snapshots)?;
+    for p in &shared {
+        btrfs.create(p)?;
+    }
+    let dir = layout.snapshot_dir(FIRST_COUNTER);
+    fs::create_dir(&dir).map_err(|e| StoreError::io(&dir, e))?;
+    btrfs.create(&layout.root(FIRST_COUNTER))?;
+    btrfs.create(&layout.etc(FIRST_COUNTER))?;
+    let lib = layout.shared("@var").join("lib");
+    fs::create_dir_all(&lib).map_err(|e| StoreError::io(&lib, e))?;
+    let link = lib.join("pacman");
+    std::os::unix::fs::symlink(PACMAN_DB, &link).map_err(|e| StoreError::io(&link, e))?;
+    Ok(FIRST_COUNTER)
 }
 
 /// Take the read-only `etc-base` of `counter` from its own `etc`.
@@ -31,8 +51,7 @@ pub fn capture_etc_base(
     btrfs: &dyn Btrfs,
     counter: u64,
 ) -> Result<(), StoreError> {
-    let _ = (layout, btrfs, counter);
-    todo!()
+    btrfs.snapshot(&layout.etc(counter), &layout.etc_base(counter), true)
 }
 
 /// Create snapshot `counter` from `source`: a writable root, a writable
@@ -47,23 +66,59 @@ pub fn create_snapshot(
     source: u64,
     inherit_etc_base: bool,
 ) -> Result<(), StoreError> {
-    let _ = (layout, btrfs, counter, source, inherit_etc_base);
-    todo!()
+    if !btrfs.is_subvolume(&layout.root(source))? {
+        return Err(StoreError::NotFound(source));
+    }
+    let dir = layout.snapshot_dir(counter);
+    fs::create_dir(&dir).map_err(|e| StoreError::io(&dir, e))?;
+    btrfs.snapshot(&layout.root(source), &layout.root(counter), false)?;
+    let etc = layout.etc(counter);
+    match fs::remove_dir(&etc) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(StoreError::io(&etc, e)),
+    }
+    btrfs.snapshot(&layout.etc(source), &etc, false)?;
+    let base = if inherit_etc_base {
+        layout.etc_base(source)
+    } else {
+        layout.etc(source)
+    };
+    btrfs.snapshot(&base, &layout.etc_base(counter), true)
 }
 
 /// Seal snapshot `counter`: `ro` on the root (the nested `etc` stays
 /// writable), then commit the filesystem.
 pub fn seal(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Result<(), StoreError> {
-    let _ = (layout, btrfs, counter);
-    todo!()
+    btrfs.set_readonly(&layout.root(counter), true)?;
+    btrfs.sync(layout.top())
 }
 
 /// Delete snapshot `counter`, sealed or partial (an interrupted create):
 /// unseal the root, delete the nested `etc`, the root and `etc-base`, then
 /// the directory.
 pub fn delete_snapshot(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Result<(), StoreError> {
-    let _ = (layout, btrfs, counter);
-    todo!()
+    let dir = layout.snapshot_dir(counter);
+    match fs::symlink_metadata(&dir) {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => return Err(StoreError::NotFound(counter)),
+        Err(e) => return Err(StoreError::io(&dir, e)),
+    }
+    let root = layout.root(counter);
+    if btrfs.is_subvolume(&root)? {
+        // A nested subvolume cannot be unlinked from a read-only parent.
+        btrfs.set_readonly(&root, false)?;
+        let etc = layout.etc(counter);
+        if btrfs.is_subvolume(&etc)? {
+            btrfs.delete(&etc)?;
+        }
+        btrfs.delete(&root)?;
+    }
+    let base = layout.etc_base(counter);
+    if btrfs.is_subvolume(&base)? {
+        btrfs.delete(&base)?;
+    }
+    fs::remove_dir(&dir).map_err(|e| StoreError::io(&dir, e))
 }
 
 #[cfg(test)]

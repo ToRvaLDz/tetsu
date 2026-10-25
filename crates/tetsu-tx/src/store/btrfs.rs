@@ -7,6 +7,9 @@ use std::path::Path;
 use super::StoreError;
 use crate::boot::tool::Runner;
 
+/// Inode number of every subvolume root (`BTRFS_FIRST_FREE_OBJECTID`).
+const SUBVOLUME_ROOT_INO: u64 = 256;
+
 /// The subvolume operations the store needs.
 pub trait Btrfs {
     fn create(&self, path: &Path) -> Result<(), StoreError>;
@@ -75,8 +78,12 @@ impl<R: Runner> Btrfs for CliBtrfs<R> {
     }
 
     fn is_subvolume(&self, path: &Path) -> Result<bool, StoreError> {
-        let _ = path;
-        todo!()
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::symlink_metadata(path) {
+            Ok(m) => Ok(m.is_dir() && m.ino() == SUBVOLUME_ROOT_INO),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(StoreError::io(path, e)),
+        }
     }
 }
 
