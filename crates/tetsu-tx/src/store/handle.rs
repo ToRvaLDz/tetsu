@@ -462,4 +462,16 @@ mod tests {
         let deleted = env.store().apply_retention(&lock, &st, 13).unwrap();
         assert_eq!(deleted, vec![3]);
     }
+
+    #[test]
+    fn gc_repairs_the_marker_of_snapshots_on_the_esp() {
+        let env = Env::new();
+        env.committed(1, G);
+        // Cut between the ESP rename and the marker.
+        env.committed(2, None);
+        let st = esp(&["tetsu-1.efi", "tetsu-2+3.efi"], &[]);
+        let lock = TxLock::acquire(&env.lock_path).unwrap();
+        env.store().gc_orphans(&lock, &st, Some(1)).unwrap();
+        assert!(env.layout.is_committed(2));
+    }
 }
