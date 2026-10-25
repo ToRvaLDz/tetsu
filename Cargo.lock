@@ -956,6 +956,7 @@ version = "0.0.0"
 dependencies = [
  "cosmic-text",
  "futures-util",
+ "libc",
  "serde",
  "serde_json",
  "smithay-client-toolkit",

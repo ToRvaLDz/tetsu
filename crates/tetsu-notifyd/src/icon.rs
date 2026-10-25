@@ -3,8 +3,12 @@
 //! hicolor theme and pixmaps. Anything unreadable means no icon.
 
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::Read;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use zbus::{OwnedVariant, Structure};
 
@@ -12,10 +16,26 @@ use crate::core::Icon;
 
 /// Larger icons are refused rather than decoded.
 const MAX_SIDE: i32 = 1024;
+/// Larger icon files are refused rather than read.
+const MAX_FILE: u64 = 4 * 1024 * 1024;
+/// Icon loading gives up after this long.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(2);
+/// The PNG signature, then the IHDR chunk with width and height.
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 /// Theme sizes tried for an icon name, best first.
 const THEME_SIZES: [&str; 5] = ["64x64", "48x48", "128x128", "32x32", "256x256"];
 /// Data directories when `XDG_DATA_DIRS` is unset.
 const DEFAULT_DATA_DIRS: &str = "/usr/local/share:/usr/share";
+
+/// [`from_hints`] off the runtime thread, abandoned after a timeout, so a
+/// slow file system can never stall the daemon.
+pub async fn from_hints_bounded(
+    hints: HashMap<String, OwnedVariant>,
+    app_icon: String,
+) -> Option<Icon> {
+    let load = tokio::task::spawn_blocking(move || from_hints(&hints, &app_icon));
+    tokio::time::timeout(LOAD_TIMEOUT, load).await.ok()?.ok()?
+}
 
 /// The icon of a `Notify` call, by the spec's order of precedence.
 pub fn from_hints(hints: &HashMap<String, OwnedVariant>, app_icon: &str) -> Option<Icon> {
@@ -86,8 +106,9 @@ pub fn from_image_data(
     })
 }
 
-/// An image path, `file://` URI or icon name.
-fn load(spec: &str) -> Option<Icon> {
+/// An image path, `file://` URI or icon name. Only regular PNG files up to
+/// [`MAX_FILE`] and [`MAX_SIDE`] are read.
+pub fn load(spec: &str) -> Option<Icon> {
     let path = spec.strip_prefix("file://").unwrap_or(spec);
     if path.starts_with('/') {
         return load_png(Path::new(path));
@@ -119,10 +140,17 @@ fn theme_paths(name: &str) -> impl Iterator<Item = PathBuf> {
 }
 
 fn load_png(path: &Path) -> Option<Icon> {
-    let pixmap = tiny_skia::Pixmap::load_png(path).ok()?;
-    if pixmap.width() as i32 > MAX_SIDE || pixmap.height() as i32 > MAX_SIDE {
+    let bytes = read_bounded(path)?;
+    let header = bytes.strip_prefix(PNG_SIGNATURE)?;
+    let side = |at: usize| -> Option<u32> {
+        Some(u32::from_be_bytes(header.get(at..at + 4)?.try_into().ok()?))
+    };
+    // IHDR: length (4), type (4), width (4), height (4).
+    let (width, height) = (side(8)?, side(12)?);
+    if width == 0 || height == 0 || width > MAX_SIDE as u32 || height > MAX_SIDE as u32 {
         return None;
     }
+    let pixmap = tiny_skia::Pixmap::decode_png(&bytes).ok()?;
     let rgba = pixmap
         .pixels()
         .iter()
@@ -136,4 +164,21 @@ fn load_png(path: &Path) -> Option<Icon> {
         height: pixmap.height(),
         rgba: Arc::from(rgba),
     })
+}
+
+/// Reads a regular file of at most [`MAX_FILE`] bytes. Opening never blocks
+/// (a FIFO opens at once and is then refused as not a regular file).
+fn read_bounded(path: &Path) -> Option<Vec<u8>> {
+    let file: File = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= MAX_FILE).then_some(bytes)
 }
