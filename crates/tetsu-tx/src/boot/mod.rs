@@ -47,3 +47,6 @@ pub mod entry;
 pub mod esp;
 pub mod retention;
 pub mod space;
+pub mod keys;
+pub mod tool;
+pub mod uki;

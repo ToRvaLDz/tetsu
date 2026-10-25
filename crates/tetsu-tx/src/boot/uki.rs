@@ -1,0 +1,253 @@
+//! UKI assembly (`ukify`) and signing (`sbsign`, `sbverify`).
+
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use super::BootError;
+use super::keys::SigningKeys;
+use super::tool::Runner;
+
+/// Everything `ukify` needs for one snapshot.
+#[derive(Clone, Debug)]
+pub struct UkiSpec {
+    pub counter: u64,
+    /// Root of the snapshot the UKI will boot.
+    pub snapshot_root: PathBuf,
+    pub kernel_version: String,
+    pub base_cmdline: String,
+    pub keys: SigningKeys,
+}
+
+impl UkiSpec {
+    pub fn kernel_path(&self) -> PathBuf {
+        self.snapshot_root
+            .join("usr/lib/modules")
+            .join(&self.kernel_version)
+            .join("vmlinuz")
+    }
+
+    pub fn initrd_path(&self) -> PathBuf {
+        self.snapshot_root.join("usr/lib/tetsu/initrd.img")
+    }
+
+    pub fn os_release_path(&self) -> PathBuf {
+        self.snapshot_root.join("usr/lib/os-release")
+    }
+
+    /// Base command line plus the snapshot root subvolume.
+    pub fn cmdline(&self) -> String {
+        todo!()
+    }
+}
+
+/// `os_release` with `IMAGE_VERSION=<counter>` set, replacing any existing one.
+pub fn with_image_version(os_release: &str, counter: u64) -> String {
+    todo!()
+}
+
+/// The `ukify build` argument vector.
+pub fn ukify_args(spec: &UkiSpec, os_release: &str, out: &Path) -> Vec<OsString> {
+    todo!()
+}
+
+/// Build and sign the UKI into `out`.
+pub fn build_uki(runner: &dyn Runner, spec: &UkiSpec, out: &Path) -> Result<(), BootError> {
+    todo!()
+}
+
+/// Sign an EFI binary (systemd-boot) with the db key.
+pub fn sign_efi(
+    runner: &dyn Runner,
+    input: &Path,
+    output: &Path,
+    keys: &SigningKeys,
+) -> Result<(), BootError> {
+    todo!()
+}
+
+/// `sbverify --cert <cert> <path>`.
+pub fn verify_signature(runner: &dyn Runner, path: &Path, cert: &Path) -> Result<(), BootError> {
+    todo!()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boot::keys::KeyRef;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct Recorder(RefCell<Vec<(String, Vec<String>)>>);
+
+    impl Runner for Recorder {
+        fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
+            let args = args
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            self.0.borrow_mut().push((program.to_owned(), args));
+            Ok(())
+        }
+    }
+
+    fn keys(pcr: bool) -> SigningKeys {
+        SigningKeys {
+            db_key: KeyRef::File("/k/db.key".into()),
+            db_cert: "/k/db.crt".into(),
+            pcr_key: pcr.then(|| KeyRef::File("/k/pcr.key".into())),
+            pcr_public: pcr.then(|| "/k/pcr.pub".into()),
+        }
+    }
+
+    fn spec(root: &Path, pcr: bool) -> UkiSpec {
+        UkiSpec {
+            counter: 7,
+            snapshot_root: root.to_path_buf(),
+            kernel_version: "6.1.0".into(),
+            base_cmdline: "quiet rw".into(),
+            keys: keys(pcr),
+        }
+    }
+
+    fn snapshot(os_release: &str) -> tempfile::TempDir {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("usr/lib");
+        fs::create_dir_all(lib.join("modules/6.1.0")).unwrap();
+        fs::create_dir_all(lib.join("tetsu")).unwrap();
+        fs::write(lib.join("modules/6.1.0/vmlinuz"), b"k").unwrap();
+        fs::write(lib.join("tetsu/initrd.img"), b"i").unwrap();
+        fs::write(lib.join("os-release"), os_release).unwrap();
+        t
+    }
+
+    fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+        let i = args.iter().position(|a| a == name)?;
+        args.get(i + 1).map(String::as_str)
+    }
+
+    #[test]
+    fn inputs_live_inside_the_snapshot() {
+        let s = spec(Path::new("/snap"), false);
+        assert_eq!(s.kernel_path(), Path::new("/snap/usr/lib/modules/6.1.0/vmlinuz"));
+        assert_eq!(s.initrd_path(), Path::new("/snap/usr/lib/tetsu/initrd.img"));
+        assert_eq!(s.os_release_path(), Path::new("/snap/usr/lib/os-release"));
+    }
+
+    #[test]
+    fn cmdline_appends_rootflags() {
+        let s = spec(Path::new("/s"), false);
+        assert_eq!(s.cmdline(), "quiet rw rootflags=subvol=@snapshots/7/root");
+        let mut s = s;
+        s.base_cmdline = String::new();
+        assert_eq!(s.cmdline(), "rootflags=subvol=@snapshots/7/root");
+    }
+
+    #[test]
+    fn image_version_is_appended() {
+        let out = with_image_version("NAME=Tetsu\nID=tetsu\n", 7);
+        assert_eq!(out, "NAME=Tetsu\nID=tetsu\nIMAGE_VERSION=7\n");
+        let out = with_image_version("NAME=Tetsu", 7);
+        assert_eq!(out, "NAME=Tetsu\nIMAGE_VERSION=7\n");
+    }
+
+    #[test]
+    fn image_version_replaces_existing() {
+        let out = with_image_version("A=1\nIMAGE_VERSION=\"old\"\nB=2\n", 9);
+        assert_eq!(out.matches("IMAGE_VERSION").count(), 1);
+        assert!(out.contains("IMAGE_VERSION=9\n"));
+        assert!(out.contains("A=1\n") && out.contains("B=2\n"));
+        assert!(!out.contains("old"));
+    }
+
+    #[test]
+    fn ukify_argv_without_pcr() {
+        let snap = snapshot("NAME=Tetsu\n");
+        let rec = Recorder::default();
+        build_uki(&rec, &spec(snap.path(), false), Path::new("/esp/x.tmp")).unwrap();
+        let calls = rec.0.borrow();
+        assert_eq!(calls.len(), 1);
+        let (prog, args) = &calls[0];
+        assert_eq!(prog, "ukify");
+        assert_eq!(args[0], "build");
+        let root = snap.path().display();
+        assert_eq!(
+            flag(args, "--linux"),
+            Some(format!("{root}/usr/lib/modules/6.1.0/vmlinuz").as_str())
+        );
+        assert_eq!(
+            flag(args, "--initrd"),
+            Some(format!("{root}/usr/lib/tetsu/initrd.img").as_str())
+        );
+        assert_eq!(
+            flag(args, "--cmdline"),
+            Some("quiet rw rootflags=subvol=@snapshots/7/root")
+        );
+        assert_eq!(flag(args, "--uname"), Some("6.1.0"));
+        assert_eq!(flag(args, "--secureboot-private-key"), Some("/k/db.key"));
+        assert_eq!(flag(args, "--secureboot-certificate"), Some("/k/db.crt"));
+        assert_eq!(flag(args, "--output"), Some("/esp/x.tmp"));
+        assert!(!args.iter().any(|a| a.starts_with("--pcr")));
+    }
+
+    #[test]
+    fn ukify_os_release_carries_image_version() {
+        let snap = snapshot("NAME=Tetsu\nIMAGE_VERSION=old\n");
+        let rec = Recorder::default();
+        build_uki(&rec, &spec(snap.path(), false), Path::new("/o")).unwrap();
+        let calls = rec.0.borrow();
+        let osrel = flag(&calls[0].1, "--os-release").unwrap();
+        assert!(osrel.contains("NAME=Tetsu"));
+        assert!(osrel.contains("IMAGE_VERSION=7"));
+        assert!(!osrel.contains("old"));
+    }
+
+    #[test]
+    fn pcr_flags_only_with_a_pcr_key() {
+        let snap = snapshot("NAME=Tetsu\n");
+        let rec = Recorder::default();
+        build_uki(&rec, &spec(snap.path(), true), Path::new("/o")).unwrap();
+        let calls = rec.0.borrow();
+        let args = &calls[0].1;
+        assert_eq!(flag(args, "--pcr-private-key"), Some("/k/pcr.key"));
+        assert_eq!(flag(args, "--pcr-public-key"), Some("/k/pcr.pub"));
+    }
+
+    #[test]
+    fn missing_os_release_is_an_io_error() {
+        let t = tempfile::tempdir().unwrap();
+        let rec = Recorder::default();
+        let err = build_uki(&rec, &spec(t.path(), false), Path::new("/o")).unwrap_err();
+        assert!(matches!(err, BootError::Io { .. }));
+        assert!(rec.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn sbsign_argv() {
+        let rec = Recorder::default();
+        sign_efi(
+            &rec,
+            Path::new("/in/boot.efi"),
+            Path::new("/out/boot.efi"),
+            &keys(true),
+        )
+        .unwrap();
+        let calls = rec.0.borrow();
+        let (prog, args) = &calls[0];
+        assert_eq!(prog, "sbsign");
+        assert_eq!(flag(args, "--key"), Some("/k/db.key"));
+        assert_eq!(flag(args, "--cert"), Some("/k/db.crt"));
+        assert_eq!(flag(args, "--output"), Some("/out/boot.efi"));
+        assert_eq!(args.last().unwrap(), "/in/boot.efi");
+    }
+
+    #[test]
+    fn sbverify_argv() {
+        let rec = Recorder::default();
+        verify_signature(&rec, Path::new("/e/a.efi"), Path::new("/k/db.crt")).unwrap();
+        let calls = rec.0.borrow();
+        let (prog, args) = &calls[0];
+        assert_eq!(prog, "sbverify");
+        assert_eq!(args, &["--cert", "/k/db.crt", "/e/a.efi"]);
+    }
+}
