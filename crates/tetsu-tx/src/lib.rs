@@ -1,5 +1,6 @@
-//! tetsu-tx library: the ESP side of a transaction (`boot`) and the Btrfs
-//! snapshot store (`store`).
+//! tetsu-tx library: the ESP side of a transaction (`boot`), the Btrfs
+//! snapshot store (`store`) and the transaction pieces (`tx`).
 
 pub mod boot;
 pub mod store;
+pub mod tx;
