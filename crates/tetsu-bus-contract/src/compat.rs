@@ -4,7 +4,9 @@
 //! CONTRACT.md's Evolution section defines: additive changes pass, anything
 //! listed as breaking is a violation.
 
-use crate::{Contract, Doc, ErrorDef, Field, Interface, Kind, Method, Ty, TypeDef, Variant};
+use crate::{
+    Capability, Contract, Doc, ErrorDef, Field, Interface, Kind, Method, Ty, TypeDef, Variant,
+};
 use crate::{CustomType, Violation};
 
 /// Appends a violation.
@@ -95,6 +97,7 @@ fn compare_method(base: &Method, cur: &Method, path: &str, out: &mut Vec<Violati
     if base.doc.has_tag("@destructive") && !cur.doc.has_tag("@destructive") {
         push(out, Kind::TagRemoved, path, "@destructive removed");
     }
+    compare_capability(&base.doc, &cur.doc, path, out);
     compare_fields(&base.inputs, &cur.inputs, &format!("{path}(in)"), true, out);
     compare_fields(
         &base.outputs,
@@ -103,6 +106,37 @@ fn compare_method(base: &Method, cur: &Method, path: &str, out: &mut Vec<Violati
         false,
         out,
     );
+}
+
+/// A method that had a `@capability` keeps its class and scope. Adding the
+/// tag to a method without one is additive. A tag that does not parse is
+/// the rules' business, not a compatibility break.
+fn compare_capability(base: &Doc, cur: &Doc, path: &str, out: &mut Vec<Violation>) {
+    let Some(Ok(was)) = base.capability() else {
+        return;
+    };
+    match cur.capability() {
+        Some(Ok(now)) if now == was => {}
+        Some(Ok(now)) => push(
+            out,
+            Kind::CapabilityChanged,
+            path,
+            format!("@capability {} became {}", describe(&was), describe(&now)),
+        ),
+        _ => push(
+            out,
+            Kind::CapabilityChanged,
+            path,
+            format!("@capability {} removed", describe(&was)),
+        ),
+    }
+}
+
+fn describe(cap: &Capability) -> String {
+    match &cap.scope {
+        Some(scope) => format!("{} scope={scope}", cap.class),
+        None => cap.class.clone(),
+    }
 }
 
 /// The retry class an error is tagged with, if any.
