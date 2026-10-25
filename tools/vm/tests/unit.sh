@@ -100,6 +100,11 @@ test_wait_for() {
   code=0; "$VM" wait-for --state "$st" --timeout 2 'never appears' || code=$?
   assert_eq "wait-for: timeout is 1" 1 "$code"
 
+  # Real systemd status line: colour codes inside the message, OSC and cursor queries.
+  printf '[\033[0;32m  OK  \033[0m] Found device \033[0;1;39m/dev/tpm0\033[0m.\r\r\n\033]104\033\\\033[6n\n' >>"$st/serial.log"
+  code=0; "$VM" wait-for --state "$st" --timeout 5 'Found device /dev/tpm0' || code=$?
+  assert_eq "wait-for: match across colour codes" 0 "$code"
+
   kill "$pid"; wait "$pid" 2>/dev/null
   code=0; "$VM" wait-for --state "$st" --timeout 5 'never appears' || code=$?
   assert_eq "wait-for: dead VM is 2" 2 "$code"

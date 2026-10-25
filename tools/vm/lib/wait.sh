@@ -3,7 +3,11 @@
 
 # The serial log as plain text: ANSI escape sequences and CRs removed.
 clean_serial() {
-  sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g; s/\x1b[@-Z\\\\-_]//g' "$1" | tr -d '\r'
+  # OSC (BEL or ST terminated), CSI, then two-character escapes; "#" is the
+  # s### delimiter so that "/" and "|" stay literal. LC_ALL=C because range
+  # expressions like [@-~] are locale-collated otherwise.
+  LC_ALL=C sed -E $'s#\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)##g; s#\x1b\\[[0-9;?]*[ -/]*[@-~]##g; s#\x1b[@-Z\\\\^_0-9=>]##g' "$1" \
+    | tr -d '\r'
 }
 
 wait_usage() {
@@ -29,11 +33,13 @@ cmd_wait_for() {
   case "$timeout" in '' | *[!0-9]*) die "--timeout must be an integer" ;; esac
   st=$(readlink -m "$st")
 
-  local deadline=$((SECONDS + timeout)) log="$st/serial.log" running
+  local deadline=$((SECONDS + timeout)) log="$st/serial.log" running text
   while :; do
     running=0
     qemu_pid "$st" >/dev/null && running=1
-    if [ -r "$log" ] && clean_serial "$log" | grep -Eq -- "$regex"; then
+    # Capture first: grep -q exiting early would SIGPIPE the writer under pipefail.
+    text=$([ -r "$log" ] && clean_serial "$log" || true)
+    if LC_ALL=C grep -aEq -- "$regex" <<<"$text"; then
       return 0
     fi
     if [ "$running" -eq 0 ]; then
