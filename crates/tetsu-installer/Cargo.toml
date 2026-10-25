@@ -1,0 +1,26 @@
+[package]
+name = "tetsu-installer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tetsu-installer"
+path = "src/main.rs"
+
+[dependencies]
+rustix = { version = "1.1.5", features = ["termios", "stdio"] }
+serde = { version = "1.0.228", features = ["derive"] }
+signal-hook = "0.4.5"
+tetsu-installer-core = { path = "../tetsu-installer-core" }
+tetsu-tx = { path = "../tetsu-tx" }
+toml = "1.1.8"
+
+[dev-dependencies]
+tempfile = "3.27.0"
