@@ -136,7 +136,11 @@ fn check_capability(m: &Method, path: &str, out: &mut Vec<Violation>) {
         }
         None => {
             let name = path.rsplit('.').next().unwrap_or(path);
-            let read = READ_PREFIXES.iter().any(|p| name.starts_with(p));
+            // `ListItems` is a read, `Listen` is not: the prefix ends a word.
+            let read = READ_PREFIXES.iter().any(|p| {
+                name.strip_prefix(p)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_uppercase))
+            });
             if !read && !CAPABILITY_EXEMPT.contains(&path) {
                 out.push(Violation::new(
                     Kind::MissingCapability,
