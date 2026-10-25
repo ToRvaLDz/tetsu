@@ -8,6 +8,7 @@ use tetsu_tx::store::record::RECORDS_DIR;
 use tetsu_tx::tx::nspawn::DEFAULT_CACHE;
 
 use crate::preflight::SecureBoot;
+use crate::secureboot::MicrosoftCerts;
 
 /// Default private directory for secret files and scratch data.
 pub const DEFAULT_RUN_DIR: &str = "/run/tetsu-installer";
@@ -21,15 +22,6 @@ pub const ROOT_LABEL: &str = "TETSU-ROOT";
 pub const BTRFS_LABEL: &str = "tetsu";
 /// Where the keys live inside the target, below the `@var` subvolume.
 pub const KEYS_SUBDIR: &str = "lib/tetsu/keys";
-
-/// Microsoft certificates (DER or PEM) for the Secure Boot lists. The KEK
-/// list takes the key-exchange CAs, the db list the signing CAs; the
-/// caller decides which file goes where.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct MicrosoftCerts {
-    pub kek: Vec<PathBuf>,
-    pub db: Vec<PathBuf>,
-}
 
 /// Paths and machine facts the plan needs besides the answers.
 #[derive(Clone, Debug, PartialEq, Eq)]

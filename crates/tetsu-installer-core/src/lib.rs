@@ -13,6 +13,7 @@ pub mod install;
 pub mod keyboard;
 pub mod preflight;
 pub mod secret;
+pub mod secureboot;
 pub mod summary;
 #[cfg(test)]
 pub(crate) mod testing;
