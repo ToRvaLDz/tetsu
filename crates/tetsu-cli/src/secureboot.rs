@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use tetsu_installer_core::efi;
 use tetsu_installer_core::entropy::Entropy;
+use tetsu_installer_core::error::InstallError;
 use tetsu_installer_core::install::rundir::RunDir;
 use tetsu_installer_core::preflight::{SecureBoot, is_uefi, secure_boot_state};
 use tetsu_installer_core::secureboot::trust::{Trust, trust_steps};
@@ -98,9 +99,11 @@ fn random_guid(ctx: &Context<'_>) -> Result<String, String> {
     Ok(guid(bytes))
 }
 
-/// Enroll the keys of the keys directory; on success mark the unlock level
-/// file so the next boot seals the TPM.
-pub fn enroll(ctx: &Context<'_>) -> Result<String, String> {
+/// Enroll the keys of the keys directory together with the Microsoft
+/// certificates; on success mark the unlock level file so the next boot
+/// seals the TPM. With no certificate found it refuses, unless
+/// `without_microsoft` asks for Tetsu's keys alone.
+pub fn enroll(ctx: &Context<'_>, without_microsoft: bool) -> Result<String, String> {
     require_root(ctx, "tetsu secureboot enroll")?;
     require_uefi(ctx)?;
     if secure_boot_state(&ctx.paths.root) != SecureBoot::SetupMode {
@@ -121,8 +124,15 @@ pub fn enroll(ctx: &Context<'_>) -> Result<String, String> {
             work_dir: work.to_path_buf(),
             owner_guid,
             microsoft: MicrosoftCerts::from_dir(&ctx.paths.microsoft_dir),
+            without_microsoft,
         };
-        Ok(enrollment_steps(&enrollment))
+        enrollment_steps(&enrollment).map_err(|e| match e {
+            InstallError::NoMicrosoftCerts => format!(
+                "{e} ({}); pass --without-microsoft to enroll Tetsu's keys alone",
+                ctx.paths.microsoft_dir.display()
+            ),
+            other => other.to_string(),
+        })
     })?;
     Ok(mark_enrolled(&ctx.paths.level_file))
 }

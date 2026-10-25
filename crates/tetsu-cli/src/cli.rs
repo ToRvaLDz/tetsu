@@ -3,11 +3,14 @@
 use std::path::PathBuf;
 
 pub const USAGE: &str = "\
-usage: tetsu secureboot enroll
+usage: tetsu secureboot enroll [--without-microsoft]
        tetsu secureboot trust <cert>
 
   secureboot enroll   enroll the Secure Boot keys of /var/lib/tetsu/keys
-                      (the firmware must be in Setup Mode)
+                      together with the Microsoft certificates (the
+                      firmware must be in Setup Mode); refused when the
+                      certificates are missing, unless --without-microsoft
+                      says Tetsu's keys alone are meant
   secureboot trust    trust one more certificate in the db: a .der, .crt or
                       .pem certificate, or a pre-signed .auth file
 
@@ -15,7 +18,7 @@ exit status: 0 done, 1 failed, 2 usage error";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    Enroll,
+    Enroll { without_microsoft: bool },
     Trust(PathBuf),
     Help,
 }
@@ -25,7 +28,12 @@ pub fn parse(args: &[String]) -> Option<Command> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["-h" | "--help"] | ["secureboot", "-h" | "--help"] => Some(Command::Help),
-        ["secureboot", "enroll"] => Some(Command::Enroll),
+        ["secureboot", "enroll"] => Some(Command::Enroll {
+            without_microsoft: false,
+        }),
+        ["secureboot", "enroll", "--without-microsoft"] => Some(Command::Enroll {
+            without_microsoft: true,
+        }),
         ["secureboot", "trust", cert] if !cert.is_empty() => {
             Some(Command::Trust(PathBuf::from(cert)))
         }
@@ -43,7 +51,18 @@ mod tests {
 
     #[test]
     fn the_secureboot_group_parses() {
-        assert_eq!(parse_args(&["secureboot", "enroll"]), Some(Command::Enroll));
+        assert_eq!(
+            parse_args(&["secureboot", "enroll"]),
+            Some(Command::Enroll {
+                without_microsoft: false
+            })
+        );
+        assert_eq!(
+            parse_args(&["secureboot", "enroll", "--without-microsoft"]),
+            Some(Command::Enroll {
+                without_microsoft: true
+            })
+        );
         assert_eq!(
             parse_args(&["secureboot", "trust", "/c/a.der"]),
             Some(Command::Trust("/c/a.der".into()))

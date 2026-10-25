@@ -55,6 +55,13 @@ impl MicrosoftCerts {
     }
 }
 
+impl MicrosoftCerts {
+    /// No certificate at all.
+    pub fn is_empty(&self) -> bool {
+        self.kek.is_empty() && self.db.is_empty()
+    }
+}
+
 fn der_files(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
@@ -78,6 +85,9 @@ pub struct Enrollment {
     /// Owner GUID of our entries.
     pub owner_guid: String,
     pub microsoft: MicrosoftCerts,
+    /// Enroll Tetsu's keys alone, on purpose. Without it an empty
+    /// `microsoft` is refused: the db would lack the Microsoft UEFI CA.
+    pub without_microsoft: bool,
 }
 
 /// One external command.
@@ -141,8 +151,12 @@ fn microsoft_lists(
     lists
 }
 
-/// The full argv sequence of an enrollment.
-pub fn enrollment_steps(e: &Enrollment) -> Vec<Step> {
+/// The full argv sequence of an enrollment. Refuses to enroll without the
+/// Microsoft certificates unless `without_microsoft` says so.
+pub fn enrollment_steps(e: &Enrollment) -> Result<Vec<Step>, InstallError> {
+    if e.microsoft.is_empty() && !e.without_microsoft {
+        return Err(InstallError::NoMicrosoftCerts);
+    }
     let key = |n: &str| e.keys_dir.join(format!("{n}.key"));
     let crt = |n: &str| e.keys_dir.join(format!("{n}.crt"));
     let work = |n: &str| e.work_dir.join(n);
@@ -223,7 +237,7 @@ pub fn enrollment_steps(e: &Enrollment) -> Vec<Step> {
         &[&"-a", &"-f", &work("KEK.auth"), &"KEK"],
     ));
     steps.push(cmd("efi-updatevar", &[&"-f", &work("PK.auth"), &"PK"]));
-    steps
+    Ok(steps)
 }
 
 /// Run `steps` in order, stopping at the first failure.
@@ -253,6 +267,14 @@ mod tests {
             work_dir: "/w".into(),
             owner_guid: "11111111-2222-4333-8444-555555555555".into(),
             microsoft,
+            without_microsoft: true,
+        }
+    }
+
+    fn some_microsoft() -> MicrosoftCerts {
+        MicrosoftCerts {
+            kek: vec!["/ms/kek.der".into()],
+            db: vec!["/ms/uefi.der".into()],
         }
     }
 
@@ -286,7 +308,7 @@ mod tests {
 
     #[test]
     fn own_keys_only() {
-        let got = lines(&enrollment_steps(&enrollment(MicrosoftCerts::default())));
+        let got = lines(&enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap());
         let guid = "11111111-2222-4333-8444-555555555555";
         assert_eq!(
             got,
@@ -310,12 +332,27 @@ mod tests {
     }
 
     #[test]
+    fn no_microsoft_certificates_is_refused_unless_asked_for() {
+        let mut e = enrollment(MicrosoftCerts::default());
+        e.without_microsoft = false;
+        assert!(matches!(
+            enrollment_steps(&e),
+            Err(InstallError::NoMicrosoftCerts)
+        ));
+        e.without_microsoft = true;
+        assert!(enrollment_steps(&e).is_ok());
+        e.without_microsoft = false;
+        e.microsoft = some_microsoft();
+        assert!(enrollment_steps(&e).is_ok());
+    }
+
+    #[test]
     fn microsoft_certificates_are_converted_and_appended() {
         let ms = MicrosoftCerts {
             kek: vec!["/ms/kek.der".into()],
             db: vec!["/ms/win.der".into(), "/ms/uefi.pem".into()],
         };
-        let got = lines(&enrollment_steps(&enrollment(ms)));
+        let got = lines(&enrollment_steps(&enrollment(ms)).unwrap());
         let g = |s: &str| {
             got.iter()
                 .position(|l| l == s)
@@ -341,7 +378,7 @@ mod tests {
 
     #[test]
     fn the_pk_is_written_last_and_the_others_are_appended() {
-        let got = lines(&enrollment_steps(&enrollment(MicrosoftCerts::default())));
+        let got = lines(&enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap());
         let writes: Vec<&String> = got
             .iter()
             .filter(|l| l.starts_with("efi-updatevar"))

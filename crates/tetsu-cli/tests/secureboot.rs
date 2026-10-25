@@ -68,6 +68,10 @@ impl Machine {
         let dir = tempfile::tempdir().unwrap();
         let m = Self { dir };
         fs::create_dir_all(m.path("sys/firmware/efi/efivars")).unwrap();
+        for list in ["kek", "db"] {
+            fs::create_dir_all(m.path(&format!("ms/{list}"))).unwrap();
+            fs::write(m.path(&format!("ms/{list}/ms.der")), "").unwrap();
+        }
         fs::create_dir_all(m.path("keys")).unwrap();
         for name in ["PK", "KEK", "db"] {
             fs::write(m.path(&format!("keys/{name}.key")), "k").unwrap();
@@ -139,10 +143,8 @@ fn enroll_runs_the_installer_sequence_and_marks_the_level() {
     let m = Machine::new();
     m.mode(true, false);
     m.level("level = \"balanced\"\nstate = \"pending\"\n");
-    fs::create_dir_all(m.path("ms/kek")).unwrap();
-    fs::write(m.path("ms/kek/ms.der"), "").unwrap();
     let r = Recorder::default();
-    let out = enroll(&ctx(&m, &r, true)).unwrap();
+    let out = enroll(&ctx(&m, &r, true), false).unwrap();
     assert!(out.contains("next boot"), "{out}");
     let lines = r.lines.borrow();
     let work = m.path("work");
@@ -169,12 +171,33 @@ fn enroll_runs_the_installer_sequence_and_marks_the_level() {
 }
 
 #[test]
+fn enroll_refuses_without_the_microsoft_certificates_unless_told() {
+    let m = Machine::new();
+    m.mode(true, false);
+    m.level("level = \"comfort\"\nstate = \"pending\"\n");
+    fs::remove_dir_all(m.path("ms")).unwrap();
+    let r = Recorder::default();
+    let err = enroll(&ctx(&m, &r, true), false).unwrap_err();
+    assert!(err.contains("Microsoft"), "{err}");
+    assert!(err.contains("--without-microsoft"), "{err}");
+    // Nothing ran, the level is untouched.
+    assert!(r.lines.borrow().is_empty());
+    assert!(!m.level_text().contains("enrolled"));
+    assert!(!m.path("work").exists());
+    // The explicit flag enrolls Tetsu's keys alone.
+    enroll(&ctx(&m, &r, true), true).unwrap();
+    let lines = r.lines.borrow();
+    assert!(lines.iter().all(|l| !l.starts_with("openssl")));
+    assert!(lines.last().unwrap().ends_with(" PK"));
+}
+
+#[test]
 fn enroll_leaves_a_paranoid_level_alone() {
     let m = Machine::new();
     m.mode(true, false);
     m.level("level = \"paranoid\"\nstate = \"sealed\"\n");
     let r = Recorder::default();
-    enroll(&ctx(&m, &r, true)).unwrap();
+    enroll(&ctx(&m, &r, true), false).unwrap();
     assert_eq!(m.level_text(), "level = \"paranoid\"\nstate = \"sealed\"\n");
 }
 
@@ -183,7 +206,7 @@ fn enroll_without_a_level_file_still_succeeds_with_a_note() {
     let m = Machine::new();
     m.mode(true, false);
     let r = Recorder::default();
-    let out = enroll(&ctx(&m, &r, true)).unwrap();
+    let out = enroll(&ctx(&m, &r, true), false).unwrap();
     assert!(out.contains("not updated"), "{out}");
 }
 
@@ -192,7 +215,7 @@ fn enroll_refuses_outside_setup_mode_and_changes_nothing() {
     let m = Machine::new();
     m.mode(false, true);
     let r = Recorder::default();
-    let err = enroll(&ctx(&m, &r, true)).unwrap_err();
+    let err = enroll(&ctx(&m, &r, true), false).unwrap_err();
     assert!(err.contains("put the firmware in Setup Mode"), "{err}");
     assert!(err.contains("clear the Secure Boot keys"), "{err}");
     assert!(r.lines.borrow().is_empty());
@@ -203,11 +226,23 @@ fn enroll_needs_root_uefi_and_the_keys() {
     let m = Machine::new();
     m.mode(true, false);
     let r = Recorder::default();
-    assert!(enroll(&ctx(&m, &r, false)).unwrap_err().contains("root"));
+    assert!(
+        enroll(&ctx(&m, &r, false), false)
+            .unwrap_err()
+            .contains("root")
+    );
     fs::remove_file(m.path("keys/KEK.key")).unwrap();
-    assert!(enroll(&ctx(&m, &r, true)).unwrap_err().contains("KEK.key"));
+    assert!(
+        enroll(&ctx(&m, &r, true), false)
+            .unwrap_err()
+            .contains("KEK.key")
+    );
     fs::remove_dir_all(m.path("sys")).unwrap();
-    assert!(enroll(&ctx(&m, &r, true)).unwrap_err().contains("UEFI"));
+    assert!(
+        enroll(&ctx(&m, &r, true), false)
+            .unwrap_err()
+            .contains("UEFI")
+    );
     assert!(r.lines.borrow().is_empty());
 }
 
@@ -220,7 +255,7 @@ fn a_failed_tool_fails_the_enrollment_and_cleans_up() {
         fail_on: Some("efi-updatevar"),
         ..Recorder::default()
     };
-    assert!(enroll(&ctx(&m, &r, true)).is_err());
+    assert!(enroll(&ctx(&m, &r, true), false).is_err());
     assert!(!m.path("work").exists());
     assert!(!m.level_text().contains("enrolled"));
 }

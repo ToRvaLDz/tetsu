@@ -37,6 +37,10 @@ pub struct InstallTarget {
     /// Package cache bound into the initrd build container.
     pub cache_dir: PathBuf,
     pub microsoft_certs: MicrosoftCerts,
+    /// Enroll Tetsu's keys alone even when `microsoft_certs` is empty. The
+    /// installer never sets it: without the certificates the enrollment
+    /// is refused and the install takes the off path.
+    pub without_microsoft: bool,
     /// Firmware state found by the preflight.
     pub secure_boot: SecureBoot,
     /// `console=` parameters of the installer's own kernel command line,
@@ -53,6 +57,7 @@ impl InstallTarget {
             run_dir: PathBuf::from(DEFAULT_RUN_DIR),
             cache_dir: PathBuf::from(DEFAULT_CACHE),
             microsoft_certs: MicrosoftCerts::default(),
+            without_microsoft: false,
             secure_boot,
             console_args: Vec::new(),
         }

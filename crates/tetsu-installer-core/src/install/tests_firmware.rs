@@ -123,6 +123,31 @@ fn microsoft_certificates_are_enrolled_when_given() {
 }
 
 #[test]
+fn without_the_microsoft_certificates_the_enrollment_is_refused_and_nothing_is_written() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, t| t.without_microsoft = false,
+        |_| {},
+    );
+    // The off path: the install completes, the firmware is not written.
+    run.out.result.as_ref().unwrap();
+    assert!(!run.out.keys_enrolled);
+    assert!(
+        run.lines()
+            .iter()
+            .all(|l| !l.starts_with("efi-updatevar") && !l.contains("efi-sig-list"))
+    );
+    assert!(
+        warnings(&run)
+            .iter()
+            .any(|w| w.contains("Microsoft Secure Boot certificates are missing")),
+        "{:?}",
+        warnings(&run)
+    );
+}
+
+#[test]
 fn an_enrollment_failure_takes_the_off_path_and_the_install_goes_on() {
     let run = full_run(
         UnlockLevel::Comfort,

@@ -234,6 +234,9 @@ pub fn target(root: &Path, secure_boot: crate::preflight::SecureBoot) -> Install
         &root.join("work"),
         secure_boot,
     );
+    // Most tests enroll without Microsoft's certificates; the ones about
+    // them set their own.
+    t.without_microsoft = true;
     t.run_dir = root.join("run");
     t.cache_dir = root.join("cache");
     t

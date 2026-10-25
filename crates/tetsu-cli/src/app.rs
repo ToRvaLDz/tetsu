@@ -26,7 +26,7 @@ pub fn main(args: impl IntoIterator<Item = String>) -> ExitCode {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
         }
-        Command::Enroll => secureboot::enroll(&ctx),
+        Command::Enroll { without_microsoft } => secureboot::enroll(&ctx, without_microsoft),
         Command::Trust(cert) => secureboot::trust(&ctx, &cert),
     };
     match result {

@@ -107,8 +107,10 @@ impl Executor<'_> {
             work_dir: work_dir.clone(),
             owner_guid: guid(bytes),
             microsoft: self.target.microsoft_certs.clone(),
+            without_microsoft: self.target.without_microsoft,
         };
-        let result = run_steps(self.deps.runner, &enrollment_steps(&enrollment));
+        let result =
+            enrollment_steps(&enrollment).and_then(|steps| run_steps(self.deps.runner, &steps));
         let _ = fs::remove_dir_all(&work_dir);
         result
     }

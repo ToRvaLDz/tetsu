@@ -50,6 +50,12 @@ pub enum InstallError {
     /// An installation step cannot proceed; the message says why.
     #[error("{0}")]
     Failed(String),
+    /// An enrollment without the Microsoft certificates was not asked for.
+    #[error(
+        "the Microsoft Secure Boot certificates are missing: enrolling only Tetsu's keys \
+         would stop Windows and firmware option ROMs from booting"
+    )]
+    NoMicrosoftCerts,
     /// The QR code cannot be built for the payload.
     #[error("cannot build QR code: {0}")]
     Qr(String),
