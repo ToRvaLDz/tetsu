@@ -73,13 +73,30 @@ test_dry_run_target_disk() {
   : >"$SCRATCH/target.img"
   out=$("$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" \
     --target-disk "$SCRATCH/target.img" --snapshot 2>&1)
-  assert_contains "target-disk: second virtio drive" "$out" "file=$SCRATCH/target.img,if=virtio"
-  assert_not_contains "target-disk: never snapshotted" "$out" "target.img,if=virtio,snapshot"
+  assert_contains "target-disk: second virtio drive" "$out" "file=$SCRATCH/target.img,if=none,id=target0"
+  assert_contains "target-disk: known serial for the by-id link" "$out" "virtio-blk-pci,drive=target0,serial=tetsu-target"
+  assert_not_contains "target-disk: never snapshotted" "$out" "target.img,if=none,id=target0,snapshot"
   assert_contains "target-disk: boot disk still snapshotted" "$out" "file=$SCRATCH/disk.img,if=virtio,snapshot=on"
   assert_status "target-disk: needs a boot disk or iso (usage 64)" 64 \
     "$VM" start --dry-run --state "$st" --target-disk "$SCRATCH/target.img"
   assert_status "target-disk: missing file" 1 \
     "$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" --target-disk "$SCRATCH/none.img"
+}
+
+test_dry_run_extra_disk() {
+  local st="$SCRATCH/dry" out
+  : >"$SCRATCH/answers.img"
+  : >"$SCRATCH/more.img"
+  out=$("$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" --snapshot \
+    --extra-disk "$SCRATCH/answers.img" --extra-disk "$SCRATCH/more.img" 2>&1)
+  assert_contains "extra-disk: first drive and serial" "$out" \
+    "file=$SCRATCH/answers.img,if=none,id=extra1 -device virtio-blk-pci,drive=extra1,serial=tetsu-extra1"
+  assert_contains "extra-disk: repeatable" "$out" "drive=extra2,serial=tetsu-extra2"
+  assert_not_contains "extra-disk: never snapshotted" "$out" "answers.img,if=none,id=extra1,snapshot"
+  assert_status "extra-disk: needs a boot disk or iso (usage 64)" 64 \
+    "$VM" start --dry-run --state "$st" --extra-disk "$SCRATCH/answers.img"
+  assert_status "extra-disk: missing file" 1 \
+    "$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" --extra-disk "$SCRATCH/none.img"
 }
 
 test_dry_run_errors() {
@@ -174,6 +191,7 @@ test_stale_swtpm
 test_usage_errors
 test_dry_run_smbios
 test_dry_run_target_disk
+test_dry_run_extra_disk
 test_dry_run_errors
 
 # ---------------------------------------------------------------- wait-for

@@ -48,7 +48,8 @@ gitignored); `start` also takes it, together with the flags below.
 | Flag                  | Meaning                                                        |
 |-----------------------|----------------------------------------------------------------|
 | `--disk IMG`          | virtio disk (format auto-probed)                               |
-| `--target-disk IMG`   | second virtio disk, always written to (an install target; `--snapshot` does not apply); needs a boot disk or ISO |
+| `--target-disk IMG`   | second virtio disk, always written to (an install target; `--snapshot` does not apply); serial `tetsu-target`, so the guest sees `/dev/disk/by-id/virtio-tetsu-target`; needs a boot disk or ISO |
+| `--extra-disk IMG`    | further virtio disk, written to, repeatable (serials `tetsu-extra1`, `tetsu-extra2`, ...; e.g. a `TETSU-ANSWERS` volume); needs a boot disk or ISO |
 | `--iso ISO`           | ISO attached as a read-only cdrom (at least one of disk/iso)   |
 | `--state DIR`         | state directory                                                |
 | `--mem MB`            | memory, default 2048                                           |

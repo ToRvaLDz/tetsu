@@ -55,7 +55,10 @@ start_usage() {
   cat <<'USAGE'
 Usage: tetsu-vm start [options]
   --disk IMG            virtio disk image
-  --target-disk IMG     second virtio disk, written to (an install target; never snapshotted)
+  --target-disk IMG     second virtio disk, written to (an install target; never snapshotted;
+                        serial tetsu-target, so /dev/disk/by-id/virtio-tetsu-target)
+  --extra-disk IMG      further virtio disk, written to, repeatable (serial tetsu-extra1, ...;
+                        e.g. a TETSU-ANSWERS volume); needs a boot --disk or --iso
   --iso ISO             boot ISO (at least one of --disk / --iso)
   --state DIR           state directory (default <repo>/target/vm/default)
   --mem MB              memory (default 2048)
@@ -72,18 +75,19 @@ USAGE
 }
 
 # Parsed options (globals, set by parse_start_args).
-O_DISK="" O_TARGET="" O_ISO="" O_STATE="$DEFAULT_STATE" O_MEM=2048 O_CPUS=2 O_SNAPSHOT=0
+O_DISK="" O_TARGET="" O_EXTRA=() O_ISO="" O_STATE="$DEFAULT_STATE" O_MEM=2048 O_CPUS=2 O_SNAPSHOT=0
 O_VARS="" O_FRESH=0 O_CMDLINE="" O_SERIAL=0 O_GUI=0 O_DRY=0
 O_CREDS=()
 
 parse_start_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      --disk | --target-disk | --iso | --state | --mem | --cpus | --vars | --cmdline-extra | --credential)
+      --disk | --target-disk | --extra-disk | --iso | --state | --mem | --cpus | --vars | --cmdline-extra | --credential)
         [ $# -ge 2 ] || usage_die "$1 needs a value"
         case "$1" in
           --disk) O_DISK=$2 ;;
           --target-disk) O_TARGET=$2 ;;
+          --extra-disk) O_EXTRA+=("$2") ;;
           --iso) O_ISO=$2 ;;
           --state) O_STATE=$2 ;;
           --mem) O_MEM=$2 ;;
@@ -107,6 +111,11 @@ parse_start_args() {
   [ -z "$O_DISK" ] || [ -r "$O_DISK" ] || die "disk image '$O_DISK' not found"
   [ -z "$O_TARGET" ] || [ -r "$O_TARGET" ] || die "target disk image '$O_TARGET' not found"
   [ -z "$O_TARGET" ] || [ -n "$O_DISK$O_ISO" ] || usage_die "start: --target-disk needs a boot --disk or --iso"
+  local x
+  for x in ${O_EXTRA[@]+"${O_EXTRA[@]}"}; do
+    [ -r "$x" ] || die "extra disk image '$x' not found"
+  done
+  [ "${#O_EXTRA[@]}" -eq 0 ] || [ -n "$O_DISK$O_ISO" ] || usage_die "start: --extra-disk needs a boot --disk or --iso"
   [ -z "$O_ISO" ] || [ -r "$O_ISO" ] || die "ISO '$O_ISO' not found (try tools/vm/fetch-arch-iso)"
   case "$O_MEM$O_CPUS" in *[!0-9]*) usage_die "--mem and --cpus must be integers" ;; esac
   O_STATE=$(readlink -m "$O_STATE")
@@ -131,7 +140,12 @@ build_argv() {
   [ "$O_SNAPSHOT" -eq 0 ] || snap=",snapshot=on"
   [ -z "$O_DISK" ] || ARGV+=(-drive "file=$(qesc "$O_DISK"),if=virtio$snap")
   # The install target: plain, so that what an installer writes survives.
-  [ -z "$O_TARGET" ] || ARGV+=(-drive "file=$(qesc "$O_TARGET"),if=virtio")
+  [ -z "$O_TARGET" ] || ARGV+=(-drive "file=$(qesc "$O_TARGET"),if=none,id=target0" -device "virtio-blk-pci,drive=target0,serial=tetsu-target")
+  local i=0 x
+  for x in ${O_EXTRA[@]+"${O_EXTRA[@]}"}; do
+    i=$((i + 1))
+    ARGV+=(-drive "file=$(qesc "$x"),if=none,id=extra$i" -device "virtio-blk-pci,drive=extra$i,serial=tetsu-extra$i")
+  done
   [ -z "$O_ISO" ] || ARGV+=(-drive "file=$(qesc "$O_ISO"),media=cdrom,readonly=on")
 
   cmdline=$O_CMDLINE
