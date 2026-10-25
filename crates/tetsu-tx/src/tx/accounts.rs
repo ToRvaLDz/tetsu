@@ -2,6 +2,8 @@
 //! system users and groups its packages added, the running system's keep
 //! the accounts the user made. Pure text; the first-boot sync reuses it.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 /// The account files that are merged, relative to `/etc`.
 pub const ACCOUNT_FILES: [&str; 4] = ["passwd", "group", "shadow", "gshadow"];
 
@@ -10,8 +12,28 @@ pub const ACCOUNT_FILES: [&str; 4] = ["passwd", "group", "shadow", "gshadow"];
 /// kept and keys only `running` has are appended in its order. Blank lines
 /// are dropped and a repeated key keeps its first line.
 pub fn merge(target: &str, running: &str) -> String {
-    let _ = (target, running);
-    todo!()
+    let key = |line: &str| line.split(':').next().unwrap_or(line).to_owned();
+    let mut running_by_key: BTreeMap<String, &str> = BTreeMap::new();
+    for line in running.lines().filter(|l| !l.trim().is_empty()) {
+        running_by_key.entry(key(line)).or_insert(line);
+    }
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut out = String::new();
+    for line in target.lines().filter(|l| !l.trim().is_empty()) {
+        let k = key(line);
+        if !seen.insert(k.clone()) {
+            continue;
+        }
+        out.push_str(running_by_key.get(&k).copied().unwrap_or(line));
+        out.push('\n');
+    }
+    for line in running.lines().filter(|l| !l.trim().is_empty()) {
+        if seen.insert(key(line)) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 #[cfg(test)]
