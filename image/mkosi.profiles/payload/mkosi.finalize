@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Payload clean-up and layout, run by mkosi on the host with $BUILDROOT.
+set -euo pipefail
+root=$BUILDROOT
+
+# tetsu-tx keeps the pacman database inside the snapshot (/usr/lib/pacman)
+# and points /var/lib/pacman at it from @var (see store::snapshot).
+if [ -d "$root/var/lib/pacman" ] && [ ! -L "$root/var/lib/pacman" ]; then
+  rm -rf "$root/usr/lib/pacman"
+  mv "$root/var/lib/pacman" "$root/usr/lib/pacman"
+  ln -s /usr/lib/pacman "$root/var/lib/pacman"
+fi
+
+# Nothing machine-specific: no machine-id, no SSH host keys, no keyring
+# secrets (the first boot makes the keyring), no build-time logs or caches.
+rm -f "$root/etc/machine-id" "$root/var/lib/dbus/machine-id"
+rm -rf "$root"/etc/ssh/ssh_host_* "$root/etc/pacman.d/gnupg"
+rm -rf "$root"/var/cache/pacman/pkg/* "$root"/var/log/pacman.log "$root"/boot/*
+
+# No systemd-firstboot dialog: the installer already wrote the keyboard, language, timezone and hostname.
+mkdir -p "$BUILDROOT/etc/systemd/system"
+ln -sf /dev/null "$BUILDROOT/etc/systemd/system/systemd-firstboot.service"
+
+# The initrd is built at install time, by the installer, per kernel
+# (`mkinitcpio -k VER -g /usr/lib/tetsu/initrd.img` does not create the
+# directory).
+mkdir -p "$root/usr/lib/tetsu"
+rmdir "$root/root/.ssh" 2>/dev/null || true
+
+if ! ls "$root"/usr/lib/modules/*/vmlinuz >/dev/null 2>&1; then
+  echo "payload: no kernel under usr/lib/modules/*/vmlinuz" >&2
+  exit 1
+fi

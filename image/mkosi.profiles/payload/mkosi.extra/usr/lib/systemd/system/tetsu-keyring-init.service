@@ -1,0 +1,17 @@
+[Unit]
+Description=Initialize the pacman keyring (first boot)
+Documentation=man:pacman-key(8)
+# The payload ships no keyring secrets: every device makes its own local
+# signing key here and trusts the public Arch Linux keys on top of it.
+ConditionPathExists=!/etc/pacman.d/gnupg/trustdb.gpg
+After=systemd-random-seed.service
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pacman-key --init
+ExecStart=/usr/bin/pacman-key --populate archlinux
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
