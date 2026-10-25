@@ -391,6 +391,12 @@ fn untagged_reads_pass() {
 }
 
 #[test]
+fn read_prefix_needs_a_word_boundary() {
+    let v = extended("# Starts listening.\nmethod Listen() -> ()");
+    expect(&v, Kind::MissingCapability, "Listen");
+}
+
+#[test]
 fn tagged_read_passes() {
     let v =
         extended("# Lists items.\n# @capability test.read\nmethod ListItems() -> (items: []Item)");
