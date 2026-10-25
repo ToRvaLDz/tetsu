@@ -16,6 +16,8 @@ and [Define the bus contract v1](https://github.com/ToRvaLDz/tetsu/issues/16).
 | `org.tetsu.comp.output.v1` | compositor | session |
 | `org.tetsu.comp.clipboard.v1` | compositor | session |
 | `org.tetsu.comp.session.v1` | compositor | session |
+| `org.tetsu.comp.render.v1` | compositor | session |
+| `org.tetsu.comp.config.v1` | compositor | session |
 | `org.tetsu.tx.v1` | `tetsu-tx` | system |
 | `org.tetsu.notify.v1` | `tetsu-notifyd` | session |
 
@@ -81,6 +83,29 @@ Every error carries exactly one of `@transient` and `@permanent`.
 - A sender's identity comes from the socket credentials, never from a
   field the caller fills. Ownership (of a notification, for `Close`)
   belongs to the peer process, not to one connection.
+
+## Compositor configuration
+
+Decided in [Define the compositor render and config interfaces of the bus contract](https://github.com/ToRvaLDz/tetsu/issues/31).
+
+- The compositor configuration has three layers, nearest wins key by
+  key: image defaults < managed state (written only by the machine) <
+  user file (never written by the machine). `config.v1` shows every
+  known key with its effective value, its origin and the value of each
+  layer, plus the diagnostics of the last user-file load.
+- A key is writable through `SetManaged` only when `tetsu-comp` declares
+  it so (closed by default); a key that runs commands never is. Keys
+  with a dedicated call (`render.v1` `SetRenderDevice` and
+  `SetExplicitSync`, `output.v1` `ConfigureOutputs`) are written only by
+  that call, and `config.v1` names it in `method`.
+- Every write to the managed state is rejected with `OverriddenByUser`,
+  nothing written, when the user file sets one of its keys: a proposal
+  never silently fails to take effect.
+- The render device and explicit sync never change while the session is
+  locked: the request waits for unlock (`pending`), and is discarded at
+  unlock (`pending_dropped`) when the device is gone or the user file
+  now sets it. A failed hot switch returns to the previous device and
+  persists nothing.
 
 ## Client obligations
 

@@ -1,0 +1,87 @@
+# The effective configuration of the compositor, in three layers, nearest
+# wins: image defaults < managed state (written only by the machine) <
+# user file (never written by the machine).
+interface org.tetsu.comp.config.v1
+
+type ConfigEntry (
+  # Dotted path, for example "idle.timeout_ms".
+  key: string,
+  # The effective value.
+  value: object,
+  origin: (default, managed, user),
+  # Null when the layer does not set the key.
+  default_value: ?object,
+  managed_value: ?object,
+  user_value: ?object,
+  # Whether SetManaged accepts the key. A key is writable only when
+  # tetsu-comp declares it so; a key that runs commands never is.
+  writable: bool,
+  # For a key that is not writable, the fully qualified method that
+  # writes it; null when only the user file sets it.
+  method: ?string
+)
+
+# A problem found when the user file was last loaded.
+type Diagnostic (
+  # 1-based line in the user file; null when not tied to a line.
+  line: ?int,
+  # Null when not tied to a key.
+  key: ?string,
+  message: string
+)
+
+type ConfigEvent (
+  kind: (initial, changed, removed, diagnostics),
+  # initial: every known key.
+  entries: ?[]ConfigEntry,
+  # changed: the full new state of one key (an origin change included).
+  entry: ?ConfigEntry,
+  # removed: the key.
+  key: ?string,
+  # initial, diagnostics: the full list after a load of the user file.
+  diagnostics: ?[]Diagnostic
+)
+
+# Lists every known config key with its effective value and origin, and
+# the diagnostics of the user file.
+method GetConfig() -> (entries: []ConfigEntry, diagnostics: []Diagnostic)
+
+# Streams config changes (user file reloads included): `initial` first,
+# then deltas.
+method WatchConfig() -> (event: ConfigEvent)
+
+# Writes values into the managed state and removes others, atomically:
+# all of it or none. Rejected as a whole when a key is unknown, not
+# writable, invalid, set by the user file, or both set and removed.
+method SetManaged(
+  # key -> the new managed value.
+  values: [string]object,
+  # Keys whose managed value is removed, so a lower layer applies again.
+  remove: ?[]string
+) -> ()
+
+# No config key has this name.
+# @permanent
+error UnknownKey (key: string)
+
+# The value does not fit the key.
+# @permanent
+error InvalidValue (key: string, reason: string)
+
+# The key is not writable through SetManaged; `method` writes it, null
+# when only the user file does.
+# @permanent
+error KeyNotWritable (key: string, method: ?string)
+
+# The user file sets these keys, so the managed values would not take
+# effect; nothing was written.
+# @permanent
+error OverriddenByUser (keys: []string)
+
+# The managed state file could not be written.
+# @transient
+error StateWriteFailed (reason: string)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()

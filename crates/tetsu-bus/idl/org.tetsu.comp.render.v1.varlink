@@ -1,0 +1,160 @@
+# Rendering of the compositor: the render device, explicit sync and
+# render metrics per output. Every hardware-dependent setting here starts
+# from a generic heuristic, is measured, and may be changed; the user
+# file has the last word.
+interface org.tetsu.comp.render.v1
+
+type RenderDevice (
+  # Opaque; compare for equality only.
+  id: string,
+  # DRM render node, for example "/dev/dri/renderD128".
+  node: string,
+  # Kernel driver, for example "i915" or "nvidia".
+  driver: string,
+  # Null where not readable.
+  driver_version: ?string,
+  # From the PCI ids database; null when unknown.
+  name: ?string,
+  # The outputs wired to this device.
+  output_ids: []string,
+  # Power draw; null where not readable.
+  power_mw: ?int,
+  # Hot switches to this device that failed since the session started.
+  switch_failures: int
+)
+
+type ExplicitSync (
+  # The requested mode; `auto` enables it where supported.
+  mode: (auto, on, off),
+  # Whether the driver and the render device support it.
+  supported: bool,
+  # Whether it is in use now.
+  enabled: bool,
+  # Why it is unsupported or disabled, for example "nvidia < 555".
+  reason: ?string
+)
+
+# A device switch requested while the session is locked, applied at
+# unlock.
+type PendingDevice (
+  # True to return to the automatic choice; device_id is then null.
+  automatic: bool,
+  device_id: ?string
+)
+
+type Render (
+  # The device that renders now.
+  device_id: string,
+  # True when the device is chosen by the heuristic, false when set.
+  automatic: bool,
+  devices: []RenderDevice,
+  explicit_sync: ExplicitSync,
+  # Null when nothing waits for unlock.
+  pending_device: ?PendingDevice,
+  # Null when nothing waits for unlock.
+  pending_explicit_sync: ?(auto, on, off)
+)
+
+type RenderEvent (
+  kind: (initial, changed, pending_dropped),
+  # initial, changed: the full new state.
+  render: ?Render,
+  # pending_dropped: why a pending change was discarded at unlock
+  # instead of applied; a `changed` follows.
+  reason: ?(device_gone, overridden_by_user)
+)
+
+# Counters run since `since_at`; the window covers the last `window_ms`.
+type RenderStats (
+  output_id: string,
+  # The device composing this output.
+  device_id: string,
+  # When the counters started; a later value means they were reset (the
+  # output disappeared and came back).
+  since_at: string,
+  frames_presented: int,
+  frames_dropped: int,
+  # Frames copied through the CPU because the cross-GPU import failed.
+  cpu_copy_fallbacks: int,
+  sync_errors: int,
+  # Composition time of the last frame; null before the first frame.
+  last_composition_us: ?int,
+  window_ms: int,
+  window_frames_dropped: int,
+  # Null when the window holds no frame.
+  window_composition_p50_us: ?int,
+  # Null when the window holds no frame.
+  window_composition_p99_us: ?int,
+  window_cpu_copy_fallbacks: int,
+  window_sync_errors: int
+)
+
+type RenderStatsEvent (
+  kind: (initial, changed, removed),
+  # initial: every enabled output.
+  stats: ?[]RenderStats,
+  # changed: the full new stats of one output.
+  entry: ?RenderStats,
+  # removed: the output id.
+  id: ?string
+)
+
+# Tells which device renders, the devices available and the explicit
+# sync state.
+method GetRender() -> (render: Render)
+
+# Streams render device and explicit sync changes: `initial` first, then
+# deltas.
+method WatchRender() -> (event: RenderEvent)
+
+# Lists the render metrics of every enabled output.
+method ListRenderStats() -> (stats: []RenderStats)
+
+# Streams render metrics: `initial` first, then at most one `changed` per
+# output per second.
+method WatchRenderStats() -> (event: RenderStatsEvent)
+
+# Sets the render device and persists it in the managed state. Rejected
+# when the user file sets the device. While the session is locked the
+# switch waits for unlock (`pending` true); at unlock it is discarded if
+# the device is gone or the user file now sets it. A failed hot switch
+# returns to the previous device and persists nothing.
+method SetRenderDevice(
+  # Null returns to the automatic choice.
+  device_id: ?string
+) -> (pending: bool)
+
+# Sets the explicit sync mode and persists it in the managed state.
+# Rejected when the user file sets it, and `on` is rejected where it is
+# unsupported. While the session is locked the change waits for unlock
+# (`pending` true), as for SetRenderDevice.
+method SetExplicitSync(
+  # `auto` enables it where supported.
+  mode: (auto, on, off)
+) -> (pending: bool)
+
+# No render device has this id.
+# @permanent
+error DeviceNotFound (id: string)
+
+# The hardware or driver cannot do what was asked.
+# @permanent
+error UnsupportedByHardware (reason: string)
+
+# The hot switch failed; the previous device renders again and nothing
+# was persisted.
+# @transient
+error SwitchFailed (reason: string)
+
+# The user file sets these config keys, so the managed value would not
+# take effect; nothing was written.
+# @permanent
+error OverriddenByUser (keys: []string)
+
+# The managed state file could not be written.
+# @transient
+error StateWriteFailed (reason: string)
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()
