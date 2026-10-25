@@ -72,6 +72,24 @@ fetch_certs() {
   done <"$IMAGE/microsoft-certs.sha256"
 }
 
+# Copy the verified certificates to <root>/usr/share/tetsu/secureboot/microsoft
+# and check the copy against the pins again. Both images carry them: the
+# installer enrolls them, and `tetsu secureboot enroll` on the installed
+# system refuses to run without them.
+stage_certs() {
+  local dest="$1/usr/share/tetsu/secureboot/microsoft" sum rel url c
+  mkdir -p "$(dirname "$dest")"
+  cp -a "$CERTS" "$dest"
+  while read -r sum rel url; do
+    case "$sum" in '' | '#'*) continue ;; esac
+    [ "$(sha256sum "$dest/$rel" | cut -d' ' -f1)" = "$sum" ] \
+      || die "SHA-256 mismatch for the staged $rel; expected $sum"
+  done <"$IMAGE/microsoft-certs.sha256"
+  for c in kek db; do
+    [ -d "$dest/$c" ] || die "no certificates in $c/"
+  done
+}
+
 # The locales the installer can propose, from its keyboard table.
 locale_gen() {
   grep -ohE '"[a-z]{2,3}_[A-Z]{2}\.UTF-8"' \
@@ -91,20 +109,17 @@ stage_payload() {
   install -m 0644 "$initrd/tetsu-unlock-seal.service" "$root/usr/lib/systemd/system/"
   install -m 0644 "$initrd/tetsu-seal.install" "$root/usr/lib/initcpio/install/tetsu-seal"
   locale_gen | sort -u >"$root/etc/locale.gen"
+  stage_certs "$root"
 }
 
 stage_installer() {
-  local root="$STAGE/installer" c
+  local root="$STAGE/installer"
   rm -rf "$root"
-  mkdir -p "$root/usr/bin" "$root/usr/share/tetsu/medium" \
-    "$root/usr/share/tetsu/secureboot"
+  mkdir -p "$root/usr/bin" "$root/usr/share/tetsu/medium"
   install -m 0755 "$REPO/target/release/tetsu-installer" "$root/usr/bin/tetsu-installer"
   # The payload sits where the installer looks for it: <medium>/tetsu-payload.tar.
   cp --reflink=auto "$OUT/tetsu-payload.tar" "$root/usr/share/tetsu/medium/tetsu-payload.tar"
-  cp -a "$CERTS" "$root/usr/share/tetsu/secureboot/microsoft"
-  for c in kek db; do
-    [ -d "$root/usr/share/tetsu/secureboot/microsoft/$c" ] || die "no certificates in $c/"
-  done
+  stage_certs "$root"
 }
 
 mkosi_image() {

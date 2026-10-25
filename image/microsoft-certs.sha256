@@ -1,4 +1,4 @@
-# Microsoft Secure Boot certificates for the installer medium (DER).
+# Microsoft Secure Boot certificates for the installer medium and the installed system (DER).
 # <sha256>  <destination under usr/share/tetsu/secureboot/microsoft>  <source URL>
 #
 # The URLs are the download links of Microsoft's "Windows Secure Boot Key
