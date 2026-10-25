@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use zlink::connection::{ReadConnection, WriteConnection};
 use zlink::{Call, Connection, Listener as _, Reply};
 
+use crate::into_io;
 use crate::peer::Peer;
 
 type Socket = zlink::tokio::unix::Stream;
@@ -151,13 +152,6 @@ pub async fn serve<H: Handler>(mut listener: Listener, handler: Rc<H>) -> io::Re
                 eprintln!("tetsu-bus: connection closed: {e}");
             }
         });
-    }
-}
-
-fn into_io(e: zlink::Error) -> io::Error {
-    match e {
-        zlink::Error::Io(e) => e,
-        other => io::Error::other(other.to_string()),
     }
 }
 
