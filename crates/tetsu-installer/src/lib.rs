@@ -4,5 +4,6 @@
 pub mod answer_file;
 pub mod collect;
 pub mod locate;
+pub mod probe;
 pub mod text;
 pub mod tty;
