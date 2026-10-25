@@ -19,4 +19,5 @@ pub mod summary;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod unlock;
+pub mod unlockfile;
 pub mod user;

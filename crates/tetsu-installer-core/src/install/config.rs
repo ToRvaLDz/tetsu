@@ -3,6 +3,7 @@
 
 use crate::agent::AgentBackend;
 use crate::unlock::UnlockLevel;
+use crate::unlockfile::UnlockFile;
 
 /// UID and GID of the owner (the first regular user).
 pub const OWNER_ID: u32 = 1000;
@@ -166,12 +167,7 @@ pub fn staged_api_key(provider: &str, key: &str) -> String {
 /// `etc/tetsu/unlock-level.toml`. Paranoid needs no TPM seal, so it is
 /// done from the start; the others wait for the first boot.
 pub fn unlock_level(level: UnlockLevel) -> String {
-    let state = if level.needs_tpm() {
-        "pending"
-    } else {
-        "sealed"
-    };
-    format!("level = \"{}\"\nstate = \"{state}\"\n", level.id())
+    UnlockFile::initial(level).render()
 }
 
 /// `loader/loader.conf` of systemd-boot.
