@@ -298,6 +298,18 @@ mod tests {
     }
 
     #[test]
+    fn stage_fsyncs_the_parents_of_a_created_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        // Write+search without read: mkdir works, opening the root to fsync cannot.
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o300)).unwrap();
+        let esp = Esp::open(root.path());
+        let res = esp.stage(1, |p| fs::write(p, b"x").map_err(|e| BootError::io(p, e)));
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(res, Err(BootError::Io { .. })), "{res:?}");
+    }
+
+    #[test]
     fn failed_write_leaves_no_tmp() {
         let (_r, esp) = esp_with(&[]);
         let err = esp

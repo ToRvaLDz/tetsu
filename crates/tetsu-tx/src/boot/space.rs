@@ -153,6 +153,24 @@ mod tests {
     }
 
     #[test]
+    fn apply_gc_fsyncs_the_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        // Write+search without read: unlink works, opening it to fsync cannot.
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join("tetsu-1.efi");
+        fs::write(&file, b"x").unwrap();
+        fs::set_permissions(d.path(), fs::Permissions::from_mode(0o300)).unwrap();
+        let plan = GcPlan {
+            remove: vec![file.clone()],
+            freed_bytes: 1,
+        };
+        let res = apply_gc(&plan);
+        fs::set_permissions(d.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(!file.exists());
+        assert!(matches!(res, Err(BootError::Io { .. })), "{res:?}");
+    }
+
+    #[test]
     fn apply_gc_tolerates_already_missing_files() {
         let plan = GcPlan {
             remove: vec!["/nonexistent-tetsu-test/x.efi".into()],
