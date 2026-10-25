@@ -3,33 +3,140 @@
 //! writes state under `/var` at install time loses it with the scratch, so
 //! the transaction log says so.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 use super::TxError;
 
-/// Paths named by the `tmpfiles.d` entries of the snapshot `root`
-/// (`usr/lib/tmpfiles.d`, then `etc/tmpfiles.d`, which overrides a file of
-/// the same name; a symlink there masks it). Entries with specifiers are
-/// skipped; a glob is cut to its leading directory.
+/// The bound package cache inside the scratch `/var`, relative to it.
+const CACHE_REL: &str = "cache/pacman/pkg";
+
+fn io_failure(path: &Path, e: &std::io::Error) -> TxError {
+    TxError::failed(format!("{}: {e}", path.display()))
+}
+
+/// The first two fields of a `tmpfiles.d` line: the type and the path, the
+/// path possibly double-quoted.
+fn path_column(line: &str) -> Option<&str> {
+    let mut fields = line.trim().splitn(2, char::is_whitespace);
+    fields.next()?;
+    let rest = fields.next()?.trim_start();
+    match rest.strip_prefix('"') {
+        Some(quoted) => quoted.split_once('"').map(|(path, _)| path),
+        None => rest.split_whitespace().next(),
+    }
+}
+
+/// The `/var` directory an entry stands for: no specifiers, a glob cut to
+/// the directory before it.
+fn entry_path(raw: &str) -> Option<String> {
+    if raw.contains('%') {
+        return None;
+    }
+    let cut = match raw.find(['*', '?', '[']) {
+        Some(i) => raw[..i].rfind('/').map_or("", |slash| &raw[..slash]),
+        None => raw,
+    };
+    let path = cut.trim_end_matches('/');
+    (path == "/var" || path.starts_with("/var/")).then(|| path.to_owned())
+}
+
+/// The effective `*.conf` files: `etc` overrides `usr/lib` by name, and a
+/// symlink (usually to `/dev/null`) masks the name.
+fn effective_files(root: &Path) -> Result<Vec<PathBuf>, TxError> {
+    let mut by_name: BTreeMap<OsString, Option<PathBuf>> = BTreeMap::new();
+    for dir in ["usr/lib/tmpfiles.d", "etc/tmpfiles.d"] {
+        let dir = root.join(dir);
+        let read = match fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(io_failure(&dir, &e)),
+        };
+        for item in read {
+            let item = item.map_err(|e| io_failure(&dir, &e))?;
+            let name = item.file_name();
+            if Path::new(&name).extension() != Some(OsStr::new("conf")) {
+                continue;
+            }
+            let kind = item.file_type().map_err(|e| io_failure(&item.path(), &e))?;
+            by_name.insert(name, kind.is_file().then(|| item.path()));
+        }
+    }
+    Ok(by_name.into_values().flatten().collect())
+}
+
+/// Paths under `/var` named by the `tmpfiles.d` entries of the snapshot
+/// `root` (`usr/lib/tmpfiles.d`, then `etc/tmpfiles.d`, which overrides a
+/// file of the same name; a symlink there masks it). Entries with
+/// specifiers are skipped; a glob is cut to its leading directory.
 pub fn tmpfiles_paths(root: &Path) -> Result<Vec<String>, TxError> {
-    let _ = root;
-    todo!()
+    let mut paths = Vec::new();
+    for file in effective_files(root)? {
+        let text = fs::read_to_string(&file).map_err(|e| io_failure(&file, &e))?;
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(path) = path_column(line).and_then(entry_path) {
+                paths.push(path);
+            }
+        }
+    }
+    Ok(paths)
 }
 
 /// Whether `path` is an entry or lies under one. Entries too generic to say
 /// anything (`/var`, `/var/lib`, `/var/log`...: fewer than three components)
 /// cover nothing.
 pub fn covered(path: &str, entries: &[String]) -> bool {
-    let _ = (path, entries);
-    todo!()
+    entries.iter().any(|entry| {
+        let specific = entry.split('/').filter(|c| !c.is_empty()).count() >= 3;
+        specific
+            && path
+                .strip_prefix(entry.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
+}
+
+/// Collect the leaves under `dir` (`rel` is its path below the scratch).
+fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), TxError> {
+    let mut any = false;
+    for item in fs::read_dir(dir).map_err(|e| io_failure(dir, &e))? {
+        let item = item.map_err(|e| io_failure(dir, &e))?;
+        any = true;
+        let child = if rel.is_empty() {
+            item.file_name().to_string_lossy().into_owned()
+        } else {
+            format!("{rel}/{}", item.file_name().to_string_lossy())
+        };
+        let kind = item.file_type().map_err(|e| io_failure(&item.path(), &e))?;
+        if kind.is_dir() {
+            if child != CACHE_REL {
+                walk(&item.path(), &child, out)?;
+            }
+        } else {
+            out.push(format!("/var/{child}"));
+        }
+    }
+    if !any && !rel.is_empty() {
+        out.push(format!("/var/{rel}"));
+    }
+    Ok(())
 }
 
 /// The files, symlinks and empty directories under `scratch` (a `/var`) that
 /// no `tmpfiles.d` entry of `root` covers, as `/var/...` paths, sorted. The
 /// bound package cache is excluded.
 pub fn var_report(scratch: &Path, root: &Path) -> Result<Vec<String>, TxError> {
-    let _ = (scratch, root);
-    todo!()
+    let entries = tmpfiles_paths(root)?;
+    let mut found = Vec::new();
+    walk(scratch, "", &mut found)?;
+    found.retain(|p| !covered(p, &entries));
+    found.sort();
+    Ok(found)
 }
 
 #[cfg(test)]
