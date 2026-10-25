@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use super::TxError;
-use super::nspawn::{DEFAULT_CACHE, Network, Nspawn, PROGRAM};
+use super::nspawn::{Network, Nspawn, PROGRAM};
 use super::pkg::{blocking_packages, output_or_empty, parse_names};
 use crate::boot::BootError;
 use crate::boot::tool::Runner;
@@ -234,19 +234,13 @@ pub fn kernel_version(root: &Path) -> Result<String, TxError> {
 
 /// Build the initrd of `ver` at `/usr/lib/tetsu/initrd.img` inside `root`
 /// (offline). Public so the installer reuses it for transaction zero.
-pub fn build_initrd(
-    runner: &dyn Runner,
-    root: &Path,
-    scratch: &Path,
-    ver: &str,
-) -> Result<(), TxError> {
+pub fn build_initrd(runner: &dyn Runner, ns: &Nspawn, ver: &str) -> Result<(), TxError> {
     if ver.is_empty() || ver == "." || ver == ".." || ver.contains(['/', '\0']) {
         return Err(BootError::InvalidKernelVersion(ver.to_owned()).into());
     }
-    let ns = Nspawn::new(root, scratch, Path::new(DEFAULT_CACHE));
     let cmd = ["mkinitcpio", "-k", ver, "-g", INITRD];
-    in_container(runner, &ns, Network::Offline, "initrd build", &cmd)?;
-    let built = root.join(INITRD.trim_start_matches('/'));
+    in_container(runner, ns, Network::Offline, "initrd build", &cmd)?;
+    let built = ns.root.join(INITRD.trim_start_matches('/'));
     if !fs::symlink_metadata(&built).is_ok_and(|m| m.file_type().is_file()) {
         return Err(TxError::failed(format!(
             "mkinitcpio did not write {}",
@@ -518,10 +512,10 @@ mod tests {
                 move |_| fs::write(&img, b"initrd").unwrap()
             },
         );
-        build_initrd(&r, root.path(), Path::new("/s"), "6.12.1").unwrap();
+        let ns = Nspawn::new(root.path(), Path::new("/s"), Path::new(DEFAULT_CACHE));
+        build_initrd(&r, &ns, "6.12.1").unwrap();
         assert!(img.is_file());
         let expected = {
-            let ns = Nspawn::new(root.path(), Path::new("/s"), Path::new(DEFAULT_CACHE));
             let mut parts = vec!["systemd-nspawn".to_owned()];
             parts.extend(
                 ns.args(
@@ -543,18 +537,35 @@ mod tests {
     }
 
     #[test]
+    fn initrd_container_binds_the_configured_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let r = ScriptedRunner::new();
+        let ns = Nspawn::new(root.path(), Path::new("/s"), Path::new("/my/cache"));
+        let _ = build_initrd(&r, &ns, "6.12.1");
+        let lines = r.lines();
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("--bind=/my/cache:/var/cache/pacman/pkg"),
+            "{}",
+            lines[0]
+        );
+    }
+
+    #[test]
     fn initrd_that_mkinitcpio_did_not_write_is_a_failure() {
         let root = tempfile::tempdir().unwrap();
         let r = ScriptedRunner::new();
-        assert!(build_initrd(&r, root.path(), Path::new("/s"), "6.12.1").is_err());
+        let ns = Nspawn::new(root.path(), Path::new("/s"), Path::new(DEFAULT_CACHE));
+        assert!(build_initrd(&r, &ns, "6.12.1").is_err());
     }
 
     #[test]
     fn initrd_rejects_a_kernel_version_that_is_not_one_component() {
         let root = tempfile::tempdir().unwrap();
         let r = ScriptedRunner::new();
+        let ns = Nspawn::new(root.path(), Path::new("/s"), Path::new(DEFAULT_CACHE));
         for bad in ["", "..", "a/b"] {
-            assert!(build_initrd(&r, root.path(), Path::new("/s"), bad).is_err());
+            assert!(build_initrd(&r, &ns, bad).is_err());
         }
         assert!(r.lines().is_empty());
     }

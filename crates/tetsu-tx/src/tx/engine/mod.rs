@@ -193,7 +193,7 @@ impl Engine<'_> {
         self.prepare_scratch(scratch, &mut log)?;
         let ns = Nspawn::new(&root, scratch, &self.paths.cache);
         let (changes, user_layer) = self.prepare(request, &ns, begun, scratch, &mut log)?;
-        let ver = self.kernel_and_initrd(request, &ns, scratch, &user_layer, &mut log)?;
+        let ver = self.kernel_and_initrd(request, &ns, &user_layer, &mut log)?;
         let spec = UkiSpec {
             counter: begun.counter,
             snapshot_root: root.clone(),
@@ -282,7 +282,6 @@ impl Engine<'_> {
         &self,
         request: &Request,
         ns: &Nspawn,
-        scratch: &Path,
         user_layer: &[String],
         log: &mut Vec<String>,
     ) -> Result<String, TxError> {
@@ -295,7 +294,7 @@ impl Engine<'_> {
             Ok(Dkms::Skipped) => {}
             Err(e) => return Err(packages::dkms_blocked(e, request, user_layer)),
         }
-        steps::build_initrd(self.runner, &ns.root, scratch, &ver)?;
+        steps::build_initrd(self.runner, ns, &ver)?;
         Ok(ver)
     }
 

@@ -764,3 +764,16 @@ fn the_scratch_dirs_follow_the_nspawn_prefix() {
         crate::tx::nspawn::scratch_dir(5)
     );
 }
+
+#[test]
+fn every_container_binds_the_configured_cache_including_the_initrd_build() {
+    let env = Env::new();
+    env.run(&Request::Update).unwrap();
+    let bind = format!("--bind={}:/var/cache/pacman/pkg", env.cache.display());
+    let lines = env.calls("systemd-nspawn");
+    assert!(!lines.is_empty());
+    for l in &lines {
+        assert!(l.contains(&bind), "{l}");
+    }
+    assert!(lines.iter().any(|l| l.contains("mkinitcpio")));
+}
