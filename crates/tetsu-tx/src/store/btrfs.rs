@@ -17,6 +17,9 @@ pub trait Btrfs {
     fn set_readonly(&self, path: &Path, readonly: bool) -> Result<(), StoreError>;
     /// `btrfs filesystem sync`: commit the filesystem transaction.
     fn sync(&self, path: &Path) -> Result<(), StoreError>;
+    /// Whether `path` is a subvolume root (not a plain directory). `false`
+    /// when it does not exist.
+    fn is_subvolume(&self, path: &Path) -> Result<bool, StoreError>;
 }
 
 /// [`Btrfs`] through the `btrfs` command of btrfs-progs.
@@ -70,6 +73,11 @@ impl<R: Runner> Btrfs for CliBtrfs<R> {
     fn sync(&self, path: &Path) -> Result<(), StoreError> {
         self.btrfs(&["filesystem".as_ref(), "sync".as_ref(), path.as_os_str()])
     }
+
+    fn is_subvolume(&self, path: &Path) -> Result<bool, StoreError> {
+        let _ = path;
+        todo!()
+    }
 }
 
 #[cfg(test)]
@@ -77,6 +85,10 @@ pub(crate) mod tests {
     use super::*;
     use crate::boot::BootError;
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::io;
+    use std::path::PathBuf;
 
     /// Records every command line it is asked to run.
     #[derive(Default)]
@@ -98,6 +110,134 @@ pub(crate) mod tests {
                 });
             }
             Ok(())
+        }
+    }
+
+    /// In-memory Btrfs over plain directories: tracks which paths are
+    /// subvolumes and their `ro` flag, and records every operation with
+    /// paths relative to `top`.
+    pub(crate) struct FakeBtrfs {
+        pub top: PathBuf,
+        pub ops: RefCell<Vec<String>>,
+        pub subvols: RefCell<BTreeMap<PathBuf, bool>>,
+        /// Operation (first word of the record) that fails.
+        pub fail: RefCell<Option<&'static str>>,
+    }
+
+    impl FakeBtrfs {
+        pub fn new(top: &Path) -> Self {
+            Self {
+                top: top.to_path_buf(),
+                ops: RefCell::default(),
+                subvols: RefCell::default(),
+                fail: RefCell::default(),
+            }
+        }
+
+        fn rel(&self, p: &Path) -> String {
+            p.strip_prefix(&self.top).unwrap_or(p).display().to_string()
+        }
+
+        fn record(&self, op: &'static str, line: String) -> Result<(), StoreError> {
+            self.ops.borrow_mut().push(line);
+            if *self.fail.borrow() == Some(op) {
+                return Err(StoreError::Tool(BootError::Tool {
+                    tool: "btrfs".to_owned(),
+                    status: "exit status: 1".to_owned(),
+                    stderr: op.to_owned(),
+                }));
+            }
+            Ok(())
+        }
+
+        fn require(&self, p: &Path) -> Result<(), StoreError> {
+            if self.subvols.borrow().contains_key(p) {
+                Ok(())
+            } else {
+                Err(StoreError::io(p, io::Error::from(io::ErrorKind::NotFound)))
+            }
+        }
+
+        /// Mark an existing directory as a subvolume.
+        pub fn adopt(&self, p: &Path) {
+            fs::create_dir_all(p).unwrap();
+            self.subvols.borrow_mut().insert(p.to_path_buf(), false);
+        }
+
+        pub fn readonly(&self, p: &Path) -> Option<bool> {
+            self.subvols.borrow().get(p).copied()
+        }
+
+        pub fn take_ops(&self) -> Vec<String> {
+            std::mem::take(&mut self.ops.borrow_mut())
+        }
+    }
+
+    impl Btrfs for FakeBtrfs {
+        fn create(&self, path: &Path) -> Result<(), StoreError> {
+            self.record("create", format!("create {}", self.rel(path)))?;
+            fs::create_dir(path).map_err(|e| StoreError::io(path, e))?;
+            self.subvols.borrow_mut().insert(path.to_path_buf(), false);
+            Ok(())
+        }
+
+        fn snapshot(&self, src: &Path, dst: &Path, readonly: bool) -> Result<(), StoreError> {
+            let flag = if readonly { " -r" } else { "" };
+            let line = format!("snapshot{flag} {} {}", self.rel(src), self.rel(dst));
+            self.record("snapshot", line)?;
+            self.require(src)?;
+            fs::create_dir(dst).map_err(|e| StoreError::io(dst, e))?;
+            // Not recursive: a nested subvolume leaves an empty directory.
+            let nested: Vec<PathBuf> = self
+                .subvols
+                .borrow()
+                .keys()
+                .filter(|p| p.parent() == Some(src))
+                .cloned()
+                .collect();
+            for n in nested {
+                fs::create_dir(dst.join(n.file_name().unwrap())).unwrap();
+            }
+            self.subvols
+                .borrow_mut()
+                .insert(dst.to_path_buf(), readonly);
+            Ok(())
+        }
+
+        fn delete(&self, path: &Path) -> Result<(), StoreError> {
+            self.record("delete", format!("delete {}", self.rel(path)))?;
+            self.require(path)?;
+            let subvols = self.subvols.borrow();
+            if subvols.keys().any(|p| p != path && p.starts_with(path)) {
+                return Err(StoreError::io(path, io::Error::other("nested subvolume")));
+            }
+            if path.parent().and_then(|p| subvols.get(p)) == Some(&true) {
+                return Err(StoreError::io(
+                    path,
+                    io::Error::from(io::ErrorKind::ReadOnlyFilesystem),
+                ));
+            }
+            drop(subvols);
+            fs::remove_dir_all(path).map_err(|e| StoreError::io(path, e))?;
+            self.subvols.borrow_mut().remove(path);
+            Ok(())
+        }
+
+        fn set_readonly(&self, path: &Path, readonly: bool) -> Result<(), StoreError> {
+            self.record("ro", format!("ro {} {readonly}", self.rel(path)))?;
+            self.require(path)?;
+            self.subvols
+                .borrow_mut()
+                .insert(path.to_path_buf(), readonly);
+            Ok(())
+        }
+
+        fn sync(&self, path: &Path) -> Result<(), StoreError> {
+            self.record("sync", format!("sync {}", self.rel(path)))
+        }
+
+        fn is_subvolume(&self, path: &Path) -> Result<bool, StoreError> {
+            Ok(self.subvols.borrow().contains_key(path))
         }
     }
 
@@ -154,5 +294,15 @@ pub(crate) mod tests {
             matches!(err, StoreError::Tool(BootError::Tool { .. })),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn plain_directories_are_not_subvolumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("plain");
+        fs::create_dir(&plain).unwrap();
+        let b = CliBtrfs::new(crate::boot::tool::SystemRunner);
+        assert!(!b.is_subvolume(&plain).unwrap());
+        assert!(!b.is_subvolume(&dir.path().join("missing")).unwrap());
     }
 }
