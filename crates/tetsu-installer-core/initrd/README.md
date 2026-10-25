@@ -12,7 +12,9 @@ Add `tetsu-seal` to `HOOKS` in the mkinitcpio configuration after `systemd`
 and `sd-encrypt`, and make sure the image has `systemd-cryptenroll`, `tpm2-tss`
 and `util-linux`.
 
-The service runs after `sysroot.mount` and before `initrd-switch-root.target`.
+The service runs after `sysroot.mount` and before `initrd.target`: reaching that
+target starts the switch, which isolates `initrd-switch-root.target` and would
+stop a seal still running.
 It reads `/sysroot/etc/tetsu/unlock-level.toml`, and for a pending Comfort or
 Balanced level with Secure Boot on and Tetsu's PK enrolled it runs
 `systemd-cryptenroll` for the TPM2 slot, then writes `state = "sealed"`.

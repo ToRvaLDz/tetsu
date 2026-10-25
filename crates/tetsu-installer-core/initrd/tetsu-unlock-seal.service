@@ -5,7 +5,9 @@ DefaultDependencies=no
 ConditionPathExists=/etc/initrd-release
 Requires=sysroot.mount
 After=sysroot.mount
-Before=initrd-switch-root.target
+# initrd.target first: the switch isolates initrd-switch-root.target once
+# initrd.target is reached, which stops a seal still running.
+Before=initrd.target initrd-switch-root.target
 
 [Service]
 Type=oneshot

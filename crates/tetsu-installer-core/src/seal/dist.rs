@@ -8,7 +8,7 @@ fn the_unit_runs_between_the_root_mount_and_the_switch() {
     for line in [
         "DefaultDependencies=no",
         "After=sysroot.mount",
-        "Before=initrd-switch-root.target",
+        "Before=initrd.target initrd-switch-root.target",
         "ConditionPathExists=/etc/initrd-release",
         "WantedBy=initrd.target",
         "ExecStart=/usr/bin/tetsu-unlock-seal",
