@@ -22,7 +22,8 @@ type Event (
   mode: ?(fast, slow),
   size: ?(w: int, h: ?int),
   level: ?Level,
-  anything: ?any
+  anything: ?any,
+  anys: ?[]any
 )
 
 type Level (low, high)
@@ -294,16 +295,47 @@ fn object_field_rejects_null_element() {
 }
 
 #[test]
-fn object_field_accepts_any_json_value() {
+fn object_field_accepts_any_json_object() {
     expect_clean(&with_field(r#""meta":{"anything":[1,{"x":null}]}"#));
-    expect_clean(&with_field(r#""meta":300000"#));
-    expect_clean(&with_field(r#""meta":"text""#));
-    expect_clean(&with_field(r#""blobs":[true,[1],{"a":1}]"#));
+    expect_clean(&with_field(r#""blobs":[{},{"a":1}]"#));
+}
+
+#[test]
+fn object_field_rejects_scalar() {
+    expect(
+        &with_field(r#""meta":300000"#),
+        Kind::FixtureWrongType,
+        CHANGED_PATH,
+        "meta",
+    );
+}
+
+#[test]
+fn object_field_rejects_non_object_element() {
+    expect(
+        &with_field(r#""blobs":[{"a":1},[1]]"#),
+        Kind::FixtureWrongType,
+        CHANGED_PATH,
+        "blobs[1]",
+    );
 }
 
 #[test]
 fn any_field_accepts_anything() {
     expect_clean(&with_field(r#""anything":[1,"x"]"#));
+    expect_clean(&with_field(r#""anything":300000"#));
+    expect_clean(&with_field(r#""anything":"text""#));
+    expect_clean(&with_field(r#""anys":[true,[1],{"a":1},"x"]"#));
+}
+
+#[test]
+fn any_field_rejects_null_element() {
+    expect(
+        &with_field(r#""anys":[1,null]"#),
+        Kind::FixtureWrongType,
+        CHANGED_PATH,
+        "anys[1]",
+    );
 }
 
 #[test]
