@@ -104,7 +104,7 @@ pub fn parse_file_name(name: &str) -> Option<FileKind> {
 }
 
 /// Digits only, no sign and no leading zeros, so every name has one spelling.
-fn canonical(s: &str) -> Option<u64> {
+pub(crate) fn canonical(s: &str) -> Option<u64> {
     let ok =
         !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
     if ok { s.parse().ok() } else { None }
