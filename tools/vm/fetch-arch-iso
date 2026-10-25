@@ -14,10 +14,15 @@ done
 
 mkdir -p "$DEST"
 
-# verify: check the ISO against sha256sums.txt (the line for our file only).
+# verify [FILE]: check FILE (default the final ISO) against the sha256 listed
+# for the ISO in sha256sums.txt.
 verify() {
-  [ -f "$DEST/$ISO_NAME" ] && [ -f "$DEST/sha256sums.txt" ] || return 1
-  (cd "$DEST" && grep -E "[[:space:]]\*?$ISO_NAME\$" sha256sums.txt | sha256sum --check --status -)
+  local file=${1:-$DEST/$ISO_NAME} want got
+  [ -f "$file" ] && [ -f "$DEST/sha256sums.txt" ] || return 1
+  want=$(grep -E "[[:space:]]\*?$ISO_NAME\$" "$DEST/sha256sums.txt" | awk '{print $1}')
+  [ -n "$want" ] || return 1
+  got=$(sha256sum "$file" | awk '{print $1}')
+  [ "$want" = "$got" ]
 }
 
 # Always refresh the checksum list: it tells whether the cached ISO is current.
@@ -30,9 +35,24 @@ if verify; then
   exit 0
 fi
 
-echo "Downloading $MIRROR/$ISO_NAME ..."
-curl -fL --retry 3 -C - -o "$DEST/$ISO_NAME" "$MIRROR/$ISO_NAME" \
-  || die "download failed"
+# A final ISO that fails verification is stale or corrupt: never resume onto it.
+rm -f "$DEST/$ISO_NAME"
 
-verify || { rm -f "$DEST/$ISO_NAME"; die "checksum mismatch, removed the download"; }
+# Download to a .part file (resume is allowed there only), verify it against
+# the fresh checksum list, then move it into place.
+PART="$DEST/$ISO_NAME.part"
+echo "Downloading $MIRROR/$ISO_NAME ..."
+rc=0
+curl -fL --retry 3 -C - -o "$PART" "$MIRROR/$ISO_NAME" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  # 33: the server cannot resume from this .part (stale or already complete).
+  [ "$rc" -ne 33 ] || rm -f "$PART"
+  die "download failed (curl exit $rc)"
+fi
+
+if ! verify "$PART"; then
+  rm -f "$PART"
+  die "checksum mismatch, removed the partial download"
+fi
+mv "$PART" "$DEST/$ISO_NAME"
 echo "ISO downloaded and verified: $DEST/$ISO_NAME"
