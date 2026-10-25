@@ -2,6 +2,7 @@
 //! around `tetsu-installer-core`.
 
 pub mod answer_file;
+pub mod cleanup;
 pub mod collect;
 pub mod locate;
 pub mod probe;
