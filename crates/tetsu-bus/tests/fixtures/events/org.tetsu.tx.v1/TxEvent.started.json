@@ -1,0 +1,16 @@
+{
+  "kind": "started",
+  "transaction": {
+    "id": "tx-8",
+    "kind": "install",
+    "packages": [
+      "htop"
+    ],
+    "state": "running",
+    "started_at": "2026-01-15T09:30:00.000Z",
+    "finished_at": null,
+    "snapshot": null,
+    "changes": [],
+    "failure": null
+  }
+}

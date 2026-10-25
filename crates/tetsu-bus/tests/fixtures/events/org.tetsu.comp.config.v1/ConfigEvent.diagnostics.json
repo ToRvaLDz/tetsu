@@ -1,0 +1,15 @@
+{
+  "kind": "diagnostics",
+  "diagnostics": [
+    {
+      "line": 12,
+      "key": "idle.timeout_ms",
+      "message": "expected an integer"
+    },
+    {
+      "line": null,
+      "key": null,
+      "message": "user file not readable"
+    }
+  ]
+}

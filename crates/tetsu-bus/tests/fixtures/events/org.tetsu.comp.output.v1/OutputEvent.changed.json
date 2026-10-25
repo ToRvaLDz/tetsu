@@ -1,0 +1,30 @@
+{
+  "kind": "changed",
+  "output": {
+    "id": "out-7",
+    "name": "DP-1",
+    "make": "LG Electronics",
+    "model": "27UL850",
+    "serial": "0x0004a1b2",
+    "enabled": true,
+    "modes": [
+      {
+        "width": 3840,
+        "height": 2160,
+        "refresh_mhz": 60000,
+        "preferred": true
+      },
+      {
+        "width": 1920,
+        "height": 1080,
+        "refresh_mhz": 60000,
+        "preferred": false
+      }
+    ],
+    "current_mode": 0,
+    "scale": 2.0,
+    "transform": "rotate_90",
+    "x": 0,
+    "y": 0
+  }
+}

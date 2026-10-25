@@ -1,0 +1,21 @@
+{
+  "kind": "initial",
+  "workspaces": [
+    {
+      "id": "ws-3",
+      "name": "dev",
+      "output_id": "out-7",
+      "index": 0
+    },
+    {
+      "id": "ws-4",
+      "name": null,
+      "output_id": "out-7",
+      "index": 1
+    }
+  ],
+  "active": {
+    "out-7": "ws-3"
+  },
+  "focused_id": "ws-3"
+}

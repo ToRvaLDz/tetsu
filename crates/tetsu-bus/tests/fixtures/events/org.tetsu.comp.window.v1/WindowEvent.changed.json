@@ -1,0 +1,13 @@
+{
+  "kind": "changed",
+  "window": {
+    "id": "win-42",
+    "app_id": "foot",
+    "title": "tmux: 2 panes",
+    "pid": 4242,
+    "workspace_id": "ws-3",
+    "placement": "tiled",
+    "fullscreen": true,
+    "xwayland": false
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "finished",
+  "transaction": {
+    "id": "tx-8",
+    "kind": "install",
+    "packages": [
+      "htop"
+    ],
+    "state": "succeeded",
+    "started_at": "2026-01-15T09:30:00.000Z",
+    "finished_at": "2026-01-15T09:31:12.481Z",
+    "snapshot": "snap-120",
+    "changes": [
+      {
+        "name": "htop",
+        "from": null,
+        "to": "3.4.1-1"
+      }
+    ],
+    "failure": null
+  }
+}

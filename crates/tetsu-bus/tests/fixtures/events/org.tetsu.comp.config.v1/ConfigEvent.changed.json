@@ -1,0 +1,13 @@
+{
+  "kind": "changed",
+  "entry": {
+    "key": "render.device",
+    "value": "dev-1",
+    "origin": "managed",
+    "default_value": null,
+    "managed_value": "dev-1",
+    "user_value": null,
+    "writable": false,
+    "method": "org.tetsu.comp.render.v1.SetRenderDevice"
+  }
+}

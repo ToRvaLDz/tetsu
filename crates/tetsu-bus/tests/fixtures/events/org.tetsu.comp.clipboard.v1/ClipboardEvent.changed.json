@@ -1,0 +1,9 @@
+{
+  "kind": "changed",
+  "offer": {
+    "selection": "primary",
+    "mime_types": [
+      "text/plain"
+    ]
+  }
+}

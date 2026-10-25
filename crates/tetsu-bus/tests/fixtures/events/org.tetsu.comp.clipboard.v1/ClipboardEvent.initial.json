@@ -1,0 +1,16 @@
+{
+  "kind": "initial",
+  "offers": [
+    {
+      "selection": "clipboard",
+      "mime_types": [
+        "text/plain;charset=utf-8",
+        "text/html"
+      ]
+    },
+    {
+      "selection": "primary",
+      "mime_types": []
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "progress",
+  "id": "tx-8",
+  "progress": {
+    "phase": "packages",
+    "percent": 40,
+    "message": "downloading htop"
+  }
+}

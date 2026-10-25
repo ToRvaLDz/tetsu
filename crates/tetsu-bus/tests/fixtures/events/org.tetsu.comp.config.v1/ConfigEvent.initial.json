@@ -1,0 +1,32 @@
+{
+  "kind": "initial",
+  "entries": [
+    {
+      "key": "idle.timeout_ms",
+      "value": 300000,
+      "origin": "user",
+      "default_value": 600000,
+      "managed_value": 450000,
+      "user_value": 300000,
+      "writable": true,
+      "method": null
+    },
+    {
+      "key": "render.device",
+      "value": "dev-1",
+      "origin": "managed",
+      "default_value": null,
+      "managed_value": "dev-1",
+      "user_value": null,
+      "writable": false,
+      "method": "org.tetsu.comp.render.v1.SetRenderDevice"
+    }
+  ],
+  "diagnostics": [
+    {
+      "line": 12,
+      "key": "idle.timeout_ms",
+      "message": "expected an integer"
+    }
+  ]
+}

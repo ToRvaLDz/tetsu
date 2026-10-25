@@ -1,0 +1,19 @@
+{
+  "kind": "changed",
+  "entry": {
+    "output_id": "out-7",
+    "device_id": "dev-1",
+    "since_at": "2026-01-15T09:30:00.000Z",
+    "frames_presented": 120345,
+    "frames_dropped": 12,
+    "cpu_copy_fallbacks": 0,
+    "sync_errors": 0,
+    "last_composition_us": 1830,
+    "window_ms": 1000,
+    "window_frames_dropped": 0,
+    "window_composition_p50_us": 1700,
+    "window_composition_p99_us": 3900,
+    "window_cpu_copy_fallbacks": 0,
+    "window_sync_errors": 0
+  }
+}

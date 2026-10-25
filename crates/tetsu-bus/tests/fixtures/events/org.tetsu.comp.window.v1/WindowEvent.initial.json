@@ -1,0 +1,16 @@
+{
+  "kind": "initial",
+  "windows": [
+    {
+      "id": "win-42",
+      "app_id": "foot",
+      "title": "tmux",
+      "pid": 4242,
+      "workspace_id": "ws-3",
+      "placement": "tiled",
+      "fullscreen": false,
+      "xwayland": false
+    }
+  ],
+  "focused_id": "win-42"
+}

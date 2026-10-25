@@ -1,0 +1,32 @@
+{
+  "kind": "changed",
+  "render": {
+    "device_id": "dev-1",
+    "automatic": false,
+    "devices": [
+      {
+        "id": "dev-1",
+        "node": "/dev/dri/renderD128",
+        "driver": "i915",
+        "driver_version": null,
+        "name": "Intel Iris Xe Graphics",
+        "output_ids": [
+          "out-7"
+        ],
+        "power_mw": 4200,
+        "switch_failures": 0
+      }
+    ],
+    "explicit_sync": {
+      "mode": "auto",
+      "supported": true,
+      "enabled": true,
+      "reason": null
+    },
+    "pending_device": {
+      "automatic": false,
+      "device_id": "dev-2"
+    },
+    "pending_explicit_sync": "on"
+  }
+}
