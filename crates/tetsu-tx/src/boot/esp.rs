@@ -5,7 +5,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use super::BootError;
-use super::entry::{BootState, EntryName, FileKind, parse_file_name};
+use super::entry::{BootState, EntryName, FileKind, parse_file_name, tmp_file_name};
 
 /// Boot attempts granted to a freshly committed entry.
 pub const BOOT_TRIES: u32 = 3;
@@ -78,13 +78,33 @@ impl Esp {
     where
         F: FnOnce(&Path) -> Result<(), BootError>,
     {
-        todo!()
+        let state = self.scan()?;
+        if let Some(newest) = state.newest_counter()
+            && counter <= newest
+        {
+            return Err(BootError::StaleCounter { counter, newest });
+        }
+        fs::create_dir_all(&self.dir).map_err(|e| BootError::io(&self.dir, e))?;
+        let tmp = self.dir.join(tmp_file_name(counter));
+        let written = write(&tmp).and_then(|()| sync_file(&tmp));
+        if let Err(e) = written {
+            // Best effort: a half-written stage must not linger as an orphan.
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        Ok(tmp)
     }
 
     /// Rename the staged file to `tetsu-<counter>+3.efi` and fsync the
     /// directory. Returns the committed path.
     pub fn commit(&self, counter: u64) -> Result<PathBuf, BootError> {
-        todo!()
+        let tmp = self.dir.join(tmp_file_name(counter));
+        let dest = self
+            .dir
+            .join(EntryName::untried(counter, BOOT_TRIES).file_name());
+        fs::rename(&tmp, &dest).map_err(|e| BootError::io(&tmp, e))?;
+        sync_file(&self.dir)?;
+        Ok(dest)
     }
 
     /// Read the directory afresh. A missing `EFI/Linux` is an empty state.
@@ -125,6 +145,13 @@ impl Esp {
         state.orphan_tmps.sort_by_key(|t| t.counter);
         Ok(state)
     }
+}
+
+/// fsync a file or a directory.
+fn sync_file(path: &Path) -> Result<(), BootError> {
+    fs::File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| BootError::io(path, e))
 }
 
 #[cfg(test)]
