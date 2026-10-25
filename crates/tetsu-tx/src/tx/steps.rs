@@ -25,8 +25,9 @@ fn stderr_lines(stderr: &str) -> Vec<String> {
         .collect()
 }
 
-/// A failed step: the reason quotes the tool's stderr, the log keeps it.
-fn step_failed(what: &str, e: BootError) -> TxError {
+/// The reason and log lines of a failed tool: the reason quotes the tool's
+/// stderr, the log keeps it line by line.
+pub(super) fn failure_parts(what: &str, e: &BootError) -> (String, Vec<String>) {
     match e {
         BootError::Tool { status, stderr, .. } => {
             let stderr = stderr.trim();
@@ -35,13 +36,19 @@ fn step_failed(what: &str, e: BootError) -> TxError {
             } else {
                 format!("{what} failed: {stderr}")
             };
-            TxError::Failed {
-                reason,
-                proposal: None,
-                log: stderr_lines(stderr),
-            }
+            (reason, stderr_lines(stderr))
         }
-        other => other.into(),
+        other => (format!("{what} failed: {other}"), Vec::new()),
+    }
+}
+
+/// A failed step as a transaction failure.
+fn step_failed(what: &str, e: BootError) -> TxError {
+    let (reason, log) = failure_parts(what, &e);
+    TxError::Failed {
+        reason,
+        proposal: None,
+        log,
     }
 }
 

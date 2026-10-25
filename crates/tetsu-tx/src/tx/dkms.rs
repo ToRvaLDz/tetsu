@@ -1,8 +1,12 @@
 //! Out-of-tree kernel modules: build them for the new kernel inside the
 //! snapshot and, when that fails, say which package owns the module.
 
+use std::fs;
+
 use super::TxError;
-use super::nspawn::Nspawn;
+use super::nspawn::{Network, Nspawn, PROGRAM};
+use super::pkg::parse_names;
+use super::steps::failure_parts;
 use crate::boot::tool::Runner;
 
 /// What the DKMS step did.
@@ -23,8 +27,17 @@ pub struct Module {
 
 /// The modules `dkms status` lists in any state but `installed`.
 pub fn not_installed(status: &str) -> Vec<Module> {
-    let _ = status;
-    todo!()
+    status
+        .lines()
+        .filter_map(|line| {
+            let (head, state) = line.split_once(':')?;
+            let (name, version) = head.split(',').next()?.trim().split_once('/')?;
+            (state.split_whitespace().next() != Some("installed")).then(|| Module {
+                name: name.to_owned(),
+                version: version.to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// Build every DKMS module for kernel `ver` (offline). On failure the
@@ -36,8 +49,66 @@ pub fn build_modules(
     ver: &str,
     user_layer: &[String],
 ) -> Result<Dkms, TxError> {
-    let _ = (runner, ns, ver, user_layer);
-    todo!()
+    if fs::symlink_metadata(ns.root.join("usr/bin/dkms")).is_err() {
+        return Ok(Dkms::Skipped);
+    }
+    let build = [
+        "dkms",
+        "autoinstall",
+        "-k",
+        ver,
+        "--dkmstree",
+        "/usr/lib/dkms",
+    ];
+    let Err(failure) = runner.run(PROGRAM, &ns.args(Network::Offline, &build)) else {
+        return Ok(Dkms::Built);
+    };
+    let query = |cmd: &[&str]| runner.output(PROGRAM, &ns.args(Network::Offline, cmd));
+    let status = query(&["dkms", "status", "-k", ver]).unwrap_or_default();
+    let modules = not_installed(&status);
+    let (reason, mut log) = failure_parts("DKMS build", &failure);
+    if modules.is_empty() {
+        return Err(TxError::Failed {
+            reason,
+            proposal: None,
+            log,
+        });
+    }
+    let mut described = Vec::new();
+    let mut user_owners: Vec<String> = Vec::new();
+    for m in &modules {
+        let src = format!("/usr/src/{}-{}", m.name, m.version);
+        let owners = query(&["pacman", "-Qqo", &src])
+            .map(|out| parse_names(&out))
+            .unwrap_or_default();
+        let id = format!("{}/{}", m.name, m.version);
+        let line = if owners.is_empty() {
+            id
+        } else {
+            format!("{id} (owned by {})", owners.join(", "))
+        };
+        log.push(format!("not installed: {line}"));
+        described.push(line);
+        for o in owners.into_iter().filter(|o| user_layer.contains(o)) {
+            if !user_owners.contains(&o) {
+                user_owners.push(o);
+            }
+        }
+    }
+    let proposal = (!user_owners.is_empty()).then(|| {
+        format!(
+            "remove or update the DKMS package(s): {}",
+            user_owners.join(", ")
+        )
+    });
+    Err(TxError::Failed {
+        reason: format!(
+            "DKMS could not build for kernel {ver}: {}",
+            described.join(", ")
+        ),
+        proposal,
+        log,
+    })
 }
 
 #[cfg(test)]
