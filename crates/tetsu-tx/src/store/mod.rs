@@ -49,4 +49,5 @@ pub mod btrfs;
 pub mod layout;
 pub mod lock;
 pub mod record;
+pub mod select;
 pub mod snapshot;
