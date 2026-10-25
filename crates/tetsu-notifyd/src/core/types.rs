@@ -181,6 +181,8 @@ pub struct NoteView {
     pub armed_at: Instant,
     /// A freedesktop icon.
     pub icon: Option<Icon>,
+    /// The freedesktop `category` hint, shown next to the sender.
+    pub category: Option<String>,
 }
 
 /// One past notification.

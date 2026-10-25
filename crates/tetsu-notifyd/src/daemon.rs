@@ -159,12 +159,12 @@ impl Daemon {
                 }
             },
             Command::CloseTetsu { pid, id, done } => {
-                let result = self.core.close_tetsu(pid, &id).map(|e| self.apply(e));
+                let result = self.core.close_tetsu(pid, &id, now).map(|e| self.apply(e));
                 let _ = done.send(result);
             }
             Command::CallerGone(note) => {
                 self.streams.remove(&note);
-                let effects = self.core.caller_gone(note);
+                let effects = self.core.caller_gone(note, now);
                 self.apply(effects);
             }
             Command::GetPending(done) => {
@@ -188,7 +188,7 @@ impl Daemon {
                 let _ = done.send(id);
             }
             Command::CloseFdo(id) => {
-                let effects = self.core.close_fdo(id);
+                let effects = self.core.close_fdo(id, now);
                 self.apply(effects);
             }
             Command::Click { note, action } => {

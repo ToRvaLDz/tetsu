@@ -34,6 +34,7 @@ pub(super) struct Note {
     pub popped_at: Instant,
     pub armed_from: Instant,
     pub icon: Option<Icon>,
+    pub category: Option<String>,
 }
 
 impl Note {
@@ -66,6 +67,7 @@ impl Note {
             default_action: fdo && self.actions.iter().any(|a| a.id == DEFAULT_ACTION),
             armed_at: self.armed_from + super::ARM_DELAY,
             icon: self.icon.clone(),
+            category: self.category.clone(),
         }
     }
 

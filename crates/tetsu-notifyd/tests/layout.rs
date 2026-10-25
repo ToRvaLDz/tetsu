@@ -26,6 +26,7 @@ fn note(id: u32, body: &str, buttons: &[(&str, &str)]) -> NoteView {
         default_action: false,
         armed_at: Instant::now(),
         icon: None,
+        category: None,
     }
 }
 

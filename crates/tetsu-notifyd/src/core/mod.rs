@@ -75,8 +75,9 @@ impl Core {
             popped_at: now,
             armed_from: now,
             icon: None,
+            category: None,
         };
-        let effects = self.tracking_pending(|core| {
+        let effects = self.tracking(now, |core| {
             core.notes.insert(id, note);
             core.enforce_popup_limit();
             core.reply(id, NotifyReply::shown(&tetsu_id(id)), false)
@@ -115,10 +116,14 @@ impl Core {
             popped_at: now,
             armed_from: now,
             icon: show.icon,
+            category: show.category,
         };
-        self.notes.insert(id, note);
-        self.enforce_popup_limit();
-        (id.0, Vec::new())
+        let effects = self.tracking(now, |core| {
+            core.notes.insert(id, note);
+            core.enforce_popup_limit();
+            Vec::new()
+        });
+        (id.0, effects)
     }
 
     /// The Varlink id of a note.
@@ -167,7 +172,7 @@ impl Core {
             .map(|a| a.label.clone())
             .ok_or(Refused::NoSuchAction)?;
         let action = action.to_owned();
-        Ok(self.tracking_pending(|core| {
+        Ok(self.tracking(now, |core| {
             let mut effects = match &core.notes[&note].origin {
                 Origin::Fdo { client, .. } => vec![Effect::FdoActionInvoked {
                     id: note.0,
@@ -187,9 +192,9 @@ impl Core {
     }
 
     /// The user dismissed a note: for an approval, that is Deny.
-    pub fn dismiss(&mut self, note: NoteId, _now: Instant) -> Result<Vec<Effect>, Refused> {
+    pub fn dismiss(&mut self, note: NoteId, now: Instant) -> Result<Vec<Effect>, Refused> {
         self.answerable(note)?;
-        Ok(self.tracking_pending(|core| {
+        Ok(self.tracking(now, |core| {
             core.end(
                 note,
                 NotifyReply::dismissed(DismissReason::User),
@@ -200,7 +205,12 @@ impl Core {
     }
 
     /// `Close` from the process that showed the note.
-    pub fn close_tetsu(&mut self, pid: i32, id: &str) -> Result<Vec<Effect>, ShowError> {
+    pub fn close_tetsu(
+        &mut self,
+        pid: i32,
+        id: &str,
+        now: Instant,
+    ) -> Result<Vec<Effect>, ShowError> {
         let note = parse_tetsu_id(id)
             .filter(|note| {
                 self.notes
@@ -208,7 +218,7 @@ impl Core {
                     .is_some_and(|n| matches!(n.origin, Origin::Tetsu { pid: p, .. } if p == pid))
             })
             .ok_or(ShowError::NotFound)?;
-        Ok(self.tracking_pending(|core| {
+        Ok(self.tracking(now, |core| {
             core.end(
                 note,
                 NotifyReply::dismissed(DismissReason::Closed),
@@ -219,9 +229,9 @@ impl Core {
     }
 
     /// freedesktop `CloseNotification`.
-    pub fn close_fdo(&mut self, id: u32) -> Vec<Effect> {
+    pub fn close_fdo(&mut self, id: u32, now: Instant) -> Vec<Effect> {
         match self.fdo_note(id) {
-            Some(note) => self.tracking_pending(|core| {
+            Some(note) => self.tracking(now, |core| {
                 core.end(
                     note,
                     NotifyReply::dismissed(DismissReason::Closed),
@@ -234,7 +244,7 @@ impl Core {
     }
 
     /// The caller of a streaming `Show` disconnected: withdraw, no reply.
-    pub fn caller_gone(&mut self, note: NoteId) -> Vec<Effect> {
+    pub fn caller_gone(&mut self, note: NoteId, now: Instant) -> Vec<Effect> {
         let streaming = self
             .notes
             .get(&note)
@@ -242,7 +252,7 @@ impl Core {
         if !streaming {
             return Vec::new();
         }
-        self.tracking_pending(|core| {
+        self.tracking(now, |core| {
             if let Some(n) = core.notes.remove(&note) {
                 core.remember(&n, Outcome::Withdrawn);
             }
@@ -251,51 +261,64 @@ impl Core {
     }
 
     /// Moves a popup into the panel; it stays open, and pending if it was.
-    pub fn collapse(&mut self, note: NoteId) {
-        if let Some(n) = self.notes.get_mut(&note) {
-            n.place = Place::Panel;
-        }
+    pub fn collapse(&mut self, note: NoteId, now: Instant) -> Vec<Effect> {
+        self.tracking(now, |core| {
+            if let Some(n) = core.notes.get_mut(&note) {
+                n.place = Place::Panel;
+            }
+            Vec::new()
+        })
     }
 
-    /// The panel opened: what it shows arms from now.
+    /// The panel opened: everything it shows arms from now.
     pub fn panel_opened(&mut self, now: Instant) {
-        for n in self.notes.values_mut().filter(|n| n.place == Place::Panel) {
+        for n in self
+            .notes
+            .values_mut()
+            .filter(|n| n.place == Place::Panel || n.is_pending())
+        {
             n.armed_from = now;
         }
     }
 
-    /// The session lock changed. On unlock, pending approvals pop up again.
+    /// The session lock changed. On unlock, pending approvals pop up again
+    /// and everything arms from now, since nothing was on screen.
     pub fn set_locked(&mut self, locked: bool, now: Instant) -> Vec<Effect> {
         let unlocking = self.locked && !locked;
         self.locked = locked;
-        if unlocking {
-            for n in self.notes.values_mut().filter(|n| n.is_pending()) {
-                n.place = Place::Popup;
-                n.popped_at = now;
-                n.armed_from = now;
-            }
-            self.enforce_popup_limit();
+        if !unlocking {
+            return Vec::new();
         }
-        Vec::new()
+        self.tracking(now, |core| {
+            for n in core.notes.values_mut() {
+                n.armed_from = now;
+                if n.is_pending() {
+                    n.place = Place::Popup;
+                    n.popped_at = now;
+                }
+            }
+            core.enforce_popup_limit();
+            Vec::new()
+        })
     }
 
     /// Time passed: expire what has a lifetime, collapse what has none.
     pub fn tick(&mut self, now: Instant) -> Vec<Effect> {
-        for n in self.notes.values_mut() {
-            if n.place == Place::Popup
-                && n.expires_at.is_none()
-                && now >= n.popped_at + COLLAPSE_AFTER
-            {
-                n.place = Place::Panel;
-            }
-        }
         let expired: Vec<NoteId> = self
             .notes
             .values()
             .filter(|n| n.expires_at.is_some_and(|at| now >= at))
             .map(|n| n.id)
             .collect();
-        self.tracking_pending(|core| {
+        self.tracking(now, |core| {
+            for n in core.notes.values_mut() {
+                if n.place == Place::Popup
+                    && n.expires_at.is_none()
+                    && now >= n.popped_at + COLLAPSE_AFTER
+                {
+                    n.place = Place::Panel;
+                }
+            }
             expired
                 .into_iter()
                 .flat_map(|note| {
@@ -362,15 +385,42 @@ impl Core {
         self.notes.get(&note).ok_or(Refused::Gone)
     }
 
-    /// Runs `f`, adding a `PendingChanged` when the count moved.
-    fn tracking_pending(&mut self, f: impl FnOnce(&mut Self) -> Vec<Effect>) -> Vec<Effect> {
+    /// Runs `f`, then re-arms every note whose card moved (so an armed
+    /// button never slides under the pointer) and adds a `PendingChanged`
+    /// when the count moved.
+    fn tracking(&mut self, now: Instant, f: impl FnOnce(&mut Self) -> Vec<Effect>) -> Vec<Effect> {
         let before = self.pending_count();
+        let slots = self.slots();
         let mut effects = f(self);
+        let moved: Vec<NoteId> = self
+            .slots()
+            .into_iter()
+            .filter(|slot| !slots.contains(slot))
+            .map(|(_, _, id)| id)
+            .collect();
+        for id in moved {
+            if let Some(n) = self.notes.get_mut(&id) {
+                n.armed_from = now;
+            }
+        }
         let after = self.pending_count();
         if after != before {
             effects.push(Effect::PendingChanged(after));
         }
         effects
+    }
+
+    /// Where each card is drawn: (popup stack or panel, index, note).
+    fn slots(&self) -> Vec<(bool, usize, NoteId)> {
+        let view = self.view(Instant::now());
+        let popups = view.popups.iter().enumerate().map(|(i, n)| (true, i, n.id));
+        let panel = view
+            .pending
+            .iter()
+            .chain(&view.open)
+            .enumerate()
+            .map(|(i, n)| (false, i, n.id));
+        popups.chain(panel).collect()
     }
 
     /// Removes a note, answering its caller: `reply` on a Varlink stream,
@@ -422,7 +472,9 @@ impl Core {
         popups.sort();
         let excess = popups.len().saturating_sub(POPUP_LIMIT);
         for (_, id) in popups.into_iter().take(excess) {
-            self.collapse(id);
+            if let Some(n) = self.notes.get_mut(&id) {
+                n.place = Place::Panel;
+            }
         }
     }
 }
