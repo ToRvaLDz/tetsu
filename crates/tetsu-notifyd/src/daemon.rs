@@ -67,6 +67,8 @@ pub enum Command {
     Dismiss(NoteId),
     /// The panel became visible.
     PanelOpened,
+    /// The panel went away.
+    PanelClosed,
     /// The session lock state.
     Lock(bool),
 }
@@ -204,6 +206,7 @@ impl Daemon {
                 }
             }
             Command::PanelOpened => self.core.panel_opened(now),
+            Command::PanelClosed => self.core.panel_closed(),
             Command::Lock(locked) => {
                 let effects = self.core.set_locked(locked, now);
                 self.apply(effects);

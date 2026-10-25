@@ -24,6 +24,7 @@ pub struct Core {
     notes: BTreeMap<NoteId, Note>,
     last_id: u32,
     locked: bool,
+    panel_open: bool,
     history: VecDeque<HistoryView>,
 }
 
@@ -270,8 +271,14 @@ impl Core {
         })
     }
 
+    /// The panel closed: its positions no longer matter for arming.
+    pub fn panel_closed(&mut self) {
+        self.panel_open = false;
+    }
+
     /// The panel opened: everything it shows arms from now.
     pub fn panel_opened(&mut self, now: Instant) {
+        self.panel_open = true;
         for n in self
             .notes
             .values_mut()
@@ -410,7 +417,8 @@ impl Core {
         effects
     }
 
-    /// Where each card is drawn: (popup stack or panel, index, note).
+    /// Where each card is drawn: (popup stack or panel, index, note). The
+    /// panel counts only while it is open.
     fn slots(&self) -> Vec<(bool, usize, NoteId)> {
         let view = self.view(Instant::now());
         let popups = view.popups.iter().enumerate().map(|(i, n)| (true, i, n.id));
@@ -419,7 +427,8 @@ impl Core {
             .iter()
             .chain(&view.open)
             .enumerate()
-            .map(|(i, n)| (false, i, n.id));
+            .map(|(i, n)| (false, i, n.id))
+            .filter(|_| self.panel_open);
         popups.chain(panel).collect()
     }
 

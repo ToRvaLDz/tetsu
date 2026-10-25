@@ -180,7 +180,9 @@ impl Ui {
             // on unlock.
             self.popup = None;
             self.drawn_cards.clear();
-            self.panel = None;
+            if self.panel.take().is_some() {
+                let _ = self.commands.send(Command::PanelClosed);
+            }
             self.panel_layout = None;
             self.panel_wanted = false;
             return;
@@ -198,7 +200,9 @@ impl Ui {
             self.resize_popup_or_draw(qh, size);
         }
         if !self.panel_wanted {
-            self.panel = None;
+            if self.panel.take().is_some() {
+                let _ = self.commands.send(Command::PanelClosed);
+            }
             self.panel_layout = None;
             return;
         }
