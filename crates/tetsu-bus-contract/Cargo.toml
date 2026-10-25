@@ -1,0 +1,15 @@
+[package]
+name = "tetsu-bus-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = "1.0.154"
+zlink-idl = { version = "=0.7.1", features = ["parse"] }
