@@ -81,7 +81,8 @@ impl AgentBackend {
     }
 }
 
-fn ask_key(fe: &mut dyn Frontend, provider: ApiProvider) -> Result<Secret, InstallError> {
+/// Ask the API key of `provider`.
+pub fn ask_key(fe: &mut dyn Frontend, provider: ApiProvider) -> Result<Secret, InstallError> {
     loop {
         let key = fe.ask_secret(&format!("{} API key", provider.label()))?;
         let key = key.trim();

@@ -130,7 +130,8 @@ pub fn validate_full_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn ask_password(
+/// Ask the session password, twice, with the usual restrictions.
+pub fn ask_password(
     fe: &mut dyn Frontend,
     username: &str,
     disk_passphrase: &Secret,

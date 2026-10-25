@@ -31,7 +31,8 @@ pub fn run_steps(fe: &mut dyn Frontend, env: &Env<'_>) -> Result<Answers, Instal
     summary::run(fe, env, &pf, answers)
 }
 
-fn report(fe: &mut dyn Frontend, pf: &Preflight) {
+/// Tell the user what preflight found.
+pub fn report(fe: &mut dyn Frontend, pf: &Preflight) {
     let sb = match pf.secure_boot {
         SecureBoot::Off => "off",
         SecureBoot::SetupMode => "Setup Mode",

@@ -53,7 +53,8 @@ pub struct Unlock {
     pub recovery_key: Secret,
 }
 
-fn ask_level(fe: &mut dyn Frontend, tpm2: bool) -> Result<UnlockLevel, InstallError> {
+/// Ask the unlock level; only Paranoid exists without a TPM.
+pub fn ask_level(fe: &mut dyn Frontend, tpm2: bool) -> Result<UnlockLevel, InstallError> {
     if !tpm2 {
         fe.message("No TPM 2.0 found: only the Paranoid level is available.");
         return Ok(UnlockLevel::Paranoid);
@@ -62,7 +63,8 @@ fn ask_level(fe: &mut dyn Frontend, tpm2: bool) -> Result<UnlockLevel, InstallEr
     Ok(UnlockLevel::ALL[choose_from(fe, "Unlock level", &labels)?])
 }
 
-fn ask_passphrase(fe: &mut dyn Frontend) -> Result<Secret, InstallError> {
+/// Ask a strong disk passphrase, twice.
+pub fn ask_passphrase(fe: &mut dyn Frontend) -> Result<Secret, InstallError> {
     loop {
         let first = fe.ask_secret("Disk passphrase")?;
         if let Err(why) = strength::check(&first) {
@@ -76,11 +78,17 @@ fn ask_passphrase(fe: &mut dyn Frontend) -> Result<Secret, InstallError> {
     }
 }
 
-/// Show the key as QR and text, then require it to be retyped.
-fn show_and_confirm_key(fe: &mut dyn Frontend, key: &Secret) -> Result<(), InstallError> {
+/// Show the key as QR and text.
+pub fn show_key(fe: &mut dyn Frontend, key: &Secret) -> Result<(), InstallError> {
     fe.message("Recovery key. Write it down or scan it: it is shown once and never stored.\n");
     fe.show_qr(key.expose())?;
     fe.message(key.expose());
+    Ok(())
+}
+
+/// Show the key, then require it to be retyped.
+pub fn show_and_confirm_key(fe: &mut dyn Frontend, key: &Secret) -> Result<(), InstallError> {
+    show_key(fe, key)?;
     let wanted = recovery::normalise(key.expose());
     let check = move |s: &str| {
         if recovery::normalise(s) == wanted {
