@@ -258,3 +258,54 @@ fn errors_and_unknown_methods_are_varlink_errors() {
         assert_eq!(reply["parameters"]["method"], "org.example.Nope");
     });
 }
+
+#[test]
+fn bind_refuses_a_socket_someone_still_answers_on() {
+    with_server(|path, _| async move {
+        let error = server::bind(&path).expect_err("a live socket is kept");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(path.exists());
+    });
+}
+
+#[test]
+fn dropping_the_listener_removes_only_its_own_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = socket_path(&dir);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let first = server::bind(&path).unwrap();
+        drop(first);
+        assert!(!path.exists(), "its own socket is removed");
+
+        let old = server::bind(&path).unwrap();
+        // Another instance took the path over (the old socket was stale).
+        std::fs::remove_file(&path).unwrap();
+        let _new = server::bind(&path).unwrap();
+        drop(old);
+        assert!(path.exists(), "someone else's socket is left alone");
+    });
+}
+
+#[test]
+fn bind_refuses_a_directory_others_can_enter() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = socket_path(&dir);
+    std::fs::create_dir(path.parent().unwrap()).unwrap();
+    std::fs::set_permissions(
+        path.parent().unwrap(),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let error = server::bind(&path).expect_err("a 0755 directory is refused");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    });
+}

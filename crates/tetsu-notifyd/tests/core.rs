@@ -246,7 +246,7 @@ fn unlock_re_pops_pending_approvals_and_re_arms_them() {
     let (note, _) = core
         .show_tetsu(&caller(10), approval(), false, clock.at(0))
         .unwrap();
-    core.collapse(note);
+    core.collapse(note, clock.at(0));
     core.set_locked(true, clock.at(1_000));
     core.set_locked(false, clock.at(60_000));
     assert_eq!(core.place(note), Some(Place::Popup));
@@ -284,7 +284,7 @@ fn the_owner_closes_its_notification_from_any_connection() {
         .show_tetsu(&caller(10), approval(), false, clock.at(0))
         .unwrap();
     let id = core.tetsu_id(note);
-    let effects = core.close_tetsu(10, &id).unwrap();
+    let effects = core.close_tetsu(10, &id, Instant::now()).unwrap();
     assert_eq!(
         replies_for(&effects, note),
         vec![(NotifyReply::dismissed(DismissReason::Closed), true)]
@@ -300,9 +300,18 @@ fn another_process_cannot_close_or_learn_of_it() {
         .show_tetsu(&caller(10), approval(), false, clock.at(0))
         .unwrap();
     let id = core.tetsu_id(note);
-    assert_eq!(core.close_tetsu(11, &id), Err(ShowError::NotFound));
-    assert_eq!(core.close_tetsu(10, "n-999"), Err(ShowError::NotFound));
-    assert_eq!(core.close_tetsu(10, "garbage"), Err(ShowError::NotFound));
+    assert_eq!(
+        core.close_tetsu(11, &id, Instant::now()),
+        Err(ShowError::NotFound)
+    );
+    assert_eq!(
+        core.close_tetsu(10, "n-999", Instant::now()),
+        Err(ShowError::NotFound)
+    );
+    assert_eq!(
+        core.close_tetsu(10, "garbage", Instant::now()),
+        Err(ShowError::NotFound)
+    );
     assert!(core.is_open(note));
 }
 
@@ -313,7 +322,7 @@ fn a_caller_disconnecting_withdraws_without_a_reply() {
     let (note, _) = core
         .show_tetsu(&caller(10), approval(), false, clock.at(0))
         .unwrap();
-    let effects = core.caller_gone(note);
+    let effects = core.caller_gone(note, Instant::now());
     assert!(replies_for(&effects, note).is_empty());
     assert_eq!(pending_changes(&effects), vec![0]);
     assert!(!core.is_open(note));
@@ -326,7 +335,7 @@ fn a_oneway_notification_has_no_caller_to_lose() {
         .show_tetsu(&caller(10), info(None), true, Instant::now())
         .unwrap();
     assert!(replies_for(&effects, note).is_empty());
-    core.caller_gone(note);
+    core.caller_gone(note, Instant::now());
     assert!(core.is_open(note));
 }
 
@@ -487,8 +496,11 @@ fn fdo_actions_and_closing() {
     assert_eq!(fdo_closed(&effects), vec![(id, 2)]);
 
     let (id, _) = core.show_fdo(fdo(0, -1), clock.at(0));
-    assert_eq!(fdo_closed(&core.close_fdo(id)), vec![(id, 3)]);
-    assert!(core.close_fdo(id).is_empty());
+    assert_eq!(
+        fdo_closed(&core.close_fdo(id, Instant::now())),
+        vec![(id, 3)]
+    );
+    assert!(core.close_fdo(id, Instant::now()).is_empty());
 }
 
 #[test]
@@ -538,4 +550,85 @@ fn the_view_hides_everything_while_locked() {
     let view = core.view(clock.at(2));
     assert!(view.locked);
     assert!(view.popups.is_empty());
+}
+
+// --- Arming follows what the user sees ------------------------------------
+
+#[test]
+fn opening_the_panel_re_arms_pending_approvals_still_in_popups() {
+    let clock = Clock::new();
+    let mut core = Core::new();
+    let (note, _) = core
+        .show_tetsu(&caller(10), approval(), false, clock.at(0))
+        .unwrap();
+    core.panel_opened(clock.at(1_000));
+    assert_eq!(
+        core.click(note, "approve", clock.at(1_000)),
+        Err(Refused::NotArmed)
+    );
+    assert!(
+        core.click(note, "approve", clock.at(1_000) + ARM_DELAY)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_popup_that_moves_up_re_arms() {
+    let clock = Clock::new();
+    let mut core = Core::new();
+    let (top, _) = core
+        .show_tetsu(&caller(10), approval(), false, clock.at(0))
+        .unwrap();
+    let (below, _) = core
+        .show_tetsu(&caller(11), approval(), false, clock.at(0))
+        .unwrap();
+    // The card above goes away: the one below slides into its place.
+    core.caller_gone(top, clock.at(2_000));
+    assert_eq!(
+        core.click(below, "approve", clock.at(2_000)),
+        Err(Refused::NotArmed)
+    );
+    assert!(
+        core.click(below, "approve", clock.at(2_000) + ARM_DELAY)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_popup_that_stays_put_keeps_its_arming() {
+    let clock = Clock::new();
+    let mut core = Core::new();
+    let (top, _) = core
+        .show_tetsu(&caller(10), approval(), false, clock.at(0))
+        .unwrap();
+    let (below, _) = core
+        .show_tetsu(&caller(11), approval(), false, clock.at(0))
+        .unwrap();
+    core.caller_gone(below, clock.at(2_000));
+    assert!(core.click(top, "approve", clock.at(2_000)).is_ok());
+}
+
+#[test]
+fn everything_shown_under_the_lock_arms_from_the_unlock() {
+    let clock = Clock::new();
+    let mut core = Core::new();
+    core.set_locked(true, clock.at(0));
+    let (id, _) = core.show_fdo(fdo(0, 0), clock.at(10));
+    let note = core.fdo_note(id).unwrap();
+    core.set_locked(false, clock.at(5_000));
+    assert_eq!(
+        core.click(note, "show", clock.at(5_000)),
+        Err(Refused::NotArmed)
+    );
+}
+
+#[test]
+fn the_category_reaches_the_view() {
+    let mut core = Core::new();
+    core.show_fdo(fdo(0, -1), Instant::now());
+    let view = core.view(Instant::now());
+    assert_eq!(
+        view.popups[0].category.as_deref(),
+        Some("transfer.complete")
+    );
 }

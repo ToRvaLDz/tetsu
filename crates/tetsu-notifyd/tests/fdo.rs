@@ -130,7 +130,7 @@ fn notify_send_style_calls_show_and_answer() {
                 "",
                 "<b>Ana</b>",
                 "hi &amp; <i>bye</i>",
-                &["default", "Open", "reply", "Reply"],
+                &["default", "Open", "re&amp;ply", "<b>Reply</b>"],
                 hints,
                 -1,
             )
@@ -146,12 +146,14 @@ fn notify_send_style_calls_show_and_answer() {
         assert_eq!(note.urgency, Urgency::Critical);
         assert!(note.default_action);
         assert_eq!(note.buttons.len(), 1);
+        assert_eq!(note.buttons[0].label, "Reply");
+        assert_eq!(note.category.as_deref(), Some("im.received"));
 
         tokio::time::sleep(ARM_DELAY + Duration::from_millis(100)).await;
         commands
             .send(Command::Click {
                 note: note.id,
-                action: "reply".into(),
+                action: "re&amp;ply".into(),
             })
             .unwrap();
         let signal = tokio::time::timeout(TIMEOUT, invoked.next())
@@ -159,7 +161,8 @@ fn notify_send_style_calls_show_and_answer() {
             .unwrap()
             .unwrap();
         let args = signal.args().unwrap();
-        assert_eq!((args.id, args.action_key.as_str()), (id, "reply"));
+        // Keys come back exactly as sent; only labels are stripped.
+        assert_eq!((args.id, args.action_key.as_str()), (id, "re&amp;ply"));
         let signal = tokio::time::timeout(TIMEOUT, closed.next())
             .await
             .unwrap()
