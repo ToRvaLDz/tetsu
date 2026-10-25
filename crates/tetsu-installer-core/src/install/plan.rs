@@ -127,8 +127,29 @@ impl Action {
     }
 
     /// A failure of a soft action is logged and the install carries on.
+    /// The firmware actions are all soft: `\EFI\BOOT\BOOTX64.EFI` on the
+    /// ESP boots the system whatever the firmware accepts.
     pub fn is_soft(self) -> bool {
-        self == Self::EnrollKeys
+        matches!(
+            self,
+            Self::EnrollKeys | Self::CreateBootEntry | Self::SetBootOrder
+        )
+    }
+
+    /// What a failed soft action leaves undone, for the warning.
+    pub fn soft_consequence(self) -> &'static str {
+        match self {
+            Self::EnrollKeys => "Secure Boot keys not enrolled; the install goes on without them",
+            Self::CreateBootEntry => {
+                "the firmware boot entry was not created; pick the disk in the firmware boot \
+                 menu, \\EFI\\BOOT\\BOOTX64.EFI is the fallback"
+            }
+            Self::SetBootOrder => {
+                "the boot order was not changed; pick Tetsu in the firmware boot menu, \
+                 \\EFI\\BOOT\\BOOTX64.EFI is the fallback"
+            }
+            _ => "the install goes on",
+        }
     }
 
     /// One line for the progress display and the log. Never a secret.
@@ -428,13 +449,16 @@ mod tests {
     }
 
     #[test]
-    fn only_enrollment_is_soft_and_descriptions_are_one_line() {
+    fn only_the_firmware_actions_are_soft_and_descriptions_are_one_line() {
         let plan = InstallPlan::build(
             &answers(UnlockLevel::Comfort),
             &target(SecureBoot::SetupMode),
         );
         for a in plan.actions() {
-            assert_eq!(a.is_soft(), *a == EnrollKeys);
+            assert_eq!(
+                a.is_soft(),
+                matches!(a, EnrollKeys | CreateBootEntry | SetBootOrder)
+            );
             let d = a.describe();
             assert!(!d.is_empty() && !d.contains('\n'), "{a:?}");
         }

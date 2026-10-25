@@ -157,6 +157,13 @@ fn finish(fe: &mut dyn Frontend, run_dir: &Path, report: Report) -> Result<(), S
             fe.message(&format!("Cleanup problem: {p}"));
         }
     }
+    if report.disk_kept {
+        fe.message(
+            "The Secure Boot keys are already enrolled in the firmware, so the disk was kept \
+             as it is, not wiped. Look at the log; to start over, reset the keys in the \
+             firmware setup first.",
+        );
+    }
     match report.result {
         Ok(()) => {
             fe.message(&format!(

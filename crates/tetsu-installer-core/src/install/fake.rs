@@ -245,6 +245,9 @@ pub struct Outcome {
     pub script: Script,
     pub result: Result<(), crate::error::InstallError>,
     pub log: Vec<String>,
+    /// [`Executor::touched`] and [`Executor::keys_enrolled`] after the run.
+    pub touched: bool,
+    pub keys_enrolled: bool,
 }
 
 pub fn run_plan(
@@ -268,7 +271,7 @@ pub fn run_with(
     setup(&machine);
     let mut script = Script::new();
     let entropy = Counter::default();
-    let (result, log) = {
+    let (result, log, touched, keys_enrolled) = {
         let deps = Deps {
             runner: &machine,
             probe: &Roomy,
@@ -278,12 +281,19 @@ pub fn run_with(
         let fe: &mut dyn Frontend = &mut script;
         let mut exec = Executor::new(deps, answers, target, fe).unwrap();
         let result = exec.run(plan);
-        (result, exec.log().lines().to_vec())
+        (
+            result,
+            exec.log().lines().to_vec(),
+            exec.touched(),
+            exec.keys_enrolled(),
+        )
     };
     Outcome {
         machine,
         script,
         result,
         log,
+        touched,
+        keys_enrolled,
     }
 }

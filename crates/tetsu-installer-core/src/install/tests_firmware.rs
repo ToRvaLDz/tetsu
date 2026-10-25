@@ -241,20 +241,58 @@ fn a_failure_before_stage_three_never_touches_firmware() {
     }
 }
 
+fn warnings(run: &Run) -> Vec<&String> {
+    run.out
+        .script
+        .messages
+        .iter()
+        .filter(|m| m.starts_with("Warning:"))
+        .collect()
+}
+
+/// The install is complete: unmounted and closed, with the fallback named.
+fn assert_fallback_warning(run: &Run) {
+    run.out.result.as_ref().unwrap();
+    assert!(run.lines().iter().any(|l| l == "cryptsetup close root"));
+    assert!(
+        warnings(run)
+            .iter()
+            .any(|w| w.contains(r"\EFI\BOOT\BOOTX64.EFI")),
+        "{:?}",
+        warnings(run)
+    );
+}
+
 #[test]
-fn a_failed_boot_entry_stops_before_the_unmount() {
+fn a_failed_boot_entry_warns_and_the_install_completes() {
     let run = full_run(
         UnlockLevel::Comfort,
         SecureBoot::Off,
         |_, _| {},
         |m| m.fail_on("efibootmgr --create"),
     );
-    assert!(run.out.result.is_err());
-    assert!(run.lines().iter().all(|l| !l.starts_with("umount")));
+    assert_fallback_warning(&run);
+    // Without an entry there is no order to set.
+    assert!(
+        run.lines()
+            .iter()
+            .all(|l| !l.starts_with("efibootmgr --bootorder"))
+    );
 }
 
 #[test]
-fn an_ambiguous_boot_listing_is_refused() {
+fn a_failed_boot_order_warns_and_the_install_completes() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        |m| m.fail_on("efibootmgr --bootorder"),
+    );
+    assert_fallback_warning(&run);
+}
+
+#[test]
+fn an_ambiguous_boot_listing_creates_no_order_and_warns() {
     let run = full_run(
         UnlockLevel::Comfort,
         SecureBoot::Off,
@@ -264,12 +302,49 @@ fn an_ambiguous_boot_listing_is_refused() {
                 (String::new(), "BootOrder: 0000\nBoot0000* Windows\n".into())
         },
     );
-    assert!(run.out.result.is_err());
+    assert_fallback_warning(&run);
     assert!(
         run.lines()
             .iter()
             .all(|l| !l.starts_with("efibootmgr --bootorder"))
     );
+}
+
+#[test]
+fn a_failure_after_the_enrollment_is_reported_with_the_keys_marked_enrolled() {
+    for failing in ["umount", "cryptsetup close", "sync"] {
+        let run = full_run(
+            UnlockLevel::Comfort,
+            SecureBoot::SetupMode,
+            |_, _| {},
+            |m| m.fail_on(failing),
+        );
+        assert!(
+            matches!(run.out.result, Err(InstallError::ActionFailed { .. })),
+            "{failing}"
+        );
+        assert!(run.out.keys_enrolled, "{failing}");
+    }
+}
+
+#[test]
+fn a_failure_before_the_enrollment_leaves_the_keys_unenrolled() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |m| m.fail_on("ukify"),
+    );
+    assert!(run.out.result.is_err());
+    assert!(run.out.touched && !run.out.keys_enrolled);
+    // A failed enrollment is the off path: not enrolled either.
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |m| m.fail_on("efi-updatevar -f"),
+    );
+    assert!(!run.out.keys_enrolled);
 }
 
 // The secrets of the test answers.

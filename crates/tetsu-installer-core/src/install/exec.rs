@@ -56,6 +56,10 @@ pub struct Executor<'a> {
     pub(super) state: State,
     /// Actions of the plan already performed; `run` continues after them.
     done: usize,
+    /// An action was started: the machine may have been changed.
+    touched: bool,
+    /// The keys were written to the firmware.
+    keys_enrolled: bool,
 }
 
 /// Lets a `&dyn Runner` be handed to APIs that take a `Runner` by value.
@@ -92,12 +96,25 @@ impl<'a> Executor<'a> {
             log: InstallLog::new(),
             state: State::default(),
             done: 0,
+            touched: false,
+            keys_enrolled: false,
         })
     }
 
     /// The log so far (no secrets).
     pub fn log(&self) -> &InstallLog {
         &self.log
+    }
+
+    /// Whether any action was started, so the disk may have been changed.
+    pub fn touched(&self) -> bool {
+        self.touched
+    }
+
+    /// Whether the Secure Boot keys are in the firmware. From then on the
+    /// firmware trusts the keys on the disk, so the disk must be kept.
+    pub fn keys_enrolled(&self) -> bool {
+        self.keys_enrolled
     }
 
     /// Run every action of `plan`. A failed soft action is logged and
@@ -111,12 +128,16 @@ impl<'a> Executor<'a> {
                 return Err(InstallError::Cancelled);
             }
             self.say(action.stage(), &action.describe());
+            self.touched = true;
             match self.perform(action) {
-                Ok(()) => self.done += 1,
+                Ok(()) => {
+                    self.done += 1;
+                    self.keys_enrolled |= action == Action::EnrollKeys;
+                }
                 Err(e) if action.is_soft() => {
                     self.done += 1;
                     self.warn(&format!("{}: {e}", action.describe()));
-                    self.warn("Secure Boot keys not enrolled; the install goes on without them");
+                    self.warn(action.soft_consequence());
                 }
                 Err(e) => {
                     self.say(action.stage(), &format!("failed: {e}"));

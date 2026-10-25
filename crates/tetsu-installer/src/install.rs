@@ -36,6 +36,16 @@ pub struct Report {
     pub log: Vec<String>,
     /// Cleanup steps that failed; `None` when no cleanup ran.
     pub cleanup_problems: Option<Vec<String>>,
+    /// The install failed after the keys were enrolled: the disk holds the
+    /// keys the firmware trusts, so it was left as it is.
+    pub disk_kept: bool,
+}
+
+/// Whether a failed install is cleaned up. Once the keys are enrolled the
+/// disk is kept: wiping it would leave the firmware trusting a Platform
+/// Key whose private half is gone.
+fn should_clean(failed: bool, keys_enrolled: bool) -> bool {
+    failed && !keys_enrolled
 }
 
 /// The executor owns the frontend for the whole run; this lets the binary
@@ -96,6 +106,7 @@ pub fn install(
                 result: Err(e),
                 log: Vec::new(),
                 cleanup_problems: None,
+                disk_kept: false,
             };
         }
     };
@@ -114,9 +125,12 @@ pub fn install(
     };
     // The executor holds the log file open on the ESP; release it first.
     let log = exec.log().lines().to_vec();
+    let keys_enrolled = exec.keys_enrolled();
     drop(exec);
-    let cleanup_problems = result.is_err().then(|| cleanup(machine.runner, target));
+    let cleanup_problems =
+        should_clean(result.is_err(), keys_enrolled).then(|| cleanup(machine.runner, target));
     Report {
+        disk_kept: result.is_err() && keys_enrolled,
         result,
         log,
         cleanup_problems,
@@ -277,6 +291,14 @@ mod tests {
             .iter()
             .position(|c| c.starts_with(prefix))
             .unwrap_or_else(|| panic!("no call starting with {prefix:?} in {calls:#?}"))
+    }
+
+    #[test]
+    fn cleanup_runs_on_failure_unless_the_keys_are_enrolled() {
+        assert!(should_clean(true, false));
+        assert!(!should_clean(true, true));
+        assert!(!should_clean(false, false));
+        assert!(!should_clean(false, true));
     }
 
     #[test]

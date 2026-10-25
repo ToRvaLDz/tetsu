@@ -1,6 +1,6 @@
 //! Stage 3: everything that changes firmware state, last. Key enrollment
-//! falls back to the off path on any failure; the boot entry comes after
-//! everything on the disk is signed and verified.
+//! and the boot entry are soft (the off path, the `BOOTX64.EFI` fallback);
+//! they come after everything on the disk is signed and verified.
 
 use std::fs;
 
@@ -136,11 +136,10 @@ impl Executor<'_> {
     }
 
     fn set_boot_order(&mut self) -> Result<(), InstallError> {
-        let order = self
-            .state
-            .boot_order
-            .clone()
-            .ok_or_else(|| InstallError::Failed("no boot entry was created".into()))?;
+        // No entry: its creation already warned.
+        let Some(order) = self.state.boot_order.clone() else {
+            return Ok(());
+        };
         self.tool("efibootmgr", &[&"--bootorder", &order])
     }
 
