@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 /// The interface name.
 pub const INTERFACE: &str = "org.tetsu.notify.v1";
+/// The interface definition, for `GetInterfaceDescription`.
+pub const IDL: &str = include_str!("../idl/org.tetsu.notify.v1.varlink");
 /// `NotificationNotFound (id: string)`.
 pub const NOTIFICATION_NOT_FOUND: &str = "org.tetsu.notify.v1.NotificationNotFound";
 /// `PermissionDenied ()`.
