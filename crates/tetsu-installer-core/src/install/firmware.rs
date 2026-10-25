@@ -5,7 +5,7 @@
 use std::fs;
 
 use crate::error::InstallError;
-use crate::secureboot::{Enrollment, enrollment_steps, run_steps};
+use crate::secureboot::{Enrollment, enrollment_steps, guid, run_steps};
 
 use super::exec::Executor;
 use super::plan::Action;
@@ -74,21 +74,6 @@ pub(super) fn new_boot_order(before: &BootEntries, after: &BootEntries) -> Resul
     let mut order = vec![(*entry).to_owned()];
     order.extend(after.order.iter().filter(|n| n.as_str() != *entry).cloned());
     Ok(order.join(","))
-}
-
-/// A random (version 4) GUID from 16 random bytes.
-fn guid(mut b: [u8; 16]) -> String {
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        hex[0..4].concat(),
-        hex[4..6].concat(),
-        hex[6..8].concat(),
-        hex[8..10].concat(),
-        hex[10..16].concat()
-    )
 }
 
 impl Executor<'_> {
@@ -230,12 +215,5 @@ mod tests {
         assert!(new_boot_order(&BootEntries::default(), &none).is_err());
         let two = parse("Boot0000* Tetsu\nBoot0001* Tetsu\n");
         assert!(new_boot_order(&BootEntries::default(), &two).is_err());
-    }
-
-    #[test]
-    fn guid_is_a_v4_guid() {
-        let g = guid([0xff; 16]);
-        assert_eq!(g, "ffffffff-ffff-4fff-bfff-ffffffffffff");
-        assert_eq!(guid([0; 16]), "00000000-0000-4000-8000-000000000000");
     }
 }

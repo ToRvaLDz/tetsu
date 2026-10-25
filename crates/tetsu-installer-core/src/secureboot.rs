@@ -18,6 +18,21 @@ use crate::error::InstallError;
 /// Owner GUID efitools conventions use for Microsoft's certificates.
 pub const MICROSOFT_OWNER_GUID: &str = "77fa9abd-0359-4d32-bd60-28f4e78f784b";
 
+/// A random (version 4) GUID from 16 random bytes.
+pub fn guid(mut b: [u8; 16]) -> String {
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        hex[0..4].concat(),
+        hex[4..6].concat(),
+        hex[6..8].concat(),
+        hex[8..10].concat(),
+        hex[10..16].concat()
+    )
+}
+
 /// Microsoft certificates (DER or PEM) for the Secure Boot lists. The KEK
 /// list takes the key-exchange CAs, the db list the signing CAs; the
 /// caller decides which file goes where.
@@ -234,6 +249,13 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn guid_is_a_v4_guid() {
+        let g = guid([0xff; 16]);
+        assert_eq!(g, "ffffffff-ffff-4fff-bfff-ffffffffffff");
+        assert_eq!(guid([0; 16]), "00000000-0000-4000-8000-000000000000");
     }
 
     #[test]
