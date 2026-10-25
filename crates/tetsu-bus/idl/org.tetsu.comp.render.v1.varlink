@@ -119,6 +119,7 @@ method WatchRenderStats() -> (event: RenderStatsEvent)
 # switch waits for unlock (`pending` true); at unlock it is discarded if
 # the device is gone or the user file now sets it. A failed hot switch
 # returns to the previous device and persists nothing.
+# @capability display.render
 method SetRenderDevice(
   # Null returns to the automatic choice.
   device_id: ?string
@@ -128,6 +129,7 @@ method SetRenderDevice(
 # Rejected when the user file sets it, and `on` is rejected where it is
 # unsupported. While the session is locked the change waits for unlock
 # (`pending` true), as for SetRenderDevice.
+# @capability display.render
 method SetExplicitSync(
   # `auto` enables it where supported.
   mode: (auto, on, off)

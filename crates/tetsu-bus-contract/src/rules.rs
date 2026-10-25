@@ -3,7 +3,8 @@
 use crate::{Contract, Doc, ErrorDef, Field, Interface, Kind, Method, Ty, TypeDef, Violation};
 
 /// The closed set of tags.
-const TAGS: [&str; 5] = [
+const TAGS: [&str; 6] = [
+    "@capability",
     "@destructive",
     "@transient",
     "@permanent",
@@ -11,11 +12,22 @@ const TAGS: [&str; 5] = [
     "@deprecated",
 ];
 
-const ON_METHOD: &[&str] = &["@destructive", "@deprecated"];
+const ON_METHOD: &[&str] = &["@capability", "@destructive", "@deprecated"];
 const ON_ERROR: &[&str] = &["@transient", "@permanent"];
 // Inputs, replies and error parameters are fields too, as in type members.
 const ON_FIELD: &[&str] = &["@untrusted", "@deprecated"];
 const ON_NOTHING: &[&str] = &[];
+
+/// Methods that change no state besides the one they exist to change in
+/// the capability service itself: they need no `@capability`.
+const CAPABILITY_EXEMPT: &[&str] = &[
+    "org.tetsu.cap.v1.Intent",
+    "org.tetsu.cap.v1.Set",
+    "org.tetsu.cap.v1.Check",
+];
+
+/// Method name prefixes of reads, which need no `@capability`.
+const READ_PREFIXES: [&str; 3] = ["List", "Get", "Watch"];
 
 /// Every rule of CONTRACT.md's Tags and Shape sections the current IDL breaks.
 pub fn check_rules(contract: &Contract) -> Vec<Violation> {
@@ -27,31 +39,32 @@ pub fn check_rules(contract: &Contract) -> Vec<Violation> {
     out
 }
 
-/// A tag line must be exactly one tag of the closed set, on a member it may
-/// mark, and appear once.
+/// A tag line must be exactly one tag of the closed set (`@capability` also
+/// carries its arguments), on a member it may mark, and appear once.
 fn check_tags(doc: &Doc, allowed: &[&str], path: &str, out: &mut Vec<Violation>) {
     let mut seen: Vec<&str> = Vec::new();
     for line in doc.tag_lines() {
-        if !TAGS.contains(&line) {
+        let name = Doc::tag_name(line);
+        if !TAGS.contains(&name) || (name != "@capability" && line != name) {
             out.push(Violation::new(
                 Kind::UnknownTag,
                 path,
                 format!("`{line}` is not exactly one tag of the closed set"),
             ));
-        } else if !allowed.contains(&line) {
+        } else if !allowed.contains(&name) {
             out.push(Violation::new(
                 Kind::MisplacedTag,
                 path,
-                format!("{line} cannot mark this member"),
+                format!("{name} cannot mark this member"),
             ));
-        } else if seen.contains(&line) {
+        } else if seen.contains(&name) {
             out.push(Violation::new(
                 Kind::DuplicateTag,
                 path,
-                format!("{line} appears more than once"),
+                format!("{name} appears more than once"),
             ));
         }
-        seen.push(line);
+        seen.push(name);
     }
 }
 
@@ -75,6 +88,7 @@ fn check_interface(iface: &Interface, out: &mut Vec<Violation>) {
     }
     for (mname, m) in &iface.methods {
         check_method(m, &format!("{name}.{mname}"), out);
+        check_capability(m, &format!("{name}.{mname}"), out);
     }
     for (ename, e) in &iface.errors {
         check_error(e, &format!("{name}.{ename}"), out);
@@ -102,6 +116,36 @@ fn check_method(m: &Method, path: &str, out: &mut Vec<Violation>) {
         }
     }
     check_fields(&m.outputs, &format!("{path}(out)"), ON_FIELD, out);
+}
+
+/// A state-changing method carries a well-formed `@capability`, whose scope
+/// names one of its inputs; reads and the exempt methods may omit it.
+fn check_capability(m: &Method, path: &str, out: &mut Vec<Violation>) {
+    match m.doc.capability() {
+        Some(Err(why)) => out.push(Violation::new(Kind::InvalidCapability, path, why)),
+        Some(Ok(cap)) => {
+            if let Some(scope) = cap.scope
+                && !m.inputs.iter().any(|p| p.name == scope)
+            {
+                out.push(Violation::new(
+                    Kind::InvalidCapability,
+                    path,
+                    format!("scope `{scope}` is not an input parameter"),
+                ));
+            }
+        }
+        None => {
+            let name = path.rsplit('.').next().unwrap_or(path);
+            let read = READ_PREFIXES.iter().any(|p| name.starts_with(p));
+            if !read && !CAPABILITY_EXEMPT.contains(&path) {
+                out.push(Violation::new(
+                    Kind::MissingCapability,
+                    path,
+                    "state-changing method has no @capability",
+                ));
+            }
+        }
+    }
 }
 
 fn check_error(e: &ErrorDef, path: &str, out: &mut Vec<Violation>) {

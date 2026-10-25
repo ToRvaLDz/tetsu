@@ -30,6 +30,7 @@ type PendingEvent (
 # expires. A critical notification never expires: when its popup moves
 # into the panel it stays pending, with no `dismissed`. Actions are
 # answered only in the server's own surfaces, never through the bus.
+# @capability notify.send
 method Show(
   # One line.
   title: string,
@@ -52,10 +53,12 @@ method WatchPending() -> (event: PendingEvent)
 
 # Opens the notification panel on the focused output. It never takes
 # keyboard focus by itself.
+# @capability notify.send
 method OpenPanel() -> ()
 
 # Withdraws a notification this caller showed; its stream gets
 # `dismissed` with reason `closed` and ends.
+# @capability notify.send
 method Close(
   # The id from the `shown` reply.
   id: string

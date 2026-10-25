@@ -16,6 +16,22 @@ impl Doc {
             .filter(|l| l.starts_with('@'))
     }
 
+    /// The tag a tag line names: its first token. Only `@capability` takes
+    /// arguments; for every other tag the line must be the name alone.
+    pub fn tag_name(line: &str) -> &str {
+        line.split_whitespace().next().unwrap_or(line)
+    }
+
+    /// The `@capability` tag of the doc: `None` when absent, `Err` with the
+    /// reason when its arguments do not follow the grammar. A repeated tag
+    /// is reported by the duplicate check; the first one is parsed here.
+    pub fn capability(&self) -> Option<Result<Capability, String>> {
+        let line = self
+            .tag_lines()
+            .find(|l| Self::tag_name(l) == "@capability")?;
+        Some(Capability::parse(line))
+    }
+
     /// Whether the doc carries exactly this tag on a line of its own.
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tag_lines().any(|l| l == tag)
@@ -28,6 +44,56 @@ impl Doc {
             .map(|l| l.trim())
             .any(|l| !l.is_empty() && !l.starts_with('@'))
     }
+}
+
+/// The parsed `@capability <class> [scope=<param>]` tag of a method.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capability {
+    pub class: String,
+    /// The input parameter that scopes the grant.
+    pub scope: Option<String>,
+}
+
+impl Capability {
+    /// Parses a tag line that starts with `@capability`.
+    fn parse(line: &str) -> Result<Self, String> {
+        let mut args = line.split_whitespace().skip(1);
+        let class = args.next().ok_or("no capability class")?;
+        if !is_class(class) {
+            return Err(format!(
+                "`{class}` is not a class of two or more lowercase dotted segments"
+            ));
+        }
+        let scope = match args.next() {
+            None => None,
+            Some(arg) => match arg.strip_prefix("scope=") {
+                Some(param) if !param.is_empty() => Some(param.to_string()),
+                _ => return Err(format!("`{arg}` is not `scope=<param>`")),
+            },
+        };
+        if let Some(extra) = args.next() {
+            return Err(format!("unexpected `{extra}` after the capability"));
+        }
+        Ok(Self {
+            class: class.to_string(),
+            scope,
+        })
+    }
+}
+
+/// Two or more dotted segments, each `[a-z][a-z0-9_]*`.
+fn is_class(class: &str) -> bool {
+    let mut segments = 0;
+    for seg in class.split('.') {
+        let mut chars = seg.chars();
+        let ok = chars.next().is_some_and(|c| c.is_ascii_lowercase())
+            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !ok {
+            return false;
+        }
+        segments += 1;
+    }
+    segments >= 2
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

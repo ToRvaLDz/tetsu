@@ -140,7 +140,7 @@ fn bless_that_fails_midway_restores_the_baseline() {
     let late = "org.tetsu.zzz.v1.varlink";
     fs::write(
         s.file(late),
-        "interface org.tetsu.zzz.v1\n\n# Pings.\nmethod Ping() -> ()\n\n# The caller may not use this interface.\n# @permanent\nerror PermissionDenied ()\n",
+        "interface org.tetsu.zzz.v1\n\n# Pings.\n# @capability test.ping\nmethod Ping() -> ()\n\n# The caller may not use this interface.\n# @permanent\nerror PermissionDenied ()\n",
     )
     .unwrap();
     fs::create_dir(s.baseline(late)).unwrap();

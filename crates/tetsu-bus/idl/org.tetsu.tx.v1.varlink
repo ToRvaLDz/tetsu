@@ -101,10 +101,12 @@ type AurPin (name: string, commit: string)
 # transaction. Destructive because package hooks may migrate data in the
 # shared /var, which no rollback undoes.
 # @destructive
+# @capability system.update
 method Update() -> (progress: ?Progress, transaction: ?Transaction)
 
 # Adds repo packages to the user layer. Streams progress, ends with the
 # finished transaction.
+# @capability packages.install
 method Install(
   # Repo package names.
   packages: []string
@@ -112,6 +114,7 @@ method Install(
 
 # Removes packages from the user layer. Streams progress, ends with the
 # finished transaction.
+# @capability packages.remove
 method Remove(
   # User layer package names, see ListUserPackages.
   packages: []string
@@ -120,6 +123,7 @@ method Remove(
 # Rolls back to an earlier snapshot by producing a new one cloned from it,
 # which the next boot uses. Nothing is deleted. Streams progress, ends
 # with the finished transaction.
+# @capability system.rollback
 method Rollback(
   # Snapshot id, from GetStatus or a transaction; null for the newest good
   # snapshot older than the booted one.
@@ -127,6 +131,7 @@ method Rollback(
 ) -> (progress: ?Progress, transaction: ?Transaction)
 
 # Fetches what a human needs to review AUR packages before installing.
+# @capability aur.review
 method ReviewAurPackages(
   # AUR package names.
   names: []string
@@ -136,6 +141,7 @@ method ReviewAurPackages(
 # moves already installed AUR packages to them. Streams progress, ends
 # with the finished transaction.
 # @destructive
+# @capability aur.install
 method InstallFromAur(
   # Name and commit of each package, as returned by ReviewAurPackages.
   packages: []AurPin

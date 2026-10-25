@@ -53,6 +53,7 @@ method WatchConfig() -> (event: ConfigEvent)
 # Writes values into the managed state and removes others, atomically:
 # all of it or none. Rejected as a whole when a key is unknown, not
 # writable, invalid, set by the user file, or both set and removed.
+# @capability comp.configure
 method SetManaged(
   # key -> the new managed value.
   values: [string]object,

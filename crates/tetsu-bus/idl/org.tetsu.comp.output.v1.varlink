@@ -61,6 +61,7 @@ method WatchOutputs() -> (event: OutputEvent)
 # it or none of it, and persists it in the managed state. A configuration
 # that leaves no output enabled is rejected, and so is one the user file
 # overrides.
+# @capability display.configure
 method ConfigureOutputs(
   # output_id -> the configuration to apply to that output.
   configs: [string]OutputConfig
