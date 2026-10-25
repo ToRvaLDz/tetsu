@@ -37,6 +37,8 @@ pub(super) struct State {
     pub luks_uuid: Option<String>,
     pub password_hash: Option<String>,
     pub kernel_version: Option<String>,
+    /// The committed UKI on the ESP.
+    pub uki_path: Option<std::path::PathBuf>,
     /// The base kernel command line, without the per-snapshot rootflags.
     pub cmdline: Option<String>,
 }
@@ -124,7 +126,8 @@ impl<'a> Executor<'a> {
     fn perform(&mut self, action: Action) -> Result<(), InstallError> {
         match action.stage() {
             Stage::Disk => self.disk_action(action),
-            Stage::Boot | Stage::Firmware => Err(InstallError::Failed(format!(
+            Stage::Boot => self.boot_action(action),
+            Stage::Firmware => Err(InstallError::Failed(format!(
                 "{action:?} is not implemented yet"
             ))),
         }

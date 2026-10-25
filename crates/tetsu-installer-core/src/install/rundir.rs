@@ -80,7 +80,7 @@ impl Drop for SecretFile {
     }
 }
 
-fn private_dir(path: &Path) -> Result<(), InstallError> {
+pub(super) fn private_dir(path: &Path) -> Result<(), InstallError> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() => {}
         Ok(_) => {

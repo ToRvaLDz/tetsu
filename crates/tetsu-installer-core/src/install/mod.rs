@@ -3,6 +3,7 @@
 
 use std::ffi::{OsStr, OsString};
 
+mod boot;
 pub mod config;
 pub mod exec;
 pub mod log;
@@ -16,6 +17,8 @@ pub mod target;
 mod fake;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_boot;
 
 pub use exec::{Deps, Executor};
 pub use plan::{Action, InstallPlan, KeyKind, Stage};
