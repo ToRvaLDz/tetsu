@@ -87,7 +87,7 @@ impl<'a> Store<'a> {
         F: FnOnce() -> Result<EspState, BootError>,
     {
         self.start(lock_path, read_esp, booted, |esp| {
-            select::select_source(esp, booted)
+            Ok(select::select_source(esp, booted))
         })
     }
 
@@ -103,7 +103,7 @@ impl<'a> Store<'a> {
     where
         F: FnOnce() -> Result<EspState, BootError>,
     {
-        self.start(lock_path, read_esp, booted, |_| source)
+        self.start(lock_path, read_esp, booted, |_| Ok(source))
     }
 
     /// Like [`Store::begin`], with the source chosen by `pick` from the ESP
@@ -120,12 +120,11 @@ impl<'a> Store<'a> {
         F: FnOnce() -> Result<EspState, BootError>,
         P: FnOnce(&EspState) -> Result<Source, StoreError>,
     {
-        let _ = (lock_path, read_esp, booted, pick);
-        todo!()
+        self.start(lock_path, read_esp, booted, pick)
     }
 
-    /// The body of `begin` and `begin_from`; `pick` chooses the source from
-    /// the ESP read under the lock.
+    /// The body of the `begin` family; `pick` chooses the source from the ESP
+    /// read under the lock.
     fn start<F, P>(
         &self,
         lock_path: &Path,
@@ -135,7 +134,7 @@ impl<'a> Store<'a> {
     ) -> Result<Begun, StoreError>
     where
         F: FnOnce() -> Result<EspState, BootError>,
-        P: FnOnce(&EspState) -> Source,
+        P: FnOnce(&EspState) -> Result<Source, StoreError>,
     {
         let lock = TxLock::acquire(lock_path)?;
         let esp = read_esp()?;
@@ -144,7 +143,7 @@ impl<'a> Store<'a> {
             Err(StoreError::Cleanup { failures }) => failures,
             Err(e) => return Err(e),
         };
-        let source = pick(&esp);
+        let source = pick(&esp)?;
         let snapshots = self.layout.list_snapshots()?;
         let records = self.records.load()?;
         let counter = select::next_counter(&snapshots, &records, &esp);
