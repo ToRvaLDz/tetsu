@@ -1,7 +1,8 @@
 //! Finding the answer file.
 //!
-//! The file lives on a filesystem labelled `TETSU-ANSWERS` (a small FAT
-//! image or USB stick). The kernel command line may name it:
+//! The file lives on a filesystem labelled `TETSU-ANSWERS` (a small image or
+//! USB stick); a FAT filesystem, whose label holds 11 characters, is labelled
+//! `TETSU-ANS`. The kernel command line may name it:
 //!
 //! ```text
 //! tetsu.answers=/path/in/that/filesystem.toml
@@ -25,6 +26,8 @@ use tetsu_tx::boot::tool::Runner;
 
 /// Filesystem label of the volume holding the answer file.
 pub const LABEL: &str = "TETSU-ANSWERS";
+/// The same volume as a FAT filesystem, whose labels hold 11 characters.
+pub const FAT_LABEL: &str = "TETSU-ANS";
 /// File read when the command line gives no path.
 pub const DEFAULT_PATH: &str = "/answers.toml";
 const CMDLINE_KEY: &str = "tetsu.answers=";
@@ -63,19 +66,19 @@ pub struct Source<'a> {
 /// The text of the answer file, or `None` when the machine offers none.
 pub fn load(src: &Source<'_>, runner: &dyn Runner) -> Result<Option<String>, InstallError> {
     let requested = cmdline_path(src.cmdline);
-    let device = Path::new("/dev/disk/by-label").join(LABEL);
-    let present = src
-        .root
-        .join(device.strip_prefix("/").unwrap_or(&device))
-        .exists();
-    if !present {
+    let device = [LABEL, FAT_LABEL]
+        .iter()
+        .map(|l| Path::new("/dev/disk/by-label").join(l))
+        .find(|d| src.root.join(d.strip_prefix("/").unwrap_or(d)).exists());
+    let Some(device) = device else {
         return match requested {
             Some(p) => Err(InstallError::Failed(format!(
-                "tetsu.answers={p}: no filesystem labelled {LABEL} found"
+                "tetsu.answers={p}: no filesystem labelled {LABEL} found \
+                 ({FAT_LABEL} for a FAT volume)"
             ))),
             None => Ok(None),
         };
-    }
+    };
     let rel = relative(requested.unwrap_or(DEFAULT_PATH))?;
     let mount = RunDir::create(src.run_dir)?.subdir("answers")?;
     let mount_args: [OsString; 4] = [
@@ -164,11 +167,15 @@ mod tests {
     }
 
     fn machine(labelled: bool) -> tempfile::TempDir {
+        machine_labelled(labelled.then_some(LABEL))
+    }
+
+    fn machine_labelled(label: Option<&str>) -> tempfile::TempDir {
         let t = tempfile::tempdir().unwrap();
-        if labelled {
+        if let Some(label) = label {
             let dir = t.path().join("dev/disk/by-label");
             fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join(LABEL), "").unwrap();
+            fs::write(dir.join(label), "").unwrap();
         }
         t
     }
@@ -230,6 +237,15 @@ mod tests {
                 .starts_with("mount -o ro,nodev,noexec,nosuid /dev/disk/by-label/TETSU-ANSWERS ")
         );
         assert!(calls[1].starts_with("umount "));
+    }
+
+    #[test]
+    fn a_fat_volume_with_the_short_label_is_found_too() {
+        let t = machine_labelled(Some(FAT_LABEL));
+        let vol = Volume::new(vec![("answers.toml", "x = 1\n")]);
+        let text = load_from(&t, "quiet", &vol).unwrap();
+        assert_eq!(text.as_deref(), Some("x = 1\n"));
+        assert!(vol.calls.borrow()[0].contains("/dev/disk/by-label/TETSU-ANS "));
     }
 
     #[test]

@@ -109,7 +109,8 @@ boots. systemd-boot with the UKI mkosi builds; kernel command line
   CA 2023 is not included. Sources and SHA-256 pins are in
   `image/microsoft-certs.sha256`.
 - An answer file reaches the installer as the installer expects it (`tetsu.answers=`
-  on the command line, or a filesystem labelled `TETSU-ANSWERS`).
+  on the command line, or a filesystem labelled `TETSU-ANSWERS`, `TETSU-ANS` on
+  FAT).
 
 ## Smoke test
 
