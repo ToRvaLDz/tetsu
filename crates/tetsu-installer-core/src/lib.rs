@@ -9,6 +9,7 @@ pub mod entropy;
 pub mod env;
 pub mod error;
 pub mod frontend;
+pub mod install;
 pub mod keyboard;
 pub mod preflight;
 pub mod secret;
