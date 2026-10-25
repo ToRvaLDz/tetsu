@@ -1,9 +1,11 @@
 //! The ESP as the state store: `<esp>/EFI/Linux` is read, never cached.
 
+use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use super::BootError;
-use super::entry::{BootState, EntryName};
+use super::entry::{BootState, EntryName, FileKind, parse_file_name};
 
 /// Boot attempts granted to a freshly committed entry.
 pub const BOOT_TRIES: u32 = 3;
@@ -41,7 +43,10 @@ pub struct EspState {
 impl EspState {
     /// The entry systemd-boot picks: the newest one that is not Bad.
     pub fn default_entry(&self) -> Option<&EspEntry> {
-        todo!()
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.state() != BootState::Bad)
     }
 
     pub fn newest_counter(&self) -> Option<u64> {
@@ -57,15 +62,52 @@ pub struct Esp {
 
 impl Esp {
     pub fn open(esp_root: &Path) -> Self {
-        todo!()
+        Self {
+            dir: esp_root.join("EFI").join("Linux"),
+        }
     }
 
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
+    /// Read the directory afresh. A missing `EFI/Linux` is an empty state.
     pub fn scan(&self) -> Result<EspState, BootError> {
-        todo!()
+        let mut state = EspState::default();
+        let read = match fs::read_dir(&self.dir) {
+            Ok(r) => r,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(state),
+            Err(e) => return Err(BootError::io(&self.dir, e)),
+        };
+        for item in read {
+            let item = item.map_err(|e| BootError::io(&self.dir, e))?;
+            // Non-UTF-8 names cannot be ours.
+            let Some(file_name) = item.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some(kind) = parse_file_name(&file_name) else {
+                continue;
+            };
+            let path = item.path();
+            let meta = item.metadata().map_err(|e| BootError::io(&path, e))?;
+            if !meta.is_file() {
+                continue;
+            }
+            let size = meta.len();
+            match kind {
+                FileKind::Entry(name) => state.entries.push(EspEntry { name, path, size }),
+                FileKind::Tmp(counter) => state.orphan_tmps.push(OrphanTmp {
+                    counter,
+                    path,
+                    size,
+                }),
+            }
+        }
+        state
+            .entries
+            .sort_by(|a, b| (a.name.counter, &a.path).cmp(&(b.name.counter, &b.path)));
+        state.orphan_tmps.sort_by_key(|t| t.counter);
+        Ok(state)
     }
 }
 
