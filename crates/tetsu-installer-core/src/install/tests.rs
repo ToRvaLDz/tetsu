@@ -302,3 +302,42 @@ fn cancellation_is_checked_between_actions() {
     assert_eq!(out.machine.lines().len(), 3);
     assert!(out.log.last().unwrap().contains("cancelled"));
 }
+
+#[test]
+fn a_second_run_resumes_after_a_cancel() {
+    use super::exec::{Deps, Executor};
+    use super::fake::{Machine, Roomy};
+    use crate::entropy::fake::Counter;
+    use crate::frontend::Frontend;
+    use crate::testing::Script;
+
+    let root = tempfile::tempdir().unwrap();
+    let a = answers(UnlockLevel::Comfort);
+    let t = target(root.path(), SecureBoot::Off);
+    let plan = InstallPlan::from_actions(
+        disk_plan(&InstallPlan::build(&a, &t)).actions()[..4].to_vec(),
+    );
+    let machine = Machine::new(&t.run_dir);
+    let (entropy, mut script) = (Counter::default(), Script::new());
+    let polls = Cell::new(0);
+    // Cancelled once, before the third action.
+    let cancel = || {
+        polls.set(polls.get() + 1);
+        polls.get() == 3
+    };
+    let deps = Deps {
+        runner: &machine,
+        probe: &Roomy,
+        entropy: &entropy,
+        cancelled: &cancel,
+    };
+    let fe: &mut dyn Frontend = &mut script;
+    let mut exec = Executor::new(deps, &a, &t, fe).unwrap();
+    assert!(matches!(exec.run(&plan), Err(InstallError::Cancelled)));
+    assert_eq!(machine.lines().len(), 2);
+    exec.run(&plan).unwrap();
+    // The two actions already performed did not run again.
+    let lines = machine.lines();
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines.iter().filter(|l| l.starts_with("wipefs")).count(), 1);
+}

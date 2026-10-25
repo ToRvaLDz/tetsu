@@ -54,6 +54,8 @@ pub struct Executor<'a> {
     pub(super) run: RunDir,
     pub(super) log: InstallLog,
     pub(super) state: State,
+    /// Actions of the plan already performed; `run` continues after them.
+    done: usize,
 }
 
 /// Lets a `&dyn Runner` be handed to APIs that take a `Runner` by value.
@@ -89,6 +91,7 @@ impl<'a> Executor<'a> {
             run: RunDir::create(&target.run_dir)?,
             log: InstallLog::new(),
             state: State::default(),
+            done: 0,
         })
     }
 
@@ -98,17 +101,20 @@ impl<'a> Executor<'a> {
     }
 
     /// Run every action of `plan`. A failed soft action is logged and
-    /// skipped; any other failure stops the install.
+    /// skipped; any other failure stops the install. It starts at the first
+    /// action not yet performed, so after `Cancelled` a second call carries
+    /// on where the run stopped.
     pub fn run(&mut self, plan: &InstallPlan) -> Result<(), InstallError> {
-        for &action in plan.actions() {
+        for &action in plan.actions().iter().skip(self.done) {
             if (self.deps.cancelled)() {
                 self.say(action.stage(), "cancelled before the next action");
                 return Err(InstallError::Cancelled);
             }
             self.say(action.stage(), &action.describe());
             match self.perform(action) {
-                Ok(()) => {}
+                Ok(()) => self.done += 1,
                 Err(e) if action.is_soft() => {
+                    self.done += 1;
                     self.warn(&format!("{}: {e}", action.describe()));
                     self.warn("Secure Boot keys not enrolled; the install goes on without them");
                 }
