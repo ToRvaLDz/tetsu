@@ -10,6 +10,7 @@ use crate::store::StoreError;
 pub mod dkms;
 #[cfg(test)]
 pub(crate) mod fake;
+pub mod guard;
 pub mod nspawn;
 pub mod pkg;
 pub mod steps;
