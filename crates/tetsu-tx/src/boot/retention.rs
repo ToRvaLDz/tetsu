@@ -35,19 +35,33 @@ pub struct GcSplit {
 
 /// Split [`plan_gc`] into what is always safe to delete and what has to wait.
 pub fn split_gc(state: &EspState, booted: Option<u64>) -> GcSplit {
-    todo!()
+    let keep = kept_counters(state, booted);
+    let mut split = GcSplit::default();
+    for e in &state.entries {
+        if keep.contains(&e.name.counter) {
+            continue;
+        }
+        if e.state() == BootState::Bad {
+            split.now.remove.push(e.path.clone());
+            split.now.freed_bytes += e.size;
+        } else {
+            // Entries are sorted by counter: oldest first.
+            split.later.push(GcItem {
+                path: e.path.clone(),
+                bytes: e.size,
+            });
+        }
+    }
+    for t in &state.orphan_tmps {
+        split.now.remove.push(t.path.clone());
+        split.now.freed_bytes += t.size;
+    }
+    split
 }
 
-/// Plan the removal that makes room for one incoming entry.
-///
-/// Every Bad entry and every orphan `*.efi.tmp` goes. Of the rest only the
-/// booted entry and the two newest Good entries older than it stay, so the
-/// incoming entry makes four; anything else (an untried or trying entry
-/// newer than the booted one included) is superseded by the incoming entry.
-/// The booted entry is never removed, even when it looks Bad. Without a
-/// booted counter the three newest non-Bad entries stay.
-pub fn plan_gc(state: &EspState, booted: Option<u64>) -> GcPlan {
-    let keep: Vec<u64> = match booted {
+/// Counters that survive GC.
+fn kept_counters(state: &EspState, booted: Option<u64>) -> Vec<u64> {
+    match booted {
         Some(b) => {
             let previous = state
                 .entries
@@ -66,19 +80,23 @@ pub fn plan_gc(state: &EspState, booted: Option<u64>) -> GcPlan {
             .take(KEEP_PREVIOUS_GOOD + 1)
             .map(|e| e.name.counter)
             .collect(),
-    };
-    let mut plan = GcPlan::default();
-    for e in state
-        .entries
-        .iter()
-        .filter(|e| !keep.contains(&e.name.counter))
-    {
-        plan.remove.push(e.path.clone());
-        plan.freed_bytes += e.size;
     }
-    for t in &state.orphan_tmps {
-        plan.remove.push(t.path.clone());
-        plan.freed_bytes += t.size;
+}
+
+/// Plan the removal that makes room for one incoming entry.
+///
+/// Every Bad entry and every orphan `*.efi.tmp` goes. Of the rest only the
+/// booted entry and the two newest Good entries older than it stay, so the
+/// incoming entry makes four; anything else (an untried or trying entry
+/// newer than the booted one included) is superseded by the incoming entry.
+/// The booted entry is never removed, even when it looks Bad. Without a
+/// booted counter the three newest non-Bad entries stay.
+pub fn plan_gc(state: &EspState, booted: Option<u64>) -> GcPlan {
+    let split = split_gc(state, booted);
+    let mut plan = split.now;
+    for item in split.later {
+        plan.freed_bytes += item.bytes;
+        plan.remove.push(item.path);
     }
     plan
 }

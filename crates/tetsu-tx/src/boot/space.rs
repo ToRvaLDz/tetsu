@@ -80,7 +80,30 @@ pub fn reserve_space(
     split: &GcSplit,
     needed: u64,
 ) -> Result<GcPlan, BootError> {
-    todo!()
+    let free_now = probe.available_bytes(dir)?;
+    let later_total: u64 = split.later.iter().map(|i| i.bytes).sum();
+    let everything = GcPlan {
+        remove: Vec::new(),
+        freed_bytes: split.now.freed_bytes.saturating_add(later_total),
+    };
+    check_space(probe, dir, &everything, needed)?;
+
+    let required = needed.saturating_add(SPACE_MARGIN);
+    let mut short = required.saturating_sub(free_now.saturating_add(split.now.freed_bytes));
+    let mut early = split.now.clone();
+    let mut rest = GcPlan::default();
+    for item in &split.later {
+        if short > 0 {
+            short = short.saturating_sub(item.bytes);
+            early.remove.push(item.path.clone());
+            early.freed_bytes += item.bytes;
+        } else {
+            rest.remove.push(item.path.clone());
+            rest.freed_bytes += item.bytes;
+        }
+    }
+    apply_gc(&early)?;
+    Ok(rest)
 }
 
 /// [`check_space`], then [`apply_gc`]: nothing is deleted on failure.

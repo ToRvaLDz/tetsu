@@ -144,6 +144,22 @@ pub fn ukify_args(spec: &UkiSpec, os_release: &str, out: &Path) -> Vec<OsString>
     args
 }
 
+/// Cheap checks that must pass before anything on the ESP is changed:
+/// valid spec, `ukify` installed, confined and readable inputs.
+pub fn preflight(runner: &dyn Runner, spec: &UkiSpec) -> Result<(), BootError> {
+    spec.validate()?;
+    runner.check_tool("ukify")?;
+    spec.check_inputs()?;
+    for path in [
+        spec.kernel_path(),
+        spec.initrd_path(),
+        spec.os_release_path(),
+    ] {
+        fs::File::open(&path).map_err(|e| BootError::io(&path, e))?;
+    }
+    Ok(())
+}
+
 /// Build and sign the UKI into `out`.
 pub fn build_uki(runner: &dyn Runner, spec: &UkiSpec, out: &Path) -> Result<(), BootError> {
     spec.validate()?;

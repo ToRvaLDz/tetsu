@@ -3,6 +3,7 @@
 
 use std::ffi::OsString;
 use std::io::ErrorKind;
+use std::path::Path;
 use std::process::Command;
 
 use super::BootError;
@@ -16,6 +17,12 @@ pub trait Runner {
     fn check_tool(&self, _program: &str) -> Result<(), BootError> {
         Ok(())
     }
+}
+
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 /// Runs programs found through `PATH` with `std::process::Command`.
@@ -41,6 +48,22 @@ impl Runner for SystemRunner {
             status: out.status.to_string(),
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
         })
+    }
+
+    fn check_tool(&self, program: &str) -> Result<(), BootError> {
+        let found = if program.contains('/') {
+            is_executable(Path::new(program))
+        } else {
+            std::env::var_os("PATH")
+                .is_some_and(|p| std::env::split_paths(&p).any(|d| is_executable(&d.join(program))))
+        };
+        if found {
+            Ok(())
+        } else {
+            Err(BootError::ToolMissing {
+                tool: program.to_owned(),
+            })
+        }
     }
 }
 
@@ -68,6 +91,16 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn check_tool_finds_present_and_flags_absent() {
+        assert!(SystemRunner.check_tool("sh").is_ok());
+        assert!(SystemRunner.check_tool("/bin/sh").is_ok());
+        assert!(matches!(
+            SystemRunner.check_tool("tetsu-no-such-tool-xyz"),
+            Err(BootError::ToolMissing { .. })
+        ));
     }
 
     #[test]

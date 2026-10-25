@@ -5,20 +5,26 @@ use std::path::PathBuf;
 
 use super::BootError;
 use super::esp::Esp;
-use super::retention::plan_gc;
-use super::space::{SpaceProbe, make_room};
+use super::retention::split_gc;
+use super::space::{SpaceProbe, apply_gc, reserve_space};
 use super::tool::Runner;
-use super::uki::{UkiSpec, build_uki};
+use super::uki::{UkiSpec, build_uki, preflight};
 
 /// A UKI that is on the ESP under its final name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Committed {
     pub path: PathBuf,
+    /// Post-commit retention failed; the entry itself is in place.
+    pub gc_warning: Option<String>,
 }
 
 /// Build `spec` into the ESP. `booted` is the counter of the running
 /// entry (never removed); `estimated_size` is the UKI size to reserve.
-/// Nothing is deleted when the space check fails.
+///
+/// Order: scan, stale-counter check, preflight, space check, deletion of
+/// Bad entries and orphans (plus aged-out entries only if space is short),
+/// stage, commit, then the remaining retention. A failure before the commit
+/// never removes a good or pending entry that the space did not require.
 pub fn write_uki(
     esp: &Esp,
     probe: &dyn SpaceProbe,
@@ -38,11 +44,18 @@ pub fn write_uki(
             newest,
         });
     }
-    let plan = plan_gc(&state, booted);
-    make_room(probe, esp.dir(), &plan, estimated_size)?;
+    // Cheap preconditions first: a build that cannot start changes nothing.
+    preflight(runner, spec)?;
+    // Delete only what is safe, and what is needed to fit; the rest waits
+    // until the new entry is committed.
+    let split = split_gc(&state, booted);
+    let remaining = reserve_space(probe, esp.dir(), &split, estimated_size)?;
     esp.stage(spec.counter, |tmp| build_uki(runner, spec, tmp))?;
     let path = esp.commit(spec.counter)?;
-    Ok(Committed { path })
+    // The entry is committed: a failed cleanup must not look like a failed
+    // write. It is reported and the next write retries the same GC.
+    let gc_warning = apply_gc(&remaining).err().map(|e| e.to_string());
+    Ok(Committed { path, gc_warning })
 }
 
 #[cfg(test)]
