@@ -6,15 +6,8 @@ use std::path::{Path, PathBuf};
 
 /// The program.
 pub const PROGRAM: &str = "systemd-nspawn";
-/// Prefix of the per-transaction throwaway `/var` (a tmpfs directory).
-pub const SCRATCH_PREFIX: &str = "/run/tetsu/tx-var-";
 /// The host package cache, bound in so downloads survive the transaction.
 pub const DEFAULT_CACHE: &str = "/var/cache/pacman/pkg";
-
-/// The throwaway `/var` of transaction `counter`.
-pub fn scratch_dir(counter: u64) -> PathBuf {
-    PathBuf::from(format!("{SCRATCH_PREFIX}{counter}"))
-}
 
 /// Whether the container can reach the network.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,14 +83,9 @@ mod tests {
     fn container() -> Nspawn {
         Nspawn::new(
             Path::new("/top/@snapshots/5/root"),
-            &scratch_dir(5),
+            Path::new("/run/tetsu/tx-var-5"),
             Path::new(DEFAULT_CACHE),
         )
-    }
-
-    #[test]
-    fn scratch_is_per_transaction_under_run() {
-        assert_eq!(scratch_dir(12), Path::new("/run/tetsu/tx-var-12"));
     }
 
     #[test]

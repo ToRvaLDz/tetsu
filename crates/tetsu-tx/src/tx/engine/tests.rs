@@ -771,14 +771,6 @@ fn rollback_to_a_snapshot_without_an_initrd_fails_cleanly() {
 }
 
 #[test]
-fn the_scratch_dirs_follow_the_nspawn_prefix() {
-    assert_eq!(
-        scratch_dir(Path::new(DEFAULT_RUN_DIR), 5),
-        crate::tx::nspawn::scratch_dir(5)
-    );
-}
-
-#[test]
 fn every_container_binds_the_configured_cache_including_the_initrd_build() {
     let env = Env::new();
     env.run(&Request::Update).unwrap();
