@@ -1,0 +1,27 @@
+# Answer file for the VM install test, unlock level "paranoid".
+# Test use only: the passphrase is plain text and the user password is the
+# hash of "tetsu-vm-test-pw". @DISK_BY_ID@ is replaced by the test with the
+# name of the VM disk's link in /dev/disk/by-id; the installer refuses the
+# file otherwise. The recovery key is never part of the file: the installer
+# generates it and prints it on the serial console.
+
+[keyboard]
+layout = "it"
+
+[disk]
+confirm_by_id = "@DISK_BY_ID@"
+
+[unlock]
+level = "paranoid"
+passphrase = "Tetsu-Vm-Test-Passphrase-1"
+
+[user]
+name = "tester"
+full_name = "VM Tester"
+password_hash = "$6$tetsuvmtest$Cr2kp0.t9LUXTQ4uBuBI7oFToohzfgheEFQJ0jMZ459kq1sL.YVyb/lI.vpxtt2HKPYE7ZO8iRmUanD1FMLC20"
+
+[agent]
+backend = "none"
+
+[install]
+confirm = true

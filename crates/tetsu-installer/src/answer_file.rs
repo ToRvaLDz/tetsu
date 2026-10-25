@@ -433,3 +433,26 @@ confirm = true
         assert!(!msg.contains("Correct-Horse"), "{msg}");
     }
 }
+
+#[cfg(test)]
+mod example_tests {
+    use super::*;
+
+    /// The files the VM test feeds the installer, with their placeholder
+    /// replaced the way the test does.
+    #[test]
+    fn the_vm_examples_parse_for_every_unlock_level() {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/vm/tests/answers");
+        for level in UnlockLevel::ALL {
+            let path = dir.join(format!("{}.toml", level.id()));
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert!(text.contains("@DISK_BY_ID@"));
+            let f = AnswerFile::parse(&text.replace("@DISK_BY_ID@", "virtio-tetsu0")).unwrap();
+            assert_eq!(f.level, Some(level));
+            assert_eq!(f.disk_by_id.as_deref(), Some("virtio-tetsu0"));
+            assert!(f.confirm && f.passphrase.is_some() && f.password.is_some());
+        }
+    }
+}
