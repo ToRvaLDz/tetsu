@@ -151,7 +151,10 @@ impl Executor<'_> {
         self.tool("sync", &[])?;
         self.tool("umount", &[&self.target.esp()])?;
         self.tool("umount", &[&self.target.top()])?;
-        self.tool("cryptsetup", &[&"close", &MAPPER_NAME])
+        self.tool("cryptsetup", &[&"close", &MAPPER_NAME])?;
+        // Closing a filesystem or a mapping does not push the device's write
+        // cache out; a last sync does, before the user cuts the power.
+        self.tool("sync", &[])
     }
 }
 

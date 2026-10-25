@@ -207,7 +207,7 @@ fn firmware_is_touched_last_and_unmounting_ends_the_install() {
             .unwrap();
         assert!(last < first_firmware, "{stage_two}");
     }
-    let tail = &lines[lines.len() - 4..];
+    let tail = &lines[lines.len() - 5..];
     let w = run.root.path().join("work").display().to_string();
     assert_eq!(
         tail,
@@ -215,7 +215,8 @@ fn firmware_is_touched_last_and_unmounting_ends_the_install() {
             "sync".to_owned(),
             format!("umount {w}/esp"),
             format!("umount {w}/top"),
-            "cryptsetup close root".to_owned()
+            "cryptsetup close root".to_owned(),
+            "sync".to_owned()
         ]
     );
     // The log on the ESP was closed with the last line before the unmount.
