@@ -145,14 +145,34 @@ both.
 ## Baseline and freeze
 
 [`idl/baseline/`](idl/baseline/) holds the frozen copy of v1. The contract
-suite parses both and fails unless the current IDL is a compatible
-superset of the baseline: a renamed, retyped or removed field, a field
-made required, a renamed error, a removed tag or a missing error marker
-fails it. It also holds a fixture per event `kind`.
+suite (`cargo test -p tetsu-bus`) parses both and fails unless the current
+IDL is a compatible superset of the baseline: a renamed, retyped or
+removed field, a field made required, a renamed error, a removed tag or a
+missing error marker fails it. It also checks the tag and doc rules and
+holds a fixture per event `kind`.
 
+- The IDL cannot express `more`, so [`idl/streaming.list`](idl/streaming.list)
+  names the streaming methods, one `<interface>.<Method>` per line (`#`
+  starts a comment). It must name only existing methods and every `Watch*`
+  method; moving a method into or out of it is a breaking change. The
+  baseline keeps its own copy, `idl/baseline/streaming.list`.
+- An event is an object type with a `kind` enum that is the only output of
+  a streaming method. [`tests/fixtures/events/`](tests/fixtures/events/)
+  holds one JSON fixture per `kind`, at
+  `<interface>/<Type>.<kind>.json`; the suite checks each against the IDL
+  types and fails on a missing fixture or one for a type or kind that does
+  not exist. A new event kind needs its fixture in the same change.
 - After an additive change, the baseline is updated only by the bless
-  command, in a dedicated `chore(contract): bless v1 baseline` commit,
-  and only once the suite passes against the previous baseline.
+  command, `cargo xtask bless-contract`, in a dedicated
+  `chore(contract): bless v1 baseline` commit, and only once the suite
+  passes against the previous baseline. The command runs the compatibility
+  check and the tag rules; if both pass it copies `idl/*.varlink` and
+  `streaming.list` into `idl/baseline/`, otherwise it prints the
+  violations, exits non-zero and changes nothing.
+- Every IDL file, current and baseline, is also validated with
+  `varlinkctl validate-idl`. The test is skipped with a note when
+  `varlinkctl` is not installed; `TETSU_REQUIRE_VARLINKCTL=1` (set in CI)
+  makes a missing tool a failure.
 - **Until the first image release** v1 is a draft: a breaking change is
   allowed only through an explicit `contract!:` commit that rewrites the
   baseline and states the break. From the first image release on, v1 is
