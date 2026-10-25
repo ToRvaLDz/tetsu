@@ -190,6 +190,11 @@ test_wait_for() {
   code=0; "$VM" wait-for --state "$st" --timeout 5 'Found device /dev/tpm0' || code=$?
   assert_eq "wait-for: match across colour codes" 0 "$code"
 
+  # zsh redraws the prompt with charset designations (ESC ( B) between words.
+  printf '\033(B\033[mroot\033(B@archiso ~ \033(B#\n' >>"$st/serial.log"
+  code=0; "$VM" wait-for --state "$st" --timeout 5 'root@archiso ~ #' || code=$?
+  assert_eq "wait-for: match across charset escapes" 0 "$code"
+
   kill "$pid"; wait "$pid" 2>/dev/null
   code=0; "$VM" wait-for --state "$st" --timeout 5 'never appears' || code=$?
   assert_eq "wait-for: dead VM is 2" 2 "$code"
