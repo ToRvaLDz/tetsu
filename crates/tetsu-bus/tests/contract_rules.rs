@@ -183,12 +183,42 @@ fn deprecated_on_error() {
 }
 
 #[test]
-fn deprecated_on_input_parameter() {
+fn destructive_on_input_parameter() {
     expect(
-        &mutated("# @untrusted\n  name", "# @deprecated\n  name"),
+        &mutated("# @untrusted\n  name", "# @destructive\n  name"),
         Kind::MisplacedTag,
         "Do(in).name",
     );
+}
+
+#[test]
+fn deprecated_on_input_parameter_is_allowed() {
+    let v = mutated("# @untrusted\n  name", "# @deprecated\n  name");
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn deprecated_on_output_field_is_allowed() {
+    let v = mutated(
+        "-> (result: string)",
+        "-> (\n  # @deprecated\n  result: string\n)",
+    );
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn untrusted_on_output_field_is_allowed() {
+    let v = mutated(
+        "-> (result: string)",
+        "-> (\n  # @untrusted\n  result: string\n)",
+    );
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn deprecated_on_error_parameter_is_allowed() {
+    let v = mutated("# @untrusted\n  why", "# @deprecated\n  why");
+    assert!(v.is_empty(), "{v:#?}");
 }
 
 #[test]
