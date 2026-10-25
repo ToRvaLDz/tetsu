@@ -113,3 +113,36 @@ fn bless_refuses_a_rule_violation_and_touches_nothing() {
     }
     assert_eq!(fs::read_to_string(s.baseline(WINDOW)).unwrap(), before);
 }
+
+#[test]
+fn bless_that_fails_midway_restores_the_baseline() {
+    let s = Scratch::new("midway");
+    let before = fs::read_to_string(s.baseline(WINDOW)).unwrap();
+    // An additive change that is written first ...
+    s.edit(
+        WINDOW,
+        "xwayland: bool\n)",
+        "xwayland: bool,\n  # Added later.\n  sticky: ?bool\n)",
+    );
+    // ... and a new interface whose baseline slot cannot be written: a
+    // directory sits where the file must go.
+    let late = "org.tetsu.zzz.v1.varlink";
+    fs::write(
+        s.file(late),
+        "interface org.tetsu.zzz.v1\n\n# Pings.\nmethod Ping() -> ()\n\n# The caller may not use this interface.\n# @permanent\nerror PermissionDenied ()\n",
+    )
+    .unwrap();
+    fs::create_dir(s.baseline(late)).unwrap();
+
+    match bless(&s.0) {
+        Err(BlessError::Io(_)) => {}
+        other => panic!("expected an I/O failure, got {other:?}"),
+    }
+    assert_eq!(fs::read_to_string(s.baseline(WINDOW)).unwrap(), before);
+    let leftovers: Vec<String> = fs::read_dir(s.0.join("baseline"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
