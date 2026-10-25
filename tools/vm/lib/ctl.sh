@@ -85,3 +85,24 @@ cmd_console() {
   printf 'Attached to the serial console, Ctrl-] to detach.\n' >&2
   socat -,raw,echo=0,escape=0x1d "UNIX-CONNECT:$CTL_STATE/serial.sock"
 }
+
+# send [--state DIR] TEXT: write TEXT to the serial console as if typed. Backslash
+# escapes (\n, \r, \t, \xHH, ...) are interpreted with printf %b.
+cmd_send() {
+  local st=$DEFAULT_STATE text="" have_text=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --state) [ $# -ge 2 ] || usage_die "--state needs a value"; st=$2; shift 2 ;;
+      -h | --help) printf 'Usage: tetsu-vm send [--state DIR] TEXT\n'; return 0 ;;
+      *) [ "$have_text" -eq 0 ] || usage_die "send: only one TEXT is accepted"
+         text=$1; have_text=1; shift ;;
+    esac
+  done
+  [ "$have_text" -eq 1 ] || usage_die "send: TEXT is required"
+  st=$(readlink -m "$st")
+  need_cmd socat
+  [ -S "$st/serial.sock" ] || die "no serial socket in $st (is the VM running?)"
+  # The short sleep keeps the connection open until the bytes are delivered.
+  { printf '%b' "$text"; sleep 0.3; } | socat -u - "UNIX-CONNECT:$st/serial.sock" \
+    || die "could not write to the serial socket in $st"
+}

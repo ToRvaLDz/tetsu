@@ -19,6 +19,7 @@ Commands:
   stop        Ask QEMU to quit via QMP, fall back to SIGKILL, then stop swtpm
   status      Exit 0 if the VM is running, non-zero otherwise
   console     Attach interactively to the serial console
+  send        Type TEXT into the serial console (\n, \r escapes interpreted)
 
 Run "tetsu-vm <command> --help" or see tools/vm/README.md for the options.
 USAGE
@@ -34,7 +35,7 @@ main() {
       . "$VM_DIR/lib/wait.sh"
       cmd_wait_for "$@"
       ;;
-    power-cut | stop | status | console)
+    power-cut | stop | status | console | send)
       # shellcheck source=lib/ctl.sh
       . "$VM_DIR/lib/ctl.sh"
       "cmd_${cmd//-/_}" "$@"
