@@ -60,6 +60,14 @@ impl<'a> Store<'a> {
         booted: Option<u64>,
     ) -> Result<Vec<u64>, StoreError> {
         let snapshots = self.layout.list_snapshots()?;
+        // A cut between the ESP rename and the marker leaves an entry with
+        // no marker: repair it, best effort, like a missing record.
+        for e in &esp.entries {
+            let n = e.name.counter;
+            if snapshots.contains(&n) && !self.layout.is_committed(n) {
+                let _repaired = snapshot::mark_committed(&self.layout, n);
+            }
+        }
         let committed: Vec<u64> = snapshots
             .iter()
             .copied()
