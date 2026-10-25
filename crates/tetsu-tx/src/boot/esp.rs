@@ -71,6 +71,22 @@ impl Esp {
         &self.dir
     }
 
+    /// Write `tetsu-<counter>.efi.tmp` through `write` (which receives the
+    /// path to create) and fsync it. Refuses a counter that is not newer
+    /// than every committed entry.
+    pub fn stage<F>(&self, counter: u64, write: F) -> Result<PathBuf, BootError>
+    where
+        F: FnOnce(&Path) -> Result<(), BootError>,
+    {
+        todo!()
+    }
+
+    /// Rename the staged file to `tetsu-<counter>+3.efi` and fsync the
+    /// directory. Returns the committed path.
+    pub fn commit(&self, counter: u64) -> Result<PathBuf, BootError> {
+        todo!()
+    }
+
     /// Read the directory afresh. A missing `EFI/Linux` is an empty state.
     pub fn scan(&self) -> Result<EspState, BootError> {
         let mut state = EspState::default();
@@ -201,5 +217,77 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let st = Esp::open(root.path()).scan().unwrap();
         assert_eq!(st, EspState::default());
+    }
+
+    #[test]
+    fn stage_leaves_only_the_tmp() {
+        let (_r, esp) = esp_with(&[("tetsu-1.efi", 1)]);
+        let path = esp
+            .stage(2, |p| fs::write(p, b"uki").map_err(|e| BootError::io(p, e)))
+            .unwrap();
+        assert_eq!(path, esp.dir().join("tetsu-2.efi.tmp"));
+        assert_eq!(fs::read(&path).unwrap(), b"uki");
+        let st = esp.scan().unwrap();
+        assert_eq!(counters(&st), vec![1]);
+        assert_eq!(st.orphan_tmps.len(), 1);
+        assert_eq!(st.orphan_tmps[0].counter, 2);
+    }
+
+    #[test]
+    fn stage_creates_the_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let esp = Esp::open(root.path());
+        esp.stage(1, |p| fs::write(p, b"x").map_err(|e| BootError::io(p, e)))
+            .unwrap();
+        assert!(esp.dir().join("tetsu-1.efi.tmp").is_file());
+    }
+
+    #[test]
+    fn commit_yields_untried_with_three_tries() {
+        let (_r, esp) = esp_with(&[("tetsu-1.efi", 1)]);
+        esp.stage(2, |p| fs::write(p, b"uki").map_err(|e| BootError::io(p, e)))
+            .unwrap();
+        let path = esp.commit(2).unwrap();
+        assert_eq!(path, esp.dir().join("tetsu-2+3.efi"));
+        assert_eq!(fs::read(&path).unwrap(), b"uki");
+        let st = esp.scan().unwrap();
+        assert!(st.orphan_tmps.is_empty());
+        let e = st.entries.last().unwrap();
+        assert_eq!(e.name, EntryName::untried(2, BOOT_TRIES));
+        assert_eq!(e.state(), BootState::Untried);
+        assert_eq!(st.default_entry().unwrap().name.counter, 2);
+    }
+
+    #[test]
+    fn stale_counter_is_refused_and_nothing_is_written() {
+        let (_r, esp) = esp_with(&[("tetsu-5+0-3.efi", 1), ("tetsu-3.efi", 1)]);
+        for counter in [3, 5] {
+            let err = esp
+                .stage(counter, |_| panic!("must not write"))
+                .unwrap_err();
+            assert!(matches!(err, BootError::StaleCounter { newest: 5, .. }));
+        }
+        assert!(esp.scan().unwrap().orphan_tmps.is_empty());
+    }
+
+    #[test]
+    fn failed_write_leaves_no_tmp() {
+        let (_r, esp) = esp_with(&[]);
+        let err = esp
+            .stage(1, |p| {
+                fs::write(p, b"partial").unwrap();
+                Err(BootError::ToolMissing {
+                    tool: "ukify".into(),
+                })
+            })
+            .unwrap_err();
+        assert!(matches!(err, BootError::ToolMissing { .. }));
+        assert!(esp.scan().unwrap().orphan_tmps.is_empty());
+    }
+
+    #[test]
+    fn commit_without_stage_fails() {
+        let (_r, esp) = esp_with(&[]);
+        assert!(matches!(esp.commit(1), Err(BootError::Io { .. })));
     }
 }
