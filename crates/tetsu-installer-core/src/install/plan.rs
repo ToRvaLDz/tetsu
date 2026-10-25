@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn a_given_hash_needs_no_hashing() {
         let mut a = answers(UnlockLevel::Paranoid);
-        a.user.password = Password::from_hash("$6$salt$hash").unwrap();
+        a.user.password = Password::from_hash("$6$salt$abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab").unwrap();
         let plan = InstallPlan::build(&a, &target(SecureBoot::Off));
         assert!(!plan.actions().contains(&HashPassword));
     }

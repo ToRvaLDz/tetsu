@@ -58,6 +58,16 @@ const RESERVED: &[&str] = &[
 /// The `crypt(3)` methods accepted: SHA-256, SHA-512 and yescrypt.
 const CRYPT_IDS: [&str; 3] = ["5", "6", "y"];
 
+/// The digest length of each method: 256 and 512 bits of hash, and the
+/// 256 bits of yescrypt, all in 6 bits per character without padding.
+fn digest_len(id: &str) -> Option<usize> {
+    match id {
+        "5" | "y" => Some(43),
+        "6" => Some(86),
+        _ => None,
+    }
+}
+
 /// The digest alphabet of those methods.
 fn is_crypt_digit(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '.' || c == '/'
@@ -94,7 +104,9 @@ impl Password {
             && id.is_some_and(|id| CRYPT_IDS.contains(&id))
             && rest.len() >= 2
             && rest.iter().all(|p| !p.is_empty())
-            && rest.last().is_some_and(|d| d.chars().all(is_crypt_digit))
+            && rest.last().is_some_and(|d| {
+                d.chars().all(is_crypt_digit) && id.and_then(digest_len) == Some(d.len())
+            })
             && !hash
                 .chars()
                 .any(|c| c.is_whitespace() || c.is_control() || c == ':');
@@ -243,12 +255,25 @@ mod tests {
 
     #[test]
     fn password_hash_shape() {
-        assert!(Password::from_hash("$6$salt$abcdef").is_ok());
-        assert!(Password::from_hash("$y$j9T$salt$hash").is_ok());
+        assert!(Password::from_hash(&format!("$6$salt${}", "a".repeat(86))).is_ok());
+        assert!(Password::from_hash(&format!("$y$j9T$salt${}", "b".repeat(43))).is_ok());
         assert!(Password::from_hash("plaintext").is_err());
         assert!(Password::from_hash("$6$").is_err());
         assert!(Password::from_hash("$6$a$b:c").is_err());
-        assert!(Password::from_hash("$5$rounds=5000$salt$abc.D/0").is_ok());
+        let d43 = format!("{}.D/0", "c".repeat(39));
+        assert!(Password::from_hash(&format!("$5$rounds=5000$salt${d43}")).is_ok());
+    }
+
+    #[test]
+    fn a_truncated_or_overlong_digest_is_refused() {
+        for (id, len) in [("5", 43), ("6", 86), ("y", 43)] {
+            let ok = format!("${id}$salt${}", "a".repeat(len));
+            assert!(Password::from_hash(&ok).is_ok(), "{ok}");
+            for wrong in [len - 1, len + 1, 1] {
+                let h = format!("${id}$salt${}", "a".repeat(wrong));
+                assert!(Password::from_hash(&h).is_err(), "{h}");
+            }
+        }
     }
 
     #[test]

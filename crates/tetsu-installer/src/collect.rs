@@ -352,7 +352,7 @@ level = "comfort"
 passphrase = "Correct-Horse-9-Battery"
 [user]
 name = "marco"
-password_hash = "$6$salt$abcdef"
+password_hash = "$6$salt$abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab"
 [agent]
 backend = "none"
 [install]
@@ -414,7 +414,7 @@ confirm = true
         assert_eq!(a.locale.timezone, "Europe/Rome");
         assert_eq!(a.disk.name, "sda");
         assert_eq!(a.unlock.level, UnlockLevel::Comfort);
-        assert_eq!(a.user.password, Password::Hash("$6$salt$abcdef".into()));
+        assert_eq!(a.user.password, Password::Hash("$6$salt$abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab".into()));
         assert_eq!(a.agent, None);
         // The recovery key is on the console, generated here, and the
         // summary was printed rather than asked.

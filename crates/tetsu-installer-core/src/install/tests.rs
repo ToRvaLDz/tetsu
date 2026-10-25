@@ -164,7 +164,7 @@ fn the_user_lands_in_passwd_shadow_group_and_home() {
 #[test]
 fn a_given_hash_is_written_without_running_openssl() {
     let run = stage_one(UnlockLevel::Paranoid, |a| {
-        a.user.password = crate::user::Password::from_hash("$6$given$hash").unwrap();
+        a.user.password = crate::user::Password::from_hash("$6$given$abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab").unwrap();
     });
     run.out.result.as_ref().unwrap();
     assert!(
@@ -175,7 +175,7 @@ fn a_given_hash_is_written_without_running_openssl() {
             .any(|l| l.starts_with("openssl"))
     );
     let shadow = read(&run.path("top/@snapshots/1/root/etc/shadow"));
-    assert!(shadow.contains("marco:$6$given$hash:"));
+    assert!(shadow.contains("marco:$6$given$abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab:"));
 }
 
 #[test]

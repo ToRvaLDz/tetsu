@@ -424,7 +424,7 @@ passphrase = "Correct-Horse-9-Battery"
 [user]
 name = "marco"
 full_name = "Marco M"
-password_hash = "$6$salt$abcdef"
+password_hash = "$6$salt$abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab"
 
 [agent]
 backend = "api"
@@ -446,7 +446,7 @@ confirm = true
         assert_eq!(f.disk_by_id.as_deref(), Some("virtio-tetsu0"));
         assert_eq!(f.level, Some(UnlockLevel::Balanced));
         assert_eq!(f.username.as_deref(), Some("marco"));
-        assert_eq!(f.password, Some(Password::Hash("$6$salt$abcdef".into())));
+        assert_eq!(f.password, Some(Password::Hash("$6$salt$abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab".into())));
         assert!(matches!(
             f.agent,
             Some(AgentAnswer::Api {
