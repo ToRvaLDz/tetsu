@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 
 use tetsu_tx::boot::BootError;
+use tetsu_tx::store::StoreError;
+use tetsu_tx::tx::TxError;
 
 /// Errors raised while collecting the installation answers.
 #[derive(Debug, thiserror::Error)]
@@ -29,6 +31,25 @@ pub enum InstallError {
         #[source]
         source: std::io::Error,
     },
+    /// The snapshot store failed.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// A transaction step (initrd build) failed.
+    #[error(transparent)]
+    Tx(#[from] TxError),
+    /// The installation was cancelled between two actions.
+    #[error("installation cancelled")]
+    Cancelled,
+    /// An action of the install plan failed; the install stopped there.
+    #[error("{action}: {source}")]
+    ActionFailed {
+        action: String,
+        #[source]
+        source: Box<InstallError>,
+    },
+    /// An installation step cannot proceed; the message says why.
+    #[error("{0}")]
+    Failed(String),
     /// The QR code cannot be built for the payload.
     #[error("cannot build QR code: {0}")]
     Qr(String),

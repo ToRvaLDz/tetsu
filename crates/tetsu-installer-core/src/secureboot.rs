@@ -61,7 +61,7 @@ pub enum Step {
 fn cmd(program: &'static str, args: &[&dyn AsRef<std::ffi::OsStr>]) -> Step {
     Step::Run(Command {
         program,
-        args: args.iter().map(|a| (**a).as_ref().to_owned()).collect(),
+        args: crate::install::argv(args),
     })
 }
 

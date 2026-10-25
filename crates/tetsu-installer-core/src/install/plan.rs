@@ -194,6 +194,11 @@ impl InstallPlan {
         Self { actions }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_actions(actions: Vec<Action>) -> Self {
+        Self { actions }
+    }
+
     pub fn actions(&self) -> &[Action] {
         &self.actions
     }
@@ -290,44 +295,11 @@ mod tests {
     use super::Action::*;
     use super::*;
     use crate::agent::{ApiProvider, CliTool};
-    use crate::disk::DiskChoice;
-    use crate::keyboard::Locale;
+    use crate::install::fake::answers;
     use crate::secret::Secret;
-    use crate::unlock::{Unlock, UnlockLevel};
-    use crate::user::UserAccount;
+    use crate::unlock::UnlockLevel;
 
-    pub(crate) fn answers(level: UnlockLevel) -> Answers {
-        Answers {
-            locale: Locale {
-                keyboard: "it".into(),
-                language: "it_IT.UTF-8".into(),
-                timezone: "Europe/Rome".into(),
-                rtc_utc: true,
-            },
-            disk: DiskChoice {
-                name: "sda".into(),
-                path: "/dev/sda".into(),
-                by_id: None,
-                size: 512 << 30,
-                model: None,
-                os: None,
-            },
-            unlock: Unlock {
-                level,
-                passphrase: Secret::new("correct horse battery staple"),
-                recovery_key: Secret::new("cccccccc-dddddddd-eeeeeeee-ffffffff"),
-            },
-            user: UserAccount {
-                username: "marco".into(),
-                full_name: Some("Marco".into()),
-                password: Password::Plain(Secret::new("hunter2-hunter2")),
-            },
-            hostname: "tetsu-ab12".into(),
-            agent: None,
-        }
-    }
-
-    pub(crate) fn target(secure_boot: SecureBoot) -> InstallTarget {
+    fn target(secure_boot: SecureBoot) -> InstallTarget {
         InstallTarget::new(
             Path::new("/dev/sda"),
             Path::new("/run/medium/payload.tar"),
