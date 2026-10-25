@@ -126,7 +126,8 @@ Decided in [Add the capability surface to the bus contract](https://github.com/T
   agent unit by the class of the method it calls. A class has a state
   (`unset`, `automatic`, `notify`, `ask`, `off`) and the layer that sets
   it, nearest wins: image defaults < managed state < user file. A method
-  tagged `@destructive` always asks, whatever the state.
+  tagged `@destructive` always asks, whatever the state, except `off`,
+  which refuses first.
 - The classes of v1, none with a scope. Every class is `unset` in the
   image except `notify.send`, which is `automatic`.
 
@@ -146,6 +147,7 @@ Decided in [Add the capability surface to the bus contract](https://github.com/T
 - `Check` is callable by Tetsu daemons only. The calling daemon fills
   `peer` from its own socket credentials, and `tetsu-capd` authorises
   the caller by its own credentials, never by `peer`.
+- `Set` and `Check` are not agent tools: the agent can never call them.
 
 ## Client obligations
 
