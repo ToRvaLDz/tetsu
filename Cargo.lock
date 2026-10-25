@@ -133,6 +133,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
 
 [[package]]
+name = "xtask"
+version = "0.0.0"
+dependencies = [
+ "tetsu-bus-contract",
+]
+
+[[package]]
 name = "zlink-idl"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
