@@ -172,5 +172,49 @@ in a temporary state dir, logs in as root over the serial console, checks
 asserts QEMU and swtpm are gone. It exits 77 (skip) without a
 usable `/dev/kvm` or without the ISO. CI runs only `unit.sh`.
 
+## Installer acceptance
+
+`tools/vm/tests/install.sh` is the acceptance test of the installer (ticket #41):
+it installs the medium built by `image/build` onto a blank 16 GiB qcow2 target
+in a VM (OVMF Secure Boot in Setup Mode, swtpm), boots the result from the
+target disk alone (same VARS and TPM), logs in on the serial console, checks it,
+reboots, and checks again.
+
+```sh
+image/build                                  # about 2 minutes, once per change
+tools/vm/tests/install.sh answers paranoid   # one scenario, about 2 minutes each
+tools/vm/tests/install.sh answers comfort
+tools/vm/tests/install.sh answers balanced
+tools/vm/tests/install.sh interactive        # balanced; or: interactive comfort
+tools/vm/tests/install.sh sb-off
+tools/vm/tests/install.sh all
+```
+
+Exit 77 (skip) without `/dev/kvm`, the image (`TETSU_INSTALLER_IMAGE`, default
+`target/image/tetsu-installer.raw`) or a tool (`qemu-img`, `qemu-system-x86_64`,
+`swtpm`, `socat`, `mkfs.ext4`, `sgdisk`). Work files and the serial log of every
+phase are kept in `target/vm-install/<scenario>/` (`TETSU_INSTALL_WORK`).
+
+| Scenario | What it does |
+|----------|--------------|
+| `answers LEVEL` | the answer file `tests/answers/LEVEL.toml` (with `@DISK_BY_ID@` replaced by `virtio-tetsu-target`) goes on an ext4 image labelled `TETSU-ANSWERS` (FAT cannot hold a 13 character label), attached with `--extra-disk`; the installer runs unattended |
+| `interactive [LEVEL]` | no answers volume; every prompt is answered over serial input: keyboard layout, disk (on a target that already holds "Old Linux", so the retype guard fires, first with a wrong name), level, passphrase twice, recovery key (read from the serial log, first retyped wrong), user, session password twice, agent backend skip, summary, destructive confirm |
+| `sb-off` | the install boot uses the OVMF build without Secure Boot (`OVMF_CODE.4m.fd`, `TETSU_OVMF_CODE_PLAIN`): comfort installs with keys generated but not enrolled and the level `pending`, boots with the passphrase; then a fresh empty VARS (Setup Mode, as after clearing the keys) and the Secure Boot CODE, `tetsu secureboot enroll`, reboot (the seal happens), reboot (TPM unlock) |
+
+After each install the test checks over serial, as the created user (root is
+locked; `sudo` with the session password `tetsu-vm-test-pw`, a test-only constant
+whose hash is in the answer files): the `SecureBoot` efivar is 1 and `bootctl`
+says `Secure Boot: enabled (user)`, the booted entry is `tetsu-1.efi`, the
+command line, wheel membership, the locked root, `/etc/tetsu/unlock-level.toml`
+(`sealed` for comfort and balanced), and `systemd-cryptenroll` listing a `tpm2`
+token (none for paranoid). The reboot then checks the unlock: paranoid asks the
+passphrase once, comfort asks nothing (TPM), balanced asks only the PIN
+(`4711-Vm-Pin`, chosen by the test and typed at the first boot). The first boot
+of comfort and balanced asks the disk passphrase twice (the unlock and the
+seal's own question), and balanced the new PIN twice.
+
+The guest's serial line now and then doubles one byte of output; the checks
+avoid `^` anchors where it matters.
+
 Test hooks: `TETSU_VM_KVM=0|1` forces TCG/KVM in the command line,
 `TETSU_VM_QEMU_COMM` / `TETSU_VM_SWTPM_COMM` change the expected process names.

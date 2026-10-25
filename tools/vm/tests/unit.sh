@@ -272,4 +272,19 @@ test_power_cut() {
 
 test_power_cut
 
+# ------------------------------------------------------- install.sh usage
+test_install_usage() {
+  local inst="$HERE/install.sh"
+  assert_status "install.sh: help" 0 "$inst" help
+  assert_contains "install.sh: help lists the scenarios" "$OUT" "answers paranoid|comfort|balanced"
+  assert_status "install.sh: no scenario (usage 64)" 64 "$inst"
+  # An unknown scenario is a usage error where the host can run the test at
+  # all; elsewhere the test skips (77) before looking at its arguments.
+  local got=0
+  "$inst" bogus >/dev/null 2>&1 || got=$?
+  case "$got" in 64 | 77) pass "install.sh: unknown scenario" ;; *) fail "install.sh: unknown scenario" "exit $got" ;; esac
+}
+
+test_install_usage
+
 summary

@@ -294,6 +294,8 @@ common_checks() { # LEVEL
   check "the kernel runs from the encrypted root" 'rd.luks.name=.* root=/dev/mapper/root' \
     "cat /proc/cmdline"
   check "the user is in wheel" 'wheel' "id -nG"
+  # (The serial line now and then doubles one byte of guest output, hence no ^.)
+  check "the primary group is named after the user" "$USER_NAME\$" "id -gn"
   check "the root account is locked" 'root +L' "sudo -n passwd -S root"
   case "$level" in
     paranoid)
@@ -455,9 +457,11 @@ scenario_sb_off() {
   export TETSU_OVMF_CODE=$OVMF_CODE_PLAIN
   boot_medium "$WORK/answers.img"
   wait_installed
-  expect_soon 'Secure Boot stays off|not in Setup Mode' 5 || \
-    fail "$SCENARIO: the installer says keys are kept and Secure Boot stays off"
-  pass "$SCENARIO: the installer keeps the keys and leaves Secure Boot off"
+  if expect_soon 'Secure Boot stays off' 5; then
+    pass "$SCENARIO: the installer keeps the keys and leaves Secure Boot off"
+  else
+    fail "$SCENARIO: the installer keeps the keys and leaves Secure Boot off"
+  fi
   stop_after_install
   # Phase 2: boots with the passphrase; level pending.
   boot_installed
