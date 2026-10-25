@@ -100,6 +100,10 @@ Decided in [Define the compositor render and config interfaces of the bus contra
   user file (never written by the machine). `config.v1` shows every
   known key with its effective value, its origin and the value of each
   layer, plus the diagnostics of the last user-file load.
+- Config values are typed `any` (any JSON value but null), since most
+  are scalars; `object` stays for values that are always a JSON object.
+  `any` is a systemd extension to the Varlink IDL, accepted by
+  `varlinkctl` and zlink. Decided in [Decide how config.v1 types scalar config values](https://github.com/ToRvaLDz/tetsu/issues/37).
 - A key is writable through `SetManaged` only when `tetsu-comp` declares
   it so (closed by default); a key that runs commands never is. Keys
   with a dedicated call (`render.v1` `SetRenderDevice` and
@@ -221,6 +225,6 @@ holds a fixture per event `kind`.
   fields). CI runs it in an Arch Linux container, which ships a current
   systemd.
 - **Until the first image release** v1 is a draft: a breaking change is
-  allowed only through an explicit `contract!:` commit that rewrites the
-  baseline and states the break. From the first image release on, v1 is
+  allowed only through an explicit breaking `feat(contract)!:` commit
+  that rewrites the baseline and states the break. From the first image release on, v1 is
   frozen and a break needs v2.
