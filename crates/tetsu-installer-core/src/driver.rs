@@ -113,7 +113,7 @@ mod tests {
         if uefi {
             let vars = root.join("sys/firmware/efi/efivars");
             fs::create_dir_all(&vars).unwrap();
-            let guid = "8be4df61-93ca-11d2-aa0d-e39b6740b8c4";
+            let guid = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
             // SetupMode = 0 and SecureBoot as given.
             fs::write(vars.join(format!("SetupMode-{guid}")), [6, 0, 0, 0, 0]).unwrap();
             fs::write(

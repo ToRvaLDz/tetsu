@@ -7,7 +7,7 @@ use crate::disk::{self, Disk};
 use crate::env::Env;
 use crate::error::InstallError;
 
-const GLOBAL_VARIABLE_GUID: &str = "8be4df61-93ca-11d2-aa0d-e39b6740b8c4";
+pub(crate) const GLOBAL_VARIABLE_GUID: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
 
 /// Secure Boot state as the installer needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +100,12 @@ mod tests {
             [6, 0, 0, 0, value],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn the_global_variable_guid_is_the_one_of_the_uefi_specification() {
+        // Spelled out on purpose: the other tests build paths from the constant.
+        assert_eq!(GLOBAL_VARIABLE_GUID, "8be4df61-93ca-11d2-aa0d-00e098032b8c");
     }
 
     #[test]

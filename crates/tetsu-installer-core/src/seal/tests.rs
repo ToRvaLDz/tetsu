@@ -10,7 +10,7 @@ use tetsu_tx::boot::tool::Runner;
 use super::*;
 use crate::efi::tests_support::{esl, write_pk};
 
-const GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-e39b6740b8c4";
+const GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
 const PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIB\nAQID\n-----END CERTIFICATE-----\n";
 const DER: [u8; 6] = [0x30, 0x82, 0x01, 0x01, 0x02, 0x03];
 const CMDLINE: &str = "rd.luks.name=ab-12=root root=/dev/mapper/root rw\n";

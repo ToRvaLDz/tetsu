@@ -11,7 +11,7 @@ use tetsu_installer_core::error::InstallError;
 use tetsu_tx::boot::BootError;
 use tetsu_tx::boot::tool::Runner;
 
-const GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-e39b6740b8c4";
+const GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
 const X509_GUID: [u8; 16] = [
     0xa1, 0x59, 0xc0, 0xa5, 0xe4, 0x94, 0xa7, 0x4a, 0x87, 0xb5, 0xab, 0x15, 0x5c, 0x2b, 0xf0, 0x72,
 ];
