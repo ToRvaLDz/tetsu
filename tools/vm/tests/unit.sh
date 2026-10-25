@@ -112,4 +112,36 @@ test_wait_for() {
 
 test_wait_for
 
+# ---------------------------------------------------------------- power-cut
+test_power_cut() {
+  local st="$SCRATCH/pc" q t
+  export TETSU_VM_QEMU_COMM=sleep TETSU_VM_SWTPM_COMM=sleep
+  mkdir -p "$st"
+  sleep 60 & q=$!
+  sleep 60 & t=$!
+  echo "$q" >"$st/qemu.pid"
+  echo "$t" >"$st/swtpm.pid"
+
+  assert_status "status: running" 0 "$VM" status --state "$st"
+  assert_status "power-cut: succeeds" 0 "$VM" power-cut --state "$st"
+  wait "$q" "$t" 2>/dev/null
+  assert_gone "power-cut: qemu gone" "$q"
+  assert_gone "power-cut: swtpm gone" "$t"
+  assert_status "status: stopped after power-cut" 1 "$VM" status --state "$st"
+  assert_status "power-cut: idempotent" 0 "$VM" power-cut --state "$st"
+
+  # Stale pidfile: the pid belongs to an unrelated process (wrong command name).
+  export TETSU_VM_QEMU_COMM=nomatch TETSU_VM_SWTPM_COMM=nomatch
+  sleep 60 & q=$!
+  echo "$q" >"$st/qemu.pid"
+  assert_status "power-cut: stale pidfile is a no-op" 0 "$VM" power-cut --state "$st"
+  if kill -0 "$q" 2>/dev/null; then pass "power-cut: unrelated pid untouched"
+  else fail "power-cut: unrelated pid untouched"; fi
+  kill "$q" 2>/dev/null
+  assert_status "status: stale pidfile is stopped" 1 "$VM" status --state "$st"
+  unset TETSU_VM_QEMU_COMM TETSU_VM_SWTPM_COMM
+}
+
+test_power_cut
+
 summary
