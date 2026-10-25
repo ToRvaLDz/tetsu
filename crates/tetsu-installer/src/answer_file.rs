@@ -215,6 +215,9 @@ fn is_key(s: &str) -> bool {
 /// `None` unless both look like plain names (so nothing odd is repeated).
 fn key_path(text: &str, offset: usize) -> Option<String> {
     let start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    if !at_top_level(&text[..start]) {
+        return None;
+    }
     let line = text[start..].lines().next()?;
     let key = line.split_once('=')?.0.trim();
     let section = text[..start]
@@ -228,6 +231,50 @@ fn key_path(text: &str, offset: usize) -> Option<String> {
         None if is_key(key) => Some(key.to_owned()),
         _ => None,
     }
+}
+
+/// Whether the end of `before` is outside any string, array or inline
+/// table, so that the next line starts a new assignment or table header and
+/// not the continuation of a (possibly secret) multi-line value.
+fn at_top_level(before: &str) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Str {
+        No,
+        Basic,
+        Literal,
+        MultiBasic,
+        MultiLiteral,
+    }
+    let c: Vec<char> = before.chars().collect();
+    let (mut i, mut depth, mut st) = (0, 0_i32, Str::No);
+    let triple = |i: usize, q: char| c.get(i..i + 3) == Some(&[q, q, q][..]);
+    while i < c.len() {
+        match st {
+            Str::No => match c[i] {
+                '#' => {
+                    while i < c.len() && c[i] != '\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                '"' if triple(i, '"') => (st, i) = (Str::MultiBasic, i + 2),
+                '\'' if triple(i, '\'') => (st, i) = (Str::MultiLiteral, i + 2),
+                '"' => st = Str::Basic,
+                '\'' => st = Str::Literal,
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                _ => {}
+            },
+            Str::Basic | Str::MultiBasic if c[i] == '\\' => i += 1,
+            Str::Basic if c[i] == '"' || c[i] == '\n' => st = Str::No,
+            Str::Literal if c[i] == '\'' || c[i] == '\n' => st = Str::No,
+            Str::MultiBasic if triple(i, '"') => (st, i) = (Str::No, i + 2),
+            Str::MultiLiteral if triple(i, '\'') => (st, i) = (Str::No, i + 2),
+            _ => {}
+        }
+        i += 1;
+    }
+    st == Str::No && depth <= 0
 }
 
 /// Keys that must never be in the file, whatever the section.
@@ -545,6 +592,21 @@ confirm = true
             assert!(msg.contains(path), "{msg}");
             assert!(!msg.contains(secret), "{msg}");
             assert!(!msg.contains("invalid type"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn errors_inside_a_multi_line_value_never_name_text_from_it() {
+        // The offending offset lies on a line of a multi-line string or
+        // array that holds an `=`: that text is a value, not a key.
+        for text in [
+            "[unlock]\npassphrase = \"\"\"\nHorse-Battery=staple\\q\n\"\"\"\n",
+            "[unlock]\npassphrase = [\n  Horse-Battery=1,\n]\n",
+        ] {
+            let msg = err(text);
+            assert!(msg.contains("line 3"), "{msg}");
+            assert!(msg.contains("not valid TOML"), "{msg}");
+            assert!(!msg.contains("Horse"), "{msg}");
         }
     }
 
