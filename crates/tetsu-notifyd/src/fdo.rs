@@ -48,11 +48,16 @@ impl Notifications {
             replaces_id,
             summary: plain_text(&summary),
             body: plain_text(&body),
-            actions: actions.iter().map(|a| plain_text(a)).collect(),
+            // Keys are opaque ids sent back as they came; labels are text.
+            actions: actions
+                .iter()
+                .enumerate()
+                .map(|(i, a)| if i % 2 == 0 { a.clone() } else { plain_text(a) })
+                .collect(),
             urgency: urgency(&hints),
             category: hint_string(&hints, "category"),
             expire_timeout,
-            icon: icon::from_hints(&hints, &app_icon),
+            icon: icon::from_hints_bounded(hints, app_icon).await,
         };
         let (done, id) = oneshot::channel();
         self.commands

@@ -190,9 +190,10 @@ impl Painter {
             draw_icon(pixmap, icon, card.body.x, card.body.y, s);
             sender_x += ICON_SIZE + 4.0;
         }
-        let sender = match &card.note.source {
-            Source::Tetsu(name) => format!("Tetsu · {name}"),
-            Source::App(name) => name.clone(),
+        let sender = match (&card.note.source, &card.note.category) {
+            (Source::Tetsu(name), _) => format!("Tetsu · {name}"),
+            (Source::App(name), Some(category)) => format!("{name} · {category}"),
+            (Source::App(name), None) => name.clone(),
         };
         let sender_color = if framed {
             palette::TETSU
