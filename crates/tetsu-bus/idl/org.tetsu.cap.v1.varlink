@@ -1,0 +1,107 @@
+# Capabilities: what the agent unit may do without asking, per class of
+# action, and the decision for each call it makes.
+interface org.tetsu.cap.v1
+
+# One class of action (or one class and scope) and its grant.
+type Capability (
+  # The class an `@capability` tag names, for example "packages.install".
+  class: string,
+  # The scope of the grant, the value of the tag's `scope` parameter;
+  # null for a grant on the whole class.
+  scope: ?string,
+  # How a call of the class is decided. `unset` has not been chosen yet
+  # and is asked like `ask`.
+  state: (unset, automatic, notify, ask, off),
+  # The layer that sets the state; null when `unset`.
+  layer: ?(image, managed, user),
+  # Whether the class holds a method tagged `@destructive`, which always
+  # asks whatever the state.
+  destructive: bool,
+  # The fully qualified methods of the class.
+  methods: []string,
+  # Counts since the service started.
+  asks: int,
+  approvals: int,
+  denials: int,
+  suppressions: int,
+  # Null when never used.
+  last_used_at: ?string,
+  # Null when asks are not suppressed.
+  suppressed_until_at: ?string
+)
+
+# The process behind a call, as the calling daemon read it from its own
+# socket credentials.
+type Peer (
+  pid: int,
+  uid: int,
+  # The systemd unit of the process.
+  unit: string
+)
+
+type CapabilityEvent (
+  kind: (initial, changed),
+  # initial: every capability.
+  capabilities: ?[]Capability,
+  # changed: the full new state of one capability.
+  capability: ?Capability
+)
+
+# Lists every capability with its state, layer and counters.
+method ListCapabilities() -> (capabilities: []Capability)
+
+# Streams capability changes: `initial` first, then deltas.
+method WatchCapabilities() -> (event: CapabilityEvent)
+
+# Sets the state of a capability in the managed layer, or removes the
+# managed value. Rejected when the user file sets it, and for a caller in
+# the agent unit.
+method Set(
+  # The class to set.
+  class: string,
+  # The scope; null for the whole class.
+  scope: ?string,
+  # Null removes the managed value, so a lower layer applies again.
+  state: ?(automatic, notify, ask, off)
+) -> ()
+
+# Decides whether a call of the agent unit may run. Callable by Tetsu
+# daemons only, authorised by the calling daemon's own socket
+# credentials: `peer` is never trusted from any other caller. It may
+# wait for the user's answer to an ask, with no timeout; the caller
+# cancels it by closing the connection.
+method Check(
+  # The process that made the call.
+  peer: Peer,
+  # The fully qualified method called.
+  method: string,
+  # The arguments of the call.
+  args: object
+) -> (decision: (allow, deny), denied_by: ?(off, user, suppressed, unavailable))
+
+# Tells why the caller is about to make a call. It is shown with the next
+# ask of the same peer for that method, within a few seconds.
+method Intent(
+  # The fully qualified method about to be called.
+  method: string,
+  # Why, in the caller's words.
+  # @untrusted
+  reason: string
+) -> ()
+
+# No capability has this class.
+# @permanent
+error UnknownClass (class: string)
+
+# No method of the contract has this name.
+# @permanent
+error UnknownMethod (method: string)
+
+# The user file sets this class, so the managed value would not take
+# effect; nothing was written.
+# @permanent
+error OverriddenByUser (class: string)
+
+# The caller may not use this interface or this method.
+# @permanent
+error PermissionDenied ()

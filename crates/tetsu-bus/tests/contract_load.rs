@@ -11,14 +11,15 @@ fn idl_dir() -> PathBuf {
 #[test]
 fn current_idl_loads() {
     let contract = load_dir(&idl_dir()).expect("idl loads");
-    assert_eq!(contract.interfaces.len(), 9);
+    assert_eq!(contract.interfaces.len(), 10);
     assert!(contract.is_streaming("org.tetsu.notify.v1", "Show"));
 }
 
 #[test]
 fn baseline_loads() {
     let contract = load_dir(&idl_dir().join("baseline")).expect("baseline loads");
-    assert_eq!(contract.interfaces.len(), 9);
+    // The baseline lags behind the IDL until the next bless.
+    assert!(contract.interfaces.len() >= 9);
 }
 
 #[cfg(unix)]

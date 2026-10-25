@@ -1,0 +1,33 @@
+{
+  "kind": "initial",
+  "capabilities": [
+    {
+      "class": "packages.install",
+      "scope": null,
+      "state": "ask",
+      "layer": "managed",
+      "destructive": false,
+      "methods": ["org.tetsu.tx.v1.Install"],
+      "asks": 3,
+      "approvals": 2,
+      "denials": 1,
+      "suppressions": 0,
+      "last_used_at": "2026-10-25T09:30:00.000Z",
+      "suppressed_until_at": null
+    },
+    {
+      "class": "aur.install",
+      "scope": null,
+      "state": "unset",
+      "layer": null,
+      "destructive": true,
+      "methods": ["org.tetsu.tx.v1.InstallFromAur"],
+      "asks": 0,
+      "approvals": 0,
+      "denials": 0,
+      "suppressions": 0,
+      "last_used_at": null,
+      "suppressed_until_at": null
+    }
+  ]
+}

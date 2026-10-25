@@ -1,0 +1,21 @@
+{
+  "kind": "changed",
+  "capability": {
+    "class": "notify.send",
+    "scope": null,
+    "state": "automatic",
+    "layer": "image",
+    "destructive": false,
+    "methods": [
+      "org.tetsu.notify.v1.Show",
+      "org.tetsu.notify.v1.Close",
+      "org.tetsu.notify.v1.OpenPanel"
+    ],
+    "asks": 0,
+    "approvals": 0,
+    "denials": 0,
+    "suppressions": 1,
+    "last_used_at": "2026-10-25T09:31:00.000Z",
+    "suppressed_until_at": "2026-10-25T09:41:00.000Z"
+  }
+}
