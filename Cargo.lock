@@ -434,6 +434,13 @@ name = "tetsu-comp"
 version = "0.0.0"
 
 [[package]]
+name = "tetsu-notifyd"
+version = "0.0.0"
+dependencies = [
+ "tetsu-bus",
+]
+
+[[package]]
 name = "tetsu-secrets"
 version = "0.0.0"
 

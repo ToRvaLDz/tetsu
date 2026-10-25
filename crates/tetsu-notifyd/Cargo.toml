@@ -1,0 +1,15 @@
+[package]
+name = "tetsu-notifyd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Tetsu notification server: org.tetsu.notify.v1 and org.freedesktop.Notifications"
+
+[lints]
+workspace = true
+
+[dependencies]
+tetsu-bus = { path = "../tetsu-bus" }
