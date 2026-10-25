@@ -58,8 +58,9 @@ method ListOutputs() -> (outputs: []Output)
 method WatchOutputs() -> (event: OutputEvent)
 
 # Applies a configuration to several outputs at once, atomically: all of
-# it or none of it. A configuration that leaves no output enabled is
-# rejected.
+# it or none of it, and persists it in the managed state. A configuration
+# that leaves no output enabled is rejected, and so is one the user file
+# overrides.
 method ConfigureOutputs(
   # output_id -> the configuration to apply to that output.
   configs: [string]OutputConfig
@@ -72,6 +73,11 @@ error OutputNotFound (id: string)
 # The configuration cannot be applied.
 # @permanent
 error InvalidConfiguration (id: string, reason: string)
+
+# The user file sets these config keys, so the managed values would not
+# take effect; nothing was applied.
+# @permanent
+error OverriddenByUser (keys: []string)
 
 # The caller may not use this interface.
 # @permanent
