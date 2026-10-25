@@ -8,7 +8,7 @@
 #   tools/vm/tests/install.sh all
 #
 # Needs the image (image/build), /dev/kvm, qemu, swtpm, socat, mkfs.ext4,
-# sgdisk. Exit 77 (skip) without the image or KVM. Work files go to
+# mkfs.vfat, mtools, sgdisk. Exit 77 (skip) without the image or KVM. Work files go to
 # target/vm-install/<scenario>/ (TETSU_INSTALL_WORK); the serial logs of every
 # phase stay there. Test-only secrets below are the ones in answers/*.toml.
 set -euo pipefail
@@ -167,16 +167,22 @@ login() {
 }
 
 # --------------------------------------------------------------- media
-# make_answers_image LEVEL OUT: an ext4 volume TETSU-ANSWERS holding answers.toml
-# (FAT cannot carry a 13 character label).
+# make_answers_image LEVEL OUT [fat]: an ext4 volume TETSU-ANSWERS holding
+# answers.toml, or with "fat" a FAT one labelled TETSU-ANS (a FAT label holds
+# 11 characters).
 make_answers_image() {
-  local level=$1 out=$2 dir="$WORK/answers.d"
+  local level=$1 out=$2 fs=${3:-ext4} dir="$WORK/answers.d"
   rm -rf "$dir"
   mkdir -p "$dir"
   sed "s/@DISK_BY_ID@/virtio-tetsu-target/" "$HERE/answers/$level.toml" >"$dir/answers.toml"
   rm -f "$out"
   truncate -s 8M "$out"
-  mkfs.ext4 -q -L TETSU-ANSWERS -d "$dir" "$out"
+  if [ "$fs" = fat ]; then
+    mkfs.vfat -n TETSU-ANS "$out" >/dev/null
+    mcopy -i "$out" "$dir/answers.toml" ::answers.toml
+  else
+    mkfs.ext4 -q -L TETSU-ANSWERS -d "$dir" "$out"
+  fi
 }
 
 make_blank_target() {
@@ -357,9 +363,14 @@ scenario_answers() {
   setup "answers-$level"
   echo "== $SCENARIO (work: $WORK)"
   make_blank_target
-  make_answers_image "$level" "$WORK/answers.img"
+  # Paranoid takes its answers from a FAT volume, the others from ext4.
+  if [ "$level" = paranoid ]; then
+    make_answers_image "$level" "$WORK/answers.img" fat
+  else
+    make_answers_image "$level" "$WORK/answers.img"
+  fi
   boot_medium "$WORK/answers.img"
-  expect 'TETSU-ANSWERS|answer file is in use' 300
+  expect 'answer file is in use' 300
   wait_installed
   stop_after_install
   first_boot "$level"
@@ -510,7 +521,7 @@ preflight() {
   if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then echo "SKIP: /dev/kvm is not usable"; exit 77; fi
   if [ ! -r "$IMAGE" ]; then echo "SKIP: no installer image at $IMAGE (run image/build)"; exit 77; fi
   local t
-  for t in qemu-img qemu-system-x86_64 swtpm socat mkfs.ext4 sgdisk; do
+  for t in qemu-img qemu-system-x86_64 swtpm socat mkfs.ext4 mkfs.vfat mcopy sgdisk; do
     command -v "$t" >/dev/null || { echo "SKIP: $t is missing"; exit 77; }
   done
 }

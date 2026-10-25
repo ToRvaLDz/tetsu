@@ -192,12 +192,12 @@ tools/vm/tests/install.sh all
 
 Exit 77 (skip) without `/dev/kvm`, the image (`TETSU_INSTALLER_IMAGE`, default
 `target/image/tetsu-installer.raw`) or a tool (`qemu-img`, `qemu-system-x86_64`,
-`swtpm`, `socat`, `mkfs.ext4`, `sgdisk`). Work files and the serial log of every
+`swtpm`, `socat`, `mkfs.ext4`, `mkfs.vfat`, `mcopy`, `sgdisk`). Work files and the serial log of every
 phase are kept in `target/vm-install/<scenario>/` (`TETSU_INSTALL_WORK`).
 
 | Scenario | What it does |
 |----------|--------------|
-| `answers LEVEL` | the answer file `tests/answers/LEVEL.toml` (with `@DISK_BY_ID@` replaced by `virtio-tetsu-target`) goes on an ext4 image labelled `TETSU-ANSWERS` (FAT cannot hold a 13 character label), attached with `--extra-disk`; the installer runs unattended |
+| `answers LEVEL` | the answer file `tests/answers/LEVEL.toml` (with `@DISK_BY_ID@` replaced by `virtio-tetsu-target`) goes on an image attached with `--extra-disk`: ext4 labelled `TETSU-ANSWERS`, and for `paranoid` FAT labelled `TETSU-ANS` (a FAT label holds 11 characters); the installer runs unattended |
 | `interactive [LEVEL]` | no answers volume; every prompt is answered over serial input: keyboard layout, disk (on a target that already holds "Old Linux", so the retype guard fires, first with a wrong name), level, passphrase twice, recovery key (read from the serial log, first retyped wrong), user, session password twice, agent backend skip, summary, destructive confirm |
 | `sb-off` | the install boot uses the OVMF build without Secure Boot (`OVMF_CODE.4m.fd`, `TETSU_OVMF_CODE_PLAIN`): comfort installs with keys generated but not enrolled and the level `pending`, boots with the passphrase; then a fresh empty VARS (Setup Mode, as after clearing the keys) and the Secure Boot CODE, `tetsu secureboot enroll`, reboot (the seal happens), reboot (TPM unlock) |
 
