@@ -48,16 +48,12 @@ pub fn check_space(
     }
 }
 
+/// [`apply_gc`] with the directory fsync injected.
 pub(crate) fn apply_gc_with(
     plan: &GcPlan,
     sync: &mut dyn FnMut(&Path) -> Result<(), BootError>,
 ) -> Result<(), BootError> {
-    let _ = sync;
-    apply_gc(plan)
-}
-
-/// Delete everything in `plan`. Call only after [`check_space`] passed.
-pub fn apply_gc(plan: &GcPlan) -> Result<(), BootError> {
+    let mut failures = Vec::new();
     let mut dirs = BTreeSet::new();
     for path in &plan.remove {
         match fs::remove_file(path) {
@@ -67,14 +63,28 @@ pub fn apply_gc(plan: &GcPlan) -> Result<(), BootError> {
                 }
             }
             Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(e) => return Err(BootError::io(path, e)),
+            Err(e) => failures.push(BootError::io(path, e)),
         }
     }
-    // Make the deletions durable before the caller relies on the space.
+    // Make the deletions that did happen durable, failures or not.
     for dir in dirs {
-        sync_file(&dir)?;
+        if let Err(e) = sync(&dir) {
+            failures.push(e);
+        }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(BootError::GcFailed { failures })
+    }
+}
+
+/// Delete everything in `plan`. Every removal is attempted and the touched
+/// directories are fsynced even when some fail; the failures come back
+/// together as [`BootError::GcFailed`]. Call only after [`check_space`]
+/// passed.
+pub fn apply_gc(plan: &GcPlan) -> Result<(), BootError> {
+    apply_gc_with(plan, &mut |p| sync_file(p))
 }
 
 /// Like [`make_room`], but deletes as little as possible before the build:

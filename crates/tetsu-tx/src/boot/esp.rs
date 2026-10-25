@@ -78,27 +78,11 @@ impl Esp {
     where
         F: FnOnce(&Path) -> Result<(), BootError>,
     {
-        let state = self.scan()?;
-        if let Some(newest) = state.newest_counter()
-            && counter <= newest
-        {
-            return Err(BootError::StaleCounter { counter, newest });
-        }
-        fs::create_dir_all(&self.dir).map_err(|e| BootError::io(&self.dir, e))?;
-        // Make the new directory entries durable: `EFI` in the root, `Linux` in `EFI`.
-        for parent in self.dir.ancestors().skip(1).take(2) {
-            sync_file(parent)?;
-        }
-        let tmp = self.dir.join(tmp_file_name(counter));
-        let written = write(&tmp).and_then(|()| sync_file(&tmp));
-        if let Err(e) = written {
-            // Best effort: a half-written stage must not linger as an orphan.
-            let _ = fs::remove_file(&tmp);
-            return Err(e);
-        }
-        Ok(tmp)
+        self.stage_with(counter, write, &mut |p| sync_file(p))
     }
 
+    /// [`Esp::stage`] with the fsync injected, so tests can see which paths
+    /// are synced.
     pub(crate) fn stage_with<F>(
         &self,
         counter: u64,
@@ -108,8 +92,31 @@ impl Esp {
     where
         F: FnOnce(&Path) -> Result<(), BootError>,
     {
-        let _ = sync;
-        self.stage(counter, write)
+        let state = self.scan()?;
+        if let Some(newest) = state.newest_counter()
+            && counter <= newest
+        {
+            return Err(BootError::StaleCounter { counter, newest });
+        }
+        fs::create_dir_all(&self.dir).map_err(|e| BootError::io(&self.dir, e))?;
+        // Make the new directory entries durable: `EFI` in the root, `Linux` in `EFI`.
+        for parent in self.dir.ancestors().skip(1).take(2) {
+            sync(parent)?;
+        }
+        let tmp = self.dir.join(tmp_file_name(counter));
+        let written = write(&tmp).and_then(|()| sync(&tmp));
+        if let Err(e) = written {
+            // Best effort: a half-written stage must not linger as an orphan.
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        Ok(tmp)
+    }
+
+    /// Rename the staged file to `tetsu-<counter>+3.efi` and fsync the
+    /// directory. Returns the committed path.
+    pub fn commit(&self, counter: u64) -> Result<PathBuf, BootError> {
+        self.commit_with(counter, &mut |p| sync_file(p))
     }
 
     pub(crate) fn commit_with(
@@ -117,19 +124,12 @@ impl Esp {
         counter: u64,
         sync: &mut dyn FnMut(&Path) -> Result<(), BootError>,
     ) -> Result<PathBuf, BootError> {
-        let _ = sync;
-        self.commit(counter)
-    }
-
-    /// Rename the staged file to `tetsu-<counter>+3.efi` and fsync the
-    /// directory. Returns the committed path.
-    pub fn commit(&self, counter: u64) -> Result<PathBuf, BootError> {
         let tmp = self.dir.join(tmp_file_name(counter));
         let dest = self
             .dir
             .join(EntryName::untried(counter, BOOT_TRIES).file_name());
         fs::rename(&tmp, &dest).map_err(|e| BootError::io(&tmp, e))?;
-        sync_file(&self.dir)?;
+        sync(&self.dir)?;
         Ok(dest)
     }
 
