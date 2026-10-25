@@ -975,6 +975,11 @@ version = "0.0.0"
 [[package]]
 name = "tetsu-tx"
 version = "0.0.0"
+dependencies = [
+ "rustix",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "thiserror"
