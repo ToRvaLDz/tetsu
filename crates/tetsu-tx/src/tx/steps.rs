@@ -157,9 +157,13 @@ pub fn install_download(runner: &dyn Runner, ns: &Nspawn, pkgs: &[String]) -> Re
     in_container(runner, ns, Network::Online, "download", &cmd)
 }
 
-/// Install the downloaded `pkgs` (offline).
+/// Install the downloaded `pkgs` (offline). `--asexplicit` makes a package
+/// that is already there as a dependency explicit, so it joins the user layer.
 pub fn install_apply(runner: &dyn Runner, ns: &Nspawn, pkgs: &[String]) -> Result<(), TxError> {
-    let cmd = with_pkgs(&["pacman", "-S", "--noconfirm", "--needed"], pkgs);
+    let cmd = with_pkgs(
+        &["pacman", "-S", "--noconfirm", "--needed", "--asexplicit"],
+        pkgs,
+    );
     in_container(runner, ns, Network::Offline, "install", &cmd)
 }
 
@@ -381,7 +385,10 @@ mod tests {
                 line(Network::Offline, "pacman -Si vim"),
                 line(Network::Offline, "pacman -Si htop"),
                 line(Network::Online, "pacman -Sw --noconfirm --needed vim htop"),
-                line(Network::Offline, "pacman -S --noconfirm --needed vim htop"),
+                line(
+                    Network::Offline,
+                    "pacman -S --noconfirm --needed --asexplicit vim htop"
+                ),
             ]
         );
     }

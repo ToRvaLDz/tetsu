@@ -143,3 +143,19 @@ pub(super) fn run(
         user_layer: user_layer_after(request, &user_before),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn an_installed_package_joins_the_user_layer_even_if_it_was_a_dependency() {
+        // `vim` was installed as a dependency, so it is not in `before`.
+        let after = user_layer_after(&Request::Install(names(&["vim"])), &names(&["htop"]));
+        assert_eq!(after, ["htop", "vim"]);
+    }
+}

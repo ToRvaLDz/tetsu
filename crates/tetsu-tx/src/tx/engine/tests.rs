@@ -401,7 +401,7 @@ fn install_records_the_packages_and_their_changes() {
     let lines = env.calls("systemd-nspawn").join("\n");
     assert!(lines.contains("pacman -Si htop"), "{lines}");
     assert!(
-        lines.contains("pacman -S --noconfirm --needed htop"),
+        lines.contains("pacman -S --noconfirm --needed --asexplicit htop"),
         "{lines}"
     );
 }
