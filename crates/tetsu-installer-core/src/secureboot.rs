@@ -15,6 +15,8 @@ use tetsu_tx::boot::tool::Runner;
 
 use crate::error::InstallError;
 
+pub mod trust;
+
 /// Owner GUID efitools conventions use for Microsoft's certificates.
 pub const MICROSOFT_OWNER_GUID: &str = "77fa9abd-0359-4d32-bd60-28f4e78f784b";
 
