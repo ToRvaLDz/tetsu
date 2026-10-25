@@ -9,7 +9,8 @@ use super::btrfs::Btrfs;
 use super::layout::Layout;
 use super::lock::TxLock;
 use super::record::Records;
-use super::select::Source;
+use super::select::{self, Source};
+use super::snapshot;
 use crate::boot::esp::EspState;
 
 /// A transaction that has its new, writable snapshot.
@@ -52,8 +53,10 @@ impl<'a> Store<'a> {
         esp: &EspState,
         booted: Option<u64>,
     ) -> Result<Vec<u64>, StoreError> {
-        let _ = (esp, booted);
-        todo!()
+        let snapshots = self.layout.list_snapshots()?;
+        let records = self.records.load_or_reconstruct(esp)?;
+        let doomed = select::orphans(&snapshots, &records, esp, booted);
+        self.delete_all(doomed)
     }
 
     /// Start a transaction: take the lock, collect orphans, pick the source,
@@ -65,14 +68,34 @@ impl<'a> Store<'a> {
         esp: &EspState,
         booted: u64,
     ) -> Result<Begun, StoreError> {
-        let _ = (lock_path, esp, booted);
-        todo!()
+        let lock = TxLock::acquire(lock_path)?;
+        self.gc_orphans(&lock, esp, Some(booted))?;
+        let source = select::select_source(esp, booted);
+        let snapshots = self.layout.list_snapshots()?;
+        let records = self.records.load()?;
+        let counter = select::next_counter(&snapshots, &records, esp);
+        let created = snapshot::create_snapshot(
+            &self.layout,
+            self.btrfs,
+            counter,
+            source.counter,
+            source.inherit_etc_base,
+        );
+        if let Err(e) = created {
+            // Best effort: the next GC would collect it anyway.
+            let _cleanup = snapshot::delete_snapshot(&self.layout, self.btrfs, counter);
+            return Err(e);
+        }
+        Ok(Begun {
+            lock,
+            counter,
+            source,
+        })
     }
 
     /// Seal the snapshot of a begun transaction.
     pub fn seal(&self, begun: &Begun) -> Result<(), StoreError> {
-        let _ = begun;
-        todo!()
+        snapshot::seal(&self.layout, self.btrfs, begun.counter)
     }
 
     /// Delete the snapshots retention lets go: outside the newest 10 and
@@ -84,8 +107,35 @@ impl<'a> Store<'a> {
         esp: &EspState,
         booted: u64,
     ) -> Result<Vec<u64>, StoreError> {
-        let _ = (esp, booted);
-        todo!()
+        let snapshots = self.layout.list_snapshots()?;
+        let records = self.records.load_or_reconstruct(esp)?;
+        let protected: Vec<u64> = [
+            Some(booted),
+            select::default_counter(esp),
+            select::newest_good(&snapshots, &records),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let doomed = select::plan_retention(&snapshots, &protected, select::KEEP_SNAPSHOTS);
+        self.delete_all(doomed)
+    }
+
+    /// Delete every counter in `doomed`, collecting failures.
+    fn delete_all(&self, doomed: Vec<u64>) -> Result<Vec<u64>, StoreError> {
+        let mut deleted = Vec::new();
+        let mut failures = Vec::new();
+        for n in doomed {
+            match snapshot::delete_snapshot(&self.layout, self.btrfs, n) {
+                Ok(()) => deleted.push(n),
+                Err(e) => failures.push(e),
+            }
+        }
+        if failures.is_empty() {
+            Ok(deleted)
+        } else {
+            Err(StoreError::Cleanup { failures })
+        }
     }
 }
 
