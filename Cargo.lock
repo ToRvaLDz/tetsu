@@ -1008,6 +1008,7 @@ dependencies = [
  "tempfile",
  "tetsu-installer-core",
  "tetsu-tx",
+ "thiserror",
  "toml",
 ]
 
