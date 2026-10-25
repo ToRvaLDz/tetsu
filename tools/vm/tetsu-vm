@@ -29,7 +29,12 @@ main() {
   [ $# -gt 0 ] && shift
   case "$cmd" in
     start) cmd_start "$@" ;;
-    wait-for | power-cut | stop | status | console)
+    wait-for)
+      # shellcheck source=lib/wait.sh
+      . "$VM_DIR/lib/wait.sh"
+      cmd_wait_for "$@"
+      ;;
+    power-cut | stop | status | console)
       # shellcheck source=lib/ctl.sh
       . "$VM_DIR/lib/ctl.sh"
       "cmd_${cmd//-/_}" "$@"
