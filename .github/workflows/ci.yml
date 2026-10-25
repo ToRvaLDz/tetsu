@@ -47,5 +47,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n tools/vm/tetsu-vm tools/vm/fetch-arch-iso tools/vm/lib/*.sh tools/vm/tests/*.sh
+      - name: Syntax-check every script
+        run: |
+          fail=0
+          for f in tools/vm/tetsu-vm tools/vm/fetch-arch-iso tools/vm/lib/*.sh tools/vm/tests/*.sh; do
+            bash -n "$f" || fail=1
+          done
+          exit "$fail"
+      # socat backs the `send` unit test
+      - run: sudo apt-get update && sudo apt-get install -y socat
       - run: tools/vm/tests/unit.sh
