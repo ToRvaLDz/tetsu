@@ -34,6 +34,11 @@ impl<R: BufRead, W: Write> TextFrontend<R, W> {
         self
     }
 
+    /// Give the reader and the writer back.
+    pub fn into_parts(self) -> (R, W) {
+        (self.input, self.out)
+    }
+
     fn print(&mut self, text: &str) -> Result<(), InstallError> {
         write!(self.out, "{text}")
             .and_then(|()| self.out.flush())

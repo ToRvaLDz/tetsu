@@ -4,6 +4,7 @@
 pub mod answer_file;
 pub mod cleanup;
 pub mod collect;
+pub mod install;
 pub mod locate;
 pub mod probe;
 pub mod text;
