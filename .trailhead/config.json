@@ -1,0 +1,12 @@
+{
+  "uat": {
+    "setup": [
+      {
+        "name": "tetsu-notifyd on a private D-Bus",
+        "run": "tools/uat/notifyd-up.sh",
+        "check": "tools/uat/notifyd-ready.sh",
+        "note": "Runs next to the session's notification server without replacing it; stop it with tools/uat/notifyd-down.sh after the UAT."
+      }
+    ]
+  }
+}
