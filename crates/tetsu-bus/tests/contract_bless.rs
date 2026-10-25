@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use tetsu_bus_contract::{BlessError, Kind, bless};
 
-/// A scratch copy of `idl/`, removed on drop.
+/// A scratch copy of `idl/` whose baseline is the copied IDL itself, so a
+/// test starts from a blessed tree whatever the real baseline lags behind.
+/// Removed on drop.
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -18,6 +20,15 @@ impl Scratch {
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("idl"),
             &root,
         );
+        let baseline = root.join("baseline");
+        fs::remove_dir_all(&baseline).unwrap();
+        fs::create_dir(&baseline).unwrap();
+        for entry in fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                fs::copy(&path, baseline.join(path.file_name().unwrap())).unwrap();
+            }
+        }
         Scratch(root)
     }
 
