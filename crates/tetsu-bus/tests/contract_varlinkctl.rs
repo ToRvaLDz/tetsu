@@ -8,6 +8,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use tetsu_bus_contract::load_dir;
+
 fn idl_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("idl")
 }
@@ -51,6 +53,8 @@ fn validate_file(path: &Path) -> Result<(), String> {
     }
 }
 
+/// The files of `dir`, checked against the interfaces the loader finds there
+/// so a new interface needs no change here.
 fn varlink_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .expect("idl dir readable")
@@ -58,6 +62,9 @@ fn varlink_files(dir: &Path) -> Vec<PathBuf> {
         .filter(|p| p.extension().is_some_and(|x| x == "varlink"))
         .collect();
     files.sort();
+    let interfaces = load_dir(dir).expect("idl loads").interfaces.len();
+    assert!(!files.is_empty(), "no IDL files in {}", dir.display());
+    assert_eq!(files.len(), interfaces, "{files:?}");
     files
 }
 
@@ -67,7 +74,6 @@ fn current_idl_validates_with_varlinkctl() {
         return;
     }
     let files = varlink_files(&idl_dir());
-    assert_eq!(files.len(), 9, "{files:?}");
     let errors: Vec<String> = files
         .iter()
         .filter_map(|f| validate_file(f).err())
@@ -81,7 +87,6 @@ fn baseline_idl_validates_with_varlinkctl() {
         return;
     }
     let files = varlink_files(&idl_dir().join("baseline"));
-    assert_eq!(files.len(), 9, "{files:?}");
     let errors: Vec<String> = files
         .iter()
         .filter_map(|f| validate_file(f).err())
