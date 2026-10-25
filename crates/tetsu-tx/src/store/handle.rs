@@ -118,6 +118,22 @@ impl<'a> Store<'a> {
         })
     }
 
+    /// Like [`Store::begin`], from an explicit `source` (a rollback) instead
+    /// of the selected one. `NotFound` when `source` has no snapshot.
+    pub fn begin_from<F>(
+        &self,
+        lock_path: &Path,
+        read_esp: F,
+        booted: u64,
+        source: Source,
+    ) -> Result<Begun, StoreError>
+    where
+        F: FnOnce() -> Result<EspState, BootError>,
+    {
+        let _ = (lock_path, read_esp, booted, source);
+        todo!()
+    }
+
     /// Mark the snapshot of a begun transaction committed: call it right
     /// after the ESP rename, before writing the record.
     pub fn mark_committed(&self, begun: &Begun) -> Result<(), StoreError> {
@@ -357,6 +373,84 @@ mod tests {
         );
         assert_eq!(env.snapshots(), vec![1]);
         TxLock::acquire(&env.lock_path).unwrap();
+    }
+
+    fn pick(counter: u64, inherit_etc_base: bool) -> Source {
+        Source {
+            counter,
+            inherit_etc_base,
+        }
+    }
+
+    #[test]
+    fn begin_from_snapshots_the_explicit_source() {
+        let env = Env::new();
+        env.committed(1, G);
+        env.committed(2, B);
+        env.committed(3, G);
+        let st = esp(&["tetsu-1.efi", "tetsu-3.efi"], &[]);
+        let begun = env
+            .store()
+            .begin_from(&env.lock_path, || Ok(st.clone()), 3, pick(1, false))
+            .unwrap();
+        assert_eq!(begun.counter, 4);
+        assert_eq!(begun.source, pick(1, false));
+        assert_eq!(begun.esp, st);
+        assert!(
+            env.btrfs
+                .take_ops()
+                .contains(&"snapshot @snapshots/1/root @snapshots/4/root".to_owned())
+        );
+        assert_eq!(env.snapshots(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn begin_from_collects_orphans_and_reads_the_esp_under_the_lock() {
+        let env = Env::new();
+        env.committed(1, G);
+        env.partial(2);
+        let st = esp(&["tetsu-1.efi"], &[2]);
+        let lock_path = env.lock_path.clone();
+        let read = || {
+            assert!(matches!(
+                TxLock::acquire(&lock_path),
+                Err(StoreError::Busy { .. })
+            ));
+            Ok(st.clone())
+        };
+        let begun = env
+            .store()
+            .begin_from(&env.lock_path, read, 1, pick(1, false))
+            .unwrap();
+        assert_eq!(begun.counter, 3);
+        assert_eq!(env.snapshots(), vec![1, 3]);
+    }
+
+    #[test]
+    fn begin_from_an_unknown_snapshot_is_not_found_and_leaves_nothing() {
+        let env = Env::new();
+        env.committed(1, G);
+        let st = esp(&["tetsu-1.efi"], &[]);
+        assert!(matches!(
+            env.store()
+                .begin_from(&env.lock_path, || Ok(st.clone()), 1, pick(9, false)),
+            Err(StoreError::NotFound(9))
+        ));
+        assert_eq!(env.snapshots(), vec![1]);
+        TxLock::acquire(&env.lock_path).unwrap();
+    }
+
+    #[test]
+    fn begin_from_is_busy_while_another_transaction_runs() {
+        let env = Env::new();
+        env.committed(1, G);
+        let st = esp(&["tetsu-1.efi"], &[]);
+        let _held = TxLock::acquire(&env.lock_path).unwrap();
+        assert!(matches!(
+            env.store()
+                .begin_from(&env.lock_path, || Ok(st.clone()), 1, pick(1, false)),
+            Err(StoreError::Busy { .. })
+        ));
     }
 
     #[test]
