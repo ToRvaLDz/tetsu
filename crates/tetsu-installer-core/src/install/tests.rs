@@ -314,9 +314,8 @@ fn a_second_run_resumes_after_a_cancel() {
     let root = tempfile::tempdir().unwrap();
     let a = answers(UnlockLevel::Comfort);
     let t = target(root.path(), SecureBoot::Off);
-    let plan = InstallPlan::from_actions(
-        disk_plan(&InstallPlan::build(&a, &t)).actions()[..4].to_vec(),
-    );
+    let plan =
+        InstallPlan::from_actions(disk_plan(&InstallPlan::build(&a, &t)).actions()[..4].to_vec());
     let machine = Machine::new(&t.run_dir);
     let (entropy, mut script) = (Counter::default(), Script::new());
     let polls = Cell::new(0);
