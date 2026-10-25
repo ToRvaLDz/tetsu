@@ -44,6 +44,21 @@ jobs:
       # fails instead of skipping when it is missing.
       - run: cargo test --workspace --locked
         env:
+          # The runner's systemd 255 varlinkctl rejects doc comments on
+          # fields; the varlinkctl job below validates the IDL instead.
+          TETSU_SKIP_VARLINKCTL: "1"
+
+  # IDL validation with a current varlinkctl (Arch Linux systemd).
+  varlinkctl:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - run: pacman -Syu --noconfirm --needed systemd rustup gcc
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - run: varlinkctl --version
+      - run: cargo test -p tetsu-bus --test contract_varlinkctl --locked
+        env:
           TETSU_REQUIRE_VARLINKCTL: "1"
 
   # Unit tests of the VM harness: no ISO, no KVM, no QEMU needed.

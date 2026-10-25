@@ -171,8 +171,11 @@ holds a fixture per event `kind`.
   violations, exits non-zero and changes nothing.
 - Every IDL file, current and baseline, is also validated with
   `varlinkctl validate-idl`. The test is skipped with a note when
-  `varlinkctl` is not installed; `TETSU_REQUIRE_VARLINKCTL=1` (set in CI)
-  makes a missing tool a failure.
+  `varlinkctl` is not installed; `TETSU_REQUIRE_VARLINKCTL=1` makes a
+  missing tool a failure, and `TETSU_SKIP_VARLINKCTL=1` skips it where
+  `varlinkctl` is too old for the IDL (systemd 255 rejects doc comments on
+  fields). CI runs it in an Arch Linux container, which ships a current
+  systemd.
 - **Until the first image release** v1 is a draft: a breaking change is
   allowed only through an explicit `contract!:` commit that rewrites the
   baseline and states the break. From the first image release on, v1 is

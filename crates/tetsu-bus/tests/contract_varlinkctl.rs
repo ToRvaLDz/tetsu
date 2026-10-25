@@ -3,6 +3,8 @@
 //!
 //! Skipped with a note when `varlinkctl` is not installed, unless
 //! `TETSU_REQUIRE_VARLINKCTL=1`, which makes a missing tool a failure (CI).
+//! `TETSU_SKIP_VARLINKCTL=1` skips it on a host whose `varlinkctl` is too
+//! old for the IDL (systemd 255 rejects doc comments on fields).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,12 +16,24 @@ fn idl_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("idl")
 }
 
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| v == "1")
+}
+
 fn required() -> bool {
-    std::env::var("TETSU_REQUIRE_VARLINKCTL").is_ok_and(|v| v == "1")
+    env_flag("TETSU_REQUIRE_VARLINKCTL")
 }
 
 /// Whether `varlinkctl` can be run; panics when it is required but missing.
 fn varlinkctl_available() -> bool {
+    if env_flag("TETSU_SKIP_VARLINKCTL") {
+        assert!(
+            !required(),
+            "TETSU_SKIP_VARLINKCTL=1 and TETSU_REQUIRE_VARLINKCTL=1 conflict"
+        );
+        eprintln!("note: TETSU_SKIP_VARLINKCTL=1, skipping IDL validation");
+        return false;
+    }
     let found = Command::new("varlinkctl")
         .arg("--version")
         .stdout(Stdio::null())
