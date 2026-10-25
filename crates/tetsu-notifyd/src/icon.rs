@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Read;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -166,18 +167,24 @@ fn load_png(path: &Path) -> Option<Icon> {
     })
 }
 
-/// Reads a regular file of at most [`MAX_FILE`] bytes. Opening never blocks
-/// (a FIFO opens at once and is then refused as not a regular file).
+/// Reads a regular file of at most [`MAX_FILE`] bytes. The path is first
+/// opened `O_PATH`, which touches no device, and only a regular file is then
+/// opened for reading, through that very descriptor.
 fn read_bounded(path: &Path) -> Option<Vec<u8>> {
-    let file: File = OpenOptions::new()
+    let pinned: File = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .custom_flags(libc::O_PATH)
         .open(path)
         .ok()?;
-    let meta = file.metadata().ok()?;
+    let meta = pinned.metadata().ok()?;
     if !meta.is_file() || meta.len() > MAX_FILE {
         return None;
     }
+    let file: File = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(format!("/proc/self/fd/{}", pinned.as_raw_fd()))
+        .ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_FILE + 1).read_to_end(&mut bytes).ok()?;
     (bytes.len() as u64 <= MAX_FILE).then_some(bytes)
