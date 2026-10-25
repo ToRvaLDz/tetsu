@@ -29,6 +29,9 @@ pub enum BootError {
     /// The signing key URI scheme is recognised but not implemented yet.
     #[error("unsupported key URI: {0}")]
     UnsupportedKeyUri(String),
+    /// `kernel_version` is not a single normal path component.
+    #[error("invalid kernel version: {0:?}")]
+    InvalidKernelVersion(String),
     /// The signing keys are inconsistent.
     #[error("invalid signing keys: {0}")]
     InvalidKeys(String),

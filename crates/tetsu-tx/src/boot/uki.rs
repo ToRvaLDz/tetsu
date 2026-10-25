@@ -283,6 +283,22 @@ mod tests {
     }
 
     #[test]
+    fn kernel_version_must_be_one_normal_component() {
+        let snap = snapshot("NAME=T\n");
+        for bad in ["", ".", "..", "../x", "a/b", "/abs", "6.1/", "a\0b"] {
+            let mut s = spec(snap.path(), false);
+            s.kernel_version = bad.into();
+            let rec = Recorder::default();
+            let err = build_uki(&rec, &s, Path::new("/o")).unwrap_err();
+            assert!(
+                matches!(err, BootError::InvalidKernelVersion(_)),
+                "{bad:?}: {err:?}"
+            );
+            assert!(rec.0.borrow().is_empty());
+        }
+    }
+
+    #[test]
     fn sbsign_argv() {
         let rec = Recorder::default();
         sign_efi(
