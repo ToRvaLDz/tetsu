@@ -13,3 +13,8 @@ workspace = true
 
 [dependencies]
 tetsu-bus = { path = "../tetsu-bus" }
+
+[dev-dependencies]
+serde_json = "1.0.154"
+tempfile = "3"
+tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "time", "sync"] }

@@ -437,7 +437,10 @@ version = "0.0.0"
 name = "tetsu-notifyd"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
+ "tempfile",
  "tetsu-bus",
+ "tokio",
 ]
 
 [[package]]
