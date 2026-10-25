@@ -39,6 +39,8 @@ pub(super) struct State {
     pub kernel_version: Option<String>,
     /// The committed UKI on the ESP.
     pub uki_path: Option<std::path::PathBuf>,
+    /// The `BootOrder` to set once the Tetsu entry exists.
+    pub boot_order: Option<String>,
     /// The base kernel command line, without the per-snapshot rootflags.
     pub cmdline: Option<String>,
 }
@@ -127,9 +129,7 @@ impl<'a> Executor<'a> {
         match action.stage() {
             Stage::Disk => self.disk_action(action),
             Stage::Boot => self.boot_action(action),
-            Stage::Firmware => Err(InstallError::Failed(format!(
-                "{action:?} is not implemented yet"
-            ))),
+            Stage::Firmware => self.firmware_action(action),
         }
     }
 

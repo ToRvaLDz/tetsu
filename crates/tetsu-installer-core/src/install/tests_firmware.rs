@@ -1,0 +1,387 @@
+//! The whole plan on the fake machine: stage 3 and the cross-cutting
+//! guarantees (ordering, no secret anywhere).
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::agent::{AgentBackend, ApiProvider};
+use crate::answers::Answers;
+use crate::error::InstallError;
+use crate::preflight::SecureBoot;
+use crate::secret::Secret;
+use crate::secureboot::MicrosoftCerts;
+use crate::unlock::UnlockLevel;
+
+use super::fake::{Outcome, answers, run_plan, run_with, target};
+use super::plan::InstallPlan;
+
+const NEVER: &dyn Fn() -> bool = &|| false;
+
+struct Run {
+    out: Outcome,
+    root: tempfile::TempDir,
+}
+
+impl Run {
+    fn work(&self, rel: &str) -> PathBuf {
+        self.root.path().join("work").join(rel)
+    }
+
+    fn lines(&self) -> Vec<String> {
+        self.out.machine.lines()
+    }
+}
+
+fn full_run(
+    level: UnlockLevel,
+    sb: SecureBoot,
+    tweak: impl FnOnce(&mut Answers, &mut super::InstallTarget),
+    setup: impl FnOnce(&super::fake::Machine),
+) -> Run {
+    let root = tempfile::tempdir().unwrap();
+    let mut a = answers(level);
+    let mut t = target(root.path(), sb);
+    tweak(&mut a, &mut t);
+    let plan = InstallPlan::build(&a, &t);
+    let out = run_with(&a, &t, &plan, NEVER, setup);
+    Run { out, root }
+}
+
+fn position(lines: &[String], prefix: &str) -> usize {
+    lines
+        .iter()
+        .position(|l| l.starts_with(prefix))
+        .unwrap_or_else(|| panic!("no {prefix:?} in {lines:#?}"))
+}
+
+fn firmware_calls(lines: &[String]) -> Vec<&String> {
+    let tools = [
+        "efibootmgr",
+        "efi-updatevar",
+        "sign-efi-sig-list",
+        "cert-to-efi-sig-list",
+    ];
+    lines
+        .iter()
+        .filter(|l| tools.iter().any(|t| l.starts_with(t)))
+        .collect()
+}
+
+#[test]
+fn enrollment_writes_db_then_kek_then_pk_with_one_owner_guid() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |_| {},
+    );
+    run.out.result.as_ref().unwrap();
+    let lines = run.lines();
+    let writes: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("efi-updatevar"))
+        .collect();
+    assert_eq!(writes.len(), 3);
+    assert!(
+        writes[0].ends_with(" db") && writes[1].ends_with(" KEK") && writes[2].ends_with(" PK")
+    );
+    let guids: Vec<&str> = lines
+        .iter()
+        .filter(|l| l.starts_with("cert-to-efi-sig-list"))
+        .map(|l| l.split(' ').nth(2).unwrap())
+        .collect();
+    assert_eq!(guids.len(), 3);
+    assert!(guids.iter().all(|g| *g == guids[0]));
+    let g = guids[0];
+    assert_eq!(g.len(), 36);
+    assert_eq!(&g[14..15], "4");
+    assert!("89ab".contains(&g[19..20]));
+    // The scratch files are gone.
+    assert!(!run.root.path().join("run/secureboot").exists());
+}
+
+#[test]
+fn microsoft_certificates_are_enrolled_when_given() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, t| {
+            t.microsoft_certs = MicrosoftCerts {
+                kek: vec!["/ms/kek.der".into()],
+                db: vec!["/ms/uefi.der".into()],
+            };
+        },
+        |_| {},
+    );
+    run.out.result.as_ref().unwrap();
+    let lines = run.lines();
+    let run_dir = run.root.path().join("run").display().to_string();
+    assert!(lines.contains(&format!(
+        "openssl x509 -inform DER -in /ms/kek.der -out {run_dir}/secureboot/ms-kek-0.pem"
+    )));
+    assert!(lines.iter().any(|l| l.contains("ms-db-0.esl")));
+}
+
+#[test]
+fn an_enrollment_failure_takes_the_off_path_and_the_install_goes_on() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |m| m.fail_on("efi-updatevar -f"),
+    );
+    run.out.result.as_ref().unwrap();
+    let warnings: Vec<&String> = run
+        .out
+        .script
+        .messages
+        .iter()
+        .filter(|m| m.starts_with("Warning:"))
+        .collect();
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    // The boot entry is still created and the level stays pending.
+    let lines = run.lines();
+    assert!(lines.iter().any(|l| l.starts_with("efibootmgr --create")));
+    let level =
+        fs::read_to_string(run.work("top/@snapshots/1/root/etc/tetsu/unlock-level.toml")).unwrap();
+    assert!(level.contains("state = \"pending\""));
+    // Keys are kept.
+    assert!(run.work("top/@var/lib/tetsu/keys/db.key").is_file());
+    assert!(run.out.log.iter().any(|l| l.starts_with("[warning]")));
+}
+
+#[test]
+fn without_setup_mode_nothing_is_enrolled() {
+    for sb in [SecureBoot::Off, SecureBoot::Enforcing] {
+        let run = full_run(UnlockLevel::Balanced, sb, |_, _| {}, |_| {});
+        run.out.result.as_ref().unwrap();
+        let lines = run.lines();
+        assert!(lines.iter().all(|l| !l.starts_with("efi-updatevar")));
+        assert!(lines.iter().all(|l| !l.contains("efi-sig-list")));
+        assert!(
+            run.out
+                .script
+                .messages
+                .iter()
+                .any(|m| m.contains("not in Setup Mode"))
+        );
+        assert!(run.work("top/@var/lib/tetsu/keys/db.crt").is_file());
+        assert!(lines.iter().any(|l| l.starts_with("efibootmgr --create")));
+    }
+}
+
+#[test]
+fn the_boot_entry_is_created_and_put_first_preserving_the_others() {
+    let run = full_run(UnlockLevel::Comfort, SecureBoot::Off, |_, _| {}, |_| {});
+    run.out.result.as_ref().unwrap();
+    let lines = run.lines();
+    let efi: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("efibootmgr"))
+        .collect();
+    assert_eq!(
+        efi,
+        [
+            "efibootmgr",
+            r"efibootmgr --create --disk /dev/sda --part 1 --label Tetsu --loader \EFI\systemd\systemd-bootx64.efi",
+            "efibootmgr --bootorder 0002,0001,0000",
+        ]
+    );
+}
+
+#[test]
+fn firmware_is_touched_last_and_unmounting_ends_the_install() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |_| {},
+    );
+    run.out.result.as_ref().unwrap();
+    let lines = run.lines();
+    let first_firmware = position(&lines, "cert-to-efi-sig-list");
+    for stage_two in ["sbverify", "sbsign", "ukify", "btrfs property set"] {
+        let last = lines
+            .iter()
+            .rposition(|l| l.starts_with(stage_two))
+            .unwrap();
+        assert!(last < first_firmware, "{stage_two}");
+    }
+    let tail = &lines[lines.len() - 4..];
+    let w = run.root.path().join("work").display().to_string();
+    assert_eq!(
+        tail,
+        [
+            "sync".to_owned(),
+            format!("umount {w}/esp"),
+            format!("umount {w}/top"),
+            "cryptsetup close root".to_owned()
+        ]
+    );
+    // The log on the ESP was closed with the last line before the unmount.
+    let on_esp = fs::read_to_string(run.work("esp/tetsu-install.log")).unwrap();
+    assert!(on_esp.contains("[firmware] flush, unmount and close the encrypted volume"));
+}
+
+#[test]
+fn a_failure_before_stage_three_never_touches_firmware() {
+    for failing in ["sbverify", "ukify", "sbsign", "cryptsetup open", "tar"] {
+        let run = full_run(
+            UnlockLevel::Comfort,
+            SecureBoot::SetupMode,
+            |_, _| {},
+            |m| m.fail_on(failing),
+        );
+        assert!(
+            matches!(run.out.result, Err(InstallError::ActionFailed { .. })),
+            "{failing}"
+        );
+        assert!(firmware_calls(&run.lines()).is_empty(), "{failing}");
+    }
+}
+
+#[test]
+fn a_failed_boot_entry_stops_before_the_unmount() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        |m| m.fail_on("efibootmgr --create"),
+    );
+    assert!(run.out.result.is_err());
+    assert!(run.lines().iter().all(|l| !l.starts_with("umount")));
+}
+
+#[test]
+fn an_ambiguous_boot_listing_is_refused() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        |m| {
+            *m.boot_output.borrow_mut() =
+                (String::new(), "BootOrder: 0000\nBoot0000* Windows\n".into())
+        },
+    );
+    assert!(run.out.result.is_err());
+    assert!(
+        run.lines()
+            .iter()
+            .all(|l| !l.starts_with("efibootmgr --bootorder"))
+    );
+}
+
+// The secrets of the test answers.
+const SECRETS: [&str; 5] = [
+    "correct horse battery staple",
+    "cccccccc-dddddddd-eeeeeeee-ffffffff",
+    "hunter2-hunter2",
+    "sk-ant-0123456789",
+    "$6$salt$hashedhashedhashed",
+];
+
+fn with_api_key(a: &mut Answers, _: &mut super::InstallTarget) {
+    a.agent = Some(AgentBackend::Api {
+        provider: ApiProvider::Anthropic,
+        key: Secret::new("sk-ant-0123456789"),
+    });
+}
+
+#[test]
+fn no_secret_appears_in_any_argv_log_progress_or_message() {
+    for level in UnlockLevel::ALL {
+        for sb in [SecureBoot::SetupMode, SecureBoot::Off] {
+            let run = full_run(level, sb, with_api_key, |_| {});
+            run.out.result.as_ref().unwrap();
+            let haystacks: Vec<String> = run
+                .lines()
+                .into_iter()
+                .chain(run.out.log.iter().cloned())
+                .chain(run.out.script.messages.iter().cloned())
+                .chain(
+                    run.out
+                        .script
+                        .progress
+                        .iter()
+                        .map(|(s, m)| format!("{s} {m}")),
+                )
+                .chain([fs::read_to_string(run.work("esp/tetsu-install.log")).unwrap_or_default()])
+                .collect();
+            for secret in SECRETS {
+                assert!(
+                    haystacks.iter().all(|h| !h.contains(secret)),
+                    "{secret} leaked at {level:?}/{sb:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_esp_log_is_complete_for_a_finished_install() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |_| {},
+    );
+    run.out.result.as_ref().unwrap();
+    // The log file was closed at Finish: it misses only the final line.
+    let on_esp = fs::read_to_string(run.work("esp/tetsu-install.log")).unwrap();
+    assert_eq!(on_esp.lines().count() + 1, run.out.log.len());
+    assert_eq!(
+        run.out.log.last().unwrap(),
+        "[firmware] installation complete"
+    );
+}
+
+#[test]
+fn private_key_material_stays_out_of_the_esp() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |_| {},
+    );
+    run.out.result.as_ref().unwrap();
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&run.work("esp"), &mut files);
+    assert!(
+        files
+            .iter()
+            .all(|f| f.extension().is_none_or(|e| e != "key")),
+        "{files:?}"
+    );
+}
+
+#[test]
+fn run_plan_with_a_cancelled_flag_stops_in_stage_three() {
+    let root = tempfile::tempdir().unwrap();
+    let a = answers(UnlockLevel::Comfort);
+    let t = target(root.path(), SecureBoot::Off);
+    let plan = InstallPlan::build(&a, &t);
+    let total = plan.actions().len();
+    let seen = std::cell::Cell::new(0);
+    let cancel = || {
+        seen.set(seen.get() + 1);
+        seen.get() == total - 1 // before SetBootOrder... the second to last
+    };
+    let out = run_plan(&a, &t, &plan, &cancel);
+    assert!(matches!(out.result, Err(InstallError::Cancelled)));
+    assert!(
+        out.machine
+            .lines()
+            .iter()
+            .all(|l| !l.starts_with("efibootmgr --bootorder"))
+    );
+}

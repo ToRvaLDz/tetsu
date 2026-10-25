@@ -75,6 +75,8 @@ pub struct Machine {
     run_dir: PathBuf,
     pub calls: RefCell<Vec<Vec<String>>>,
     pub seen: RefCell<Vec<Seen>>,
+    /// `efibootmgr` output before and after `--create`.
+    pub boot_output: RefCell<(String, String)>,
     /// A call whose joined line starts with one of these fails.
     pub fail: RefCell<Vec<String>>,
 }
@@ -86,6 +88,7 @@ impl Machine {
             calls: RefCell::default(),
             seen: RefCell::default(),
             fail: RefCell::default(),
+            boot_output: RefCell::new((FIRMWARE_BEFORE.to_owned(), FIRMWARE_AFTER.to_owned())),
         }
     }
 
@@ -155,9 +158,9 @@ impl Machine {
             "cert-to-efi-sig-list" | "sign-efi-sig-list" => {
                 Self::write(args.last().unwrap(), program);
             }
-            "efibootmgr" if args.is_empty() => return FIRMWARE_BEFORE.to_owned(),
+            "efibootmgr" if args.is_empty() => return self.boot_output.borrow().0.clone(),
             "efibootmgr" if args.first().map(String::as_str) == Some("--create") => {
-                return FIRMWARE_AFTER.to_owned();
+                return self.boot_output.borrow().1.clone();
             }
             _ => {}
         }

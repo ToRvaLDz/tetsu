@@ -41,6 +41,13 @@ impl InstallLog {
         }
     }
 
+    /// Stop mirroring and close the file (before the ESP is unmounted).
+    pub fn detach(&mut self) {
+        if let Some(file) = self.file.take() {
+            let _ = file.sync_all();
+        }
+    }
+
     /// Start mirroring into `path` and flush everything buffered so far.
     pub fn attach(&mut self, path: &Path) -> Result<(), InstallError> {
         let mut file = OpenOptions::new()
@@ -76,6 +83,19 @@ mod tests {
         log.record("three");
         assert_eq!(fs::read_to_string(&path).unwrap(), "one\ntwo\nthree\n");
         assert_eq!(log.lines(), ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn detach_stops_the_mirror_but_keeps_the_memory_copy() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join(LOG_FILE);
+        let mut log = InstallLog::new();
+        log.attach(&path).unwrap();
+        log.record("one");
+        log.detach();
+        log.record("two");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "one\n");
+        assert_eq!(log.lines(), ["one", "two"]);
     }
 
     #[test]
