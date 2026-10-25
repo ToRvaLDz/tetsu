@@ -62,19 +62,50 @@ impl Layout {
     /// Counters of the snapshot directories, ascending. Anything that is not
     /// a canonical number is ignored; a missing `@snapshots` is empty.
     pub fn list_snapshots(&self) -> Result<Vec<u64>, StoreError> {
-        todo!()
+        let dir = self.snapshots_dir();
+        let read = match fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(StoreError::io(&dir, e)),
+        };
+        let mut counters = Vec::new();
+        for item in read {
+            let item = item.map_err(|e| StoreError::io(&dir, e))?;
+            let Some(counter) = item.file_name().to_str().and_then(canonical) else {
+                continue;
+            };
+            let kind = item
+                .file_type()
+                .map_err(|e| StoreError::io(item.path(), e))?;
+            if kind.is_dir() {
+                counters.push(counter);
+            }
+        }
+        counters.sort_unstable();
+        Ok(counters)
     }
 }
 
 /// The `subvol=` value baked into the UKI cmdline for `counter`.
 pub fn rootflags_subvol(counter: u64) -> String {
-    todo!()
+    format!("{SNAPSHOTS}/{counter}/root")
 }
 
 /// The snapshot counter the kernel cmdline booted, from
 /// `rootflags=subvol=@snapshots/<n>/root`.
 pub fn booted_counter(cmdline: &str) -> Option<u64> {
-    todo!()
+    // The kernel keeps the last occurrence of a parameter.
+    let flags = cmdline
+        .split_whitespace()
+        .filter_map(|p| p.strip_prefix("rootflags="))
+        .next_back()?;
+    let subvol = flags
+        .split(',')
+        .filter_map(|o| o.strip_prefix("subvol="))
+        .next_back()?;
+    let rest = subvol.trim_start_matches('/').strip_prefix(SNAPSHOTS)?;
+    let counter = rest.strip_prefix('/')?.strip_suffix("/root")?;
+    canonical(counter)
 }
 
 #[cfg(test)]
