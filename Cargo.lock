@@ -1055,6 +1055,14 @@ dependencies = [
 [[package]]
 name = "tetsu-secrets"
 version = "0.0.0"
+dependencies = [
+ "rustix",
+ "serde",
+ "tempfile",
+ "tetsu-installer-core",
+ "thiserror",
+ "toml",
+]
 
 [[package]]
 name = "tetsu-tx"

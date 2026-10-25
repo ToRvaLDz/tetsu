@@ -9,3 +9,21 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "tetsu_secrets"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tetsu-secrets"
+path = "src/main.rs"
+
+[dependencies]
+rustix = { version = "1.1.5", features = ["process"] }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.21"
+toml = "1.1.8"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tetsu-installer-core = { path = "../tetsu-installer-core" }
