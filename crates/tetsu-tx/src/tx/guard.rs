@@ -3,11 +3,9 @@
 //! installed set is compared after the install phase.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use super::TxError;
 use super::pkg::{self, BASE_PACKAGE, Packages};
-use crate::boot::tool::Runner;
 use crate::store::record::TxKind;
 
 /// The base closure the guard protects, or `None` when `tetsu-base` is not
@@ -49,19 +47,9 @@ pub fn check_base_kept(closure_before: &BTreeSet<String>, after: &Packages) -> R
     )))
 }
 
-/// Query the installed set of `root` and run [`check_base_kept`].
-pub fn check_base_after(
-    runner: &dyn Runner,
-    root: &Path,
-    closure_before: &BTreeSet<String>,
-) -> Result<(), TxError> {
-    check_base_kept(closure_before, &pkg::installed(runner, root)?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tx::fake::{Reply, ScriptedRunner};
     use crate::tx::pkg::PackageInfo;
 
     fn info(name: &str, depends: &[&str]) -> PackageInfo {
@@ -132,16 +120,5 @@ mod tests {
         for kind in [TxKind::Update, TxKind::Rollback] {
             assert_eq!(base_before(&infos, kind).unwrap(), None);
         }
-    }
-
-    #[test]
-    fn the_after_check_queries_the_installed_set() {
-        let r = ScriptedRunner::new();
-        r.on(&["env"], Reply::Out("tetsu-base 1\nbash 2\n".into()));
-        let c = closure(&["tetsu-base", "bash"]);
-        assert!(check_base_after(&r, Path::new("/s"), &c).is_ok());
-        let lost = ScriptedRunner::new();
-        lost.on(&["env"], Reply::Out("tetsu-base 1\n".into()));
-        assert!(check_base_after(&lost, Path::new("/s"), &c).is_err());
     }
 }
