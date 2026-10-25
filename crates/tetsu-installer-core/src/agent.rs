@@ -81,12 +81,24 @@ impl AgentBackend {
     }
 }
 
+/// Whether `key` (already trimmed) can be an API key: long enough and in
+/// one piece. Used for the typed key and for the one in an answer file.
+pub fn validate_key(key: &str) -> Result<(), String> {
+    if key.len() >= MIN_KEY_LEN && !key.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "that does not look like an API key (at least {MIN_KEY_LEN} characters, no spaces)"
+        ))
+    }
+}
+
 /// Ask the API key of `provider`.
 pub fn ask_key(fe: &mut dyn Frontend, provider: ApiProvider) -> Result<Secret, InstallError> {
     loop {
         let key = fe.ask_secret(&format!("{} API key", provider.label()))?;
         let key = key.trim();
-        if key.len() >= MIN_KEY_LEN && !key.chars().any(char::is_whitespace) {
+        if validate_key(key).is_ok() {
             return Ok(Secret::new(key));
         }
         fe.message("That does not look like an API key.");
@@ -144,6 +156,20 @@ mod tests {
         assert_eq!(b.label(), "Anthropic API");
         assert!(!format!("{b:?}").contains("sk-ant"));
         fe.assert_done();
+    }
+
+    #[test]
+    fn a_key_is_one_piece_of_enough_characters() {
+        assert!(validate_key("sk-ant-123456").is_ok());
+        for bad in [
+            "",
+            "short",
+            "has a space-1234",
+            "tab\there-1234",
+            "nl\nnl-12345",
+        ] {
+            assert!(validate_key(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

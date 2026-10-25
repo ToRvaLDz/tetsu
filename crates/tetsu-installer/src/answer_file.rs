@@ -11,8 +11,8 @@
 //!   the installer warns about the file and never copies it to the target.
 
 use serde::Deserialize;
-use tetsu_installer_core::agent::{ApiProvider, CliTool};
-use tetsu_installer_core::keyboard::{validate_locale, validate_timezone};
+use tetsu_installer_core::agent::{ApiProvider, CliTool, validate_key};
+use tetsu_installer_core::keyboard::{layout_codes, validate_locale, validate_timezone};
 use tetsu_installer_core::secret::Secret;
 use tetsu_installer_core::unlock::{UnlockLevel, strength};
 use tetsu_installer_core::user::{Password, validate_full_name, validate_username};
@@ -251,13 +251,17 @@ fn refuse_forbidden(table: &toml::Table, section: &str) -> Result<(), AnswerFile
     Ok(())
 }
 
+/// A layout of the installer's table, as the interactive list offers it.
 fn layout_name(layout: String) -> Result<String, AnswerFileError> {
-    let ok = !layout.is_empty()
-        && layout
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
-    ok.then_some(layout)
-        .ok_or_else(|| bad("keyboard.layout: use a layout code such as it, us or de"))
+    let codes = layout_codes();
+    if codes.contains(&layout.as_str()) {
+        Ok(layout)
+    } else {
+        Err(bad(format!(
+            "keyboard.layout: unknown layout, use one of {}",
+            codes.join(", ")
+        )))
+    }
 }
 
 fn check_locale(locale: String) -> Result<String, AnswerFileError> {
@@ -291,6 +295,13 @@ fn passphrase(p: String) -> Result<Secret, AnswerFileError> {
     strength::check(&p)
         .map(|()| Secret::new(p))
         .map_err(|m| bad(format!("unlock.passphrase: {m}")))
+}
+
+fn api_key(key: String) -> Result<Secret, AnswerFileError> {
+    let key = key.trim();
+    validate_key(key)
+        .map(|()| Secret::new(key))
+        .map_err(|m| bad(format!("agent.key: {m}")))
 }
 
 fn agent(a: RawAgent) -> Result<Option<AgentAnswer>, AnswerFileError> {
@@ -327,7 +338,7 @@ fn agent(a: RawAgent) -> Result<Option<AgentAnswer>, AnswerFileError> {
                 .ok_or_else(|| bad("agent.provider: use anthropic, openai or google"))?;
             Ok(Some(AgentAnswer::Api {
                 provider,
-                key: a.key.map(|k| Secret::new(k.trim())),
+                key: a.key.map(api_key).transpose()?,
             }))
         }
         "cli" => {
@@ -447,6 +458,40 @@ confirm = true
         assert!(err("[user]\nname = \"root\"\n").contains("user.name"));
         assert!(err("[keyboard]\nlayout = \"it\"\ntimezone = \"Rome\"\n").contains("timezone"));
         assert!(err("[keyboard]\ntimezone = \"Europe/Rome\"\n").contains("layout is required"));
+    }
+
+    #[test]
+    fn values_get_the_checks_of_the_interactive_path() {
+        // A layout outside the installer's table.
+        let e = err("[keyboard]\nlayout = \"xx\"\n");
+        assert!(
+            e.contains("keyboard.layout") && e.contains("unknown layout"),
+            "{e}"
+        );
+        assert!(AnswerFile::parse("[keyboard]\nlayout = \"it\"\n").is_ok());
+        // An API key with a space or too short, never echoed back.
+        for key in ["short", "sk-ant with-space-12345"] {
+            let e = err(&format!(
+                "[agent]\nbackend = \"api\"\nprovider = \"openai\"\nkey = \"{key}\"\n"
+            ));
+            assert!(e.contains("agent.key"), "{e}");
+            assert!(!e.contains("with-space"), "{e}");
+        }
+        let f = AnswerFile::parse(
+            "[agent]\nbackend = \"api\"\nprovider = \"openai\"\nkey = \" sk-ant-123456 \"\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            f.agent,
+            Some(AgentAnswer::Api { key: Some(k), .. }) if k == Secret::new("sk-ant-123456")
+        ));
+        // A passphrase with a control character (TOML escapes make one).
+        let e = err("[unlock]\npassphrase = \"Correct-Horse-9\\tBattery\"\n");
+        assert!(
+            e.contains("unlock.passphrase") && e.contains("control"),
+            "{e}"
+        );
+        assert!(!e.contains("Correct-Horse"), "{e}");
     }
 
     #[test]

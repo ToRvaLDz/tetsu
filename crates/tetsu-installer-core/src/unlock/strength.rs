@@ -94,6 +94,10 @@ fn is_repetitive(s: &str) -> bool {
 
 /// `Ok` when the passphrase is acceptable, else the reason.
 pub fn check(s: &str) -> Result<(), String> {
+    // The boot prompt cannot type a tab, an escape or a newline.
+    if s.chars().any(char::is_control) {
+        return Err("no control characters (tab, newline, escape): type plain characters".into());
+    }
     let len = s.chars().count();
     if len < MIN_LEN {
         return Err(format!("too short: use at least {MIN_LEN} characters"));
@@ -119,6 +123,17 @@ mod tests {
     fn short_is_rejected() {
         assert!(check("Ab1!").unwrap_err().contains("too short"));
         assert!(check("Abcdef1!x").is_err());
+    }
+
+    #[test]
+    fn control_characters_are_rejected() {
+        for bad in [
+            "Correct-Horse-9\tBattery",
+            "Correct-Horse-9\nBattery",
+            "Correct\u{1b}Horse-9-Battery",
+        ] {
+            assert!(check(bad).unwrap_err().contains("control"), "{bad:?}");
+        }
     }
 
     #[test]
