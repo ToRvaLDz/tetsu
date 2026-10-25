@@ -129,7 +129,33 @@ test_stale_swtpm() {
   unset TETSU_VM_SWTPM_COMM TETSU_VM_QEMU_COMM
 }
 
+# ---------------------------------------------------------------- send
+test_send() {
+  if ! command -v socat >/dev/null 2>&1; then
+    echo "skip send tests: socat not installed"
+    return 0
+  fi
+  local st="$SCRATCH/send" got want
+  mkdir -p "$st"
+  # A fake serial socket that records everything written to it.
+  socat "UNIX-LISTEN:$st/serial.sock,fork" "OPEN:$st/received,creat,append" &
+  local lpid=$!
+  local tries=50
+  while [ ! -S "$st/serial.sock" ] && [ "$tries" -gt 0 ]; do sleep 0.1; tries=$((tries - 1)); done
+
+  assert_status "send: succeeds" 0 "$VM" send --state "$st" 'root\n'
+  assert_status "send: second call, \\r escape" 0 "$VM" send --state "$st" 'a b\r'
+  sleep 0.5
+  got=$(od -An -c "$st/received" | tr -s ' ' | tr -d '\n')
+  want=' r o o t \n a b \r'
+  assert_eq "send: escapes interpreted" "$want" "$got"
+  kill "$lpid" 2>/dev/null; wait "$lpid" 2>/dev/null
+
+  assert_status "send: no VM is an error" 1 "$VM" send --state "$SCRATCH/none" 'x'
+}
+
 test_dry_run
+test_send
 test_stale_swtpm
 test_usage_errors
 test_dry_run_smbios
