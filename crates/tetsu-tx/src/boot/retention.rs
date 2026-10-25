@@ -16,6 +16,28 @@ pub struct GcPlan {
     pub freed_bytes: u64,
 }
 
+/// One file GC may delete.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GcItem {
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
+/// [`plan_gc`] split by when deleting is safe.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GcSplit {
+    /// Bad entries and orphan `*.efi.tmp`: safe to delete before the build.
+    pub now: GcPlan,
+    /// Superseded and aged-out entries, oldest first: delete only when the
+    /// space is needed, otherwise after the new entry is committed.
+    pub later: Vec<GcItem>,
+}
+
+/// Split [`plan_gc`] into what is always safe to delete and what has to wait.
+pub fn split_gc(state: &EspState, booted: Option<u64>) -> GcSplit {
+    todo!()
+}
+
 /// Plan the removal that makes room for one incoming entry.
 ///
 /// Every Bad entry and every orphan `*.efi.tmp` goes. Of the rest only the
@@ -200,6 +222,62 @@ mod tests {
     #[test]
     fn empty_state_plans_nothing() {
         assert_eq!(plan_gc(&EspState::default(), None), GcPlan::default());
+    }
+
+    #[test]
+    fn split_separates_bad_and_orphans_from_the_rest() {
+        let st = state(
+            &[
+                "tetsu-1.efi",
+                "tetsu-2.efi",
+                "tetsu-3.efi",
+                "tetsu-4.efi",
+                "tetsu-5+3.efi",
+                "tetsu-6+0-3.efi",
+            ],
+            &[9],
+        );
+        let split = split_gc(&st, Some(4));
+        assert_eq!(
+            removed(&split.now),
+            vec!["tetsu-6+0-3.efi", "tetsu-9.efi.tmp"]
+        );
+        assert_eq!(split.now.freed_bytes, 107);
+        let later: Vec<_> = split
+            .later
+            .iter()
+            .map(|i| i.path.to_str().unwrap())
+            .collect();
+        assert_eq!(later, vec!["tetsu-1.efi", "tetsu-5+3.efi"]);
+        assert!(split.later.iter().all(|i| i.bytes == 100));
+    }
+
+    #[test]
+    fn split_is_the_same_set_as_plan_gc() {
+        let st = state(
+            &[
+                "tetsu-1.efi",
+                "tetsu-2.efi",
+                "tetsu-3+3.efi",
+                "tetsu-4+0.efi",
+            ],
+            &[7],
+        );
+        for booted in [Some(2), Some(1), None] {
+            let split = split_gc(&st, booted);
+            let mut all = removed(&split.now);
+            all.extend(
+                split
+                    .later
+                    .iter()
+                    .map(|i| i.path.to_string_lossy().into_owned()),
+            );
+            all.sort();
+            let plan = plan_gc(&st, booted);
+            assert_eq!(all, removed(&plan));
+            let freed = split.now.freed_bytes + split.later.iter().map(|i| i.bytes).sum::<u64>();
+            assert_eq!(freed, plan.freed_bytes);
+        }
     }
 
     #[test]

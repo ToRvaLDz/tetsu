@@ -10,6 +10,12 @@ use super::BootError;
 /// Runs an external program to completion.
 pub trait Runner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError>;
+
+    /// Fail with `ToolMissing` when `program` cannot be run. Lets callers
+    /// check cheap preconditions before they change anything.
+    fn check_tool(&self, _program: &str) -> Result<(), BootError> {
+        Ok(())
+    }
 }
 
 /// Runs programs found through `PATH` with `std::process::Command`.

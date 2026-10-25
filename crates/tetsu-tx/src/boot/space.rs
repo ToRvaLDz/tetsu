@@ -7,7 +7,7 @@ use std::path::Path;
 
 use super::BootError;
 use super::esp::sync_file;
-use super::retention::GcPlan;
+use super::retention::{GcPlan, GcSplit};
 
 /// Slack kept free on top of the incoming entry (FAT metadata, rounding).
 pub const SPACE_MARGIN: u64 = 1024 * 1024;
@@ -67,6 +67,20 @@ pub fn apply_gc(plan: &GcPlan) -> Result<(), BootError> {
         sync_file(&dir)?;
     }
     Ok(())
+}
+
+/// Like [`make_room`], but deletes as little as possible before the build:
+/// `split.now` always, then entries of `split.later` (oldest first) only
+/// while the space is still short. The space check counts everything GC
+/// could free and runs before any deletion. Returns the part of `later`
+/// left undeleted, for the caller to apply once the new entry is committed.
+pub fn reserve_space(
+    probe: &dyn SpaceProbe,
+    dir: &Path,
+    split: &GcSplit,
+    needed: u64,
+) -> Result<GcPlan, BootError> {
+    todo!()
 }
 
 /// [`check_space`], then [`apply_gc`]: nothing is deleted on failure.

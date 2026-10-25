@@ -162,4 +162,131 @@ mod tests {
         let err = write_uki(&esp, &StatvfsProbe, &FakeUkify, &spec, Some(20), 10).unwrap_err();
         assert!(matches!(err, BootError::StaleCounter { .. }));
     }
+
+    /// Fake ukify that always fails.
+    struct FailingUkify;
+    impl Runner for FailingUkify {
+        fn run(&self, _: &str, _: &[OsString]) -> Result<(), BootError> {
+            Err(BootError::Tool {
+                tool: "ukify".into(),
+                status: "exit status: 1".into(),
+                stderr: "boom".into(),
+            })
+        }
+    }
+
+    /// Runner whose `ukify` is not installed.
+    struct NoUkify;
+    impl Runner for NoUkify {
+        fn run(&self, _: &str, _: &[OsString]) -> Result<(), BootError> {
+            panic!("must not run")
+        }
+        fn check_tool(&self, program: &str) -> Result<(), BootError> {
+            Err(BootError::ToolMissing {
+                tool: program.into(),
+            })
+        }
+    }
+
+    const BUSY: [&str; 8] = [
+        "tetsu-1.efi",
+        "tetsu-2.efi",
+        "tetsu-3.efi",
+        "tetsu-4.efi",
+        "tetsu-5+3.efi",
+        "tetsu-0+0-3.efi",
+        "tetsu-99.efi.tmp",
+        "foreign.efi",
+    ];
+
+    #[test]
+    fn failing_build_keeps_the_pending_default_and_good_entries() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        let err = write_uki(&esp, &StatvfsProbe, &FailingUkify, &spec, Some(4), 1000).unwrap_err();
+        assert!(matches!(err, BootError::Tool { .. }));
+        // Only the Bad entry and the orphan went.
+        assert_eq!(
+            names(&esp),
+            vec![
+                "foreign.efi",
+                "tetsu-1.efi",
+                "tetsu-2.efi",
+                "tetsu-3.efi",
+                "tetsu-4.efi",
+                "tetsu-5+3.efi"
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_tool_changes_nothing() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        let before = names(&esp);
+        let err = write_uki(&esp, &StatvfsProbe, &NoUkify, &spec, Some(4), 1000).unwrap_err();
+        assert!(matches!(err, BootError::ToolMissing { .. }));
+        assert_eq!(names(&esp), before);
+    }
+
+    #[test]
+    fn unreadable_inputs_change_nothing() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        fs::remove_file(spec.snapshot_root.join("usr/lib/os-release")).unwrap();
+        let before = names(&esp);
+        let err = write_uki(&esp, &StatvfsProbe, &FakeUkify, &spec, Some(4), 1000).unwrap_err();
+        assert!(matches!(err, BootError::Io { .. }));
+        assert_eq!(names(&esp), before);
+    }
+
+    #[test]
+    fn aged_out_entries_go_before_the_build_only_if_space_is_short() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        // Bad (100) + orphan (100) free 200; 50 more are needed: the oldest
+        // aged-out entry (1) goes, the pending default (5) stays.
+        let probe = Fixed(SPACE_MARGIN);
+        let err = write_uki(&esp, &probe, &FailingUkify, &spec, Some(4), 250).unwrap_err();
+        assert!(matches!(err, BootError::Tool { .. }));
+        assert_eq!(
+            names(&esp),
+            vec![
+                "foreign.efi",
+                "tetsu-2.efi",
+                "tetsu-3.efi",
+                "tetsu-4.efi",
+                "tetsu-5+3.efi"
+            ]
+        );
+    }
+
+    #[test]
+    fn successful_commit_converges_to_four_entries() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        write_uki(&esp, &StatvfsProbe, &FakeUkify, &spec, Some(4), 1000).unwrap();
+        assert_eq!(
+            names(&esp),
+            vec![
+                "foreign.efi",
+                "tetsu-10+3.efi",
+                "tetsu-2.efi",
+                "tetsu-3.efi",
+                "tetsu-4.efi"
+            ]
+        );
+    }
+
+    #[test]
+    fn insufficient_even_with_everything_changes_nothing() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        let before = names(&esp);
+        let err = write_uki(
+            &esp,
+            &Fixed(0),
+            &FailingUkify,
+            &spec,
+            Some(4),
+            10 * SPACE_MARGIN,
+        )
+        .unwrap_err();
+        assert!(matches!(err, BootError::InsufficientSpace { .. }));
+        assert_eq!(names(&esp), before);
+    }
 }
