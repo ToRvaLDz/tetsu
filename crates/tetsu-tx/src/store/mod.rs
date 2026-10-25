@@ -46,8 +46,11 @@ impl StoreError {
 }
 
 pub mod btrfs;
+pub mod handle;
 pub mod layout;
 pub mod lock;
 pub mod record;
 pub mod select;
 pub mod snapshot;
+
+pub use handle::{Begun, Store};
