@@ -977,6 +977,8 @@ name = "tetsu-tx"
 version = "0.0.0"
 dependencies = [
  "rustix",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]
