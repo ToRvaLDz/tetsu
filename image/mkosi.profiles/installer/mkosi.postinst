@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Installer customisation, run by mkosi in its sandbox ($BUILDROOT is the image).
+set -euo pipefail
+
+# The mount point of the medium's payload, and the root account stays locked.
+mkdir -p "$BUILDROOT/usr/share/tetsu/medium"
+mkosi-chroot passwd -l root >/dev/null

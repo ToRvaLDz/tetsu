@@ -1,0 +1,12 @@
+[Unit]
+Description=Tetsu installation medium (payload directory)
+
+# The payload lives in this image, in the root filesystem of the medium. A
+# bind mount of the directory onto itself makes it a mount point, so that
+# `findmnt -o SOURCE` gives the medium's partition (/dev/vdaN[/usr/share/...])
+# and the installer never offers the disk it booted from.
+[Mount]
+What=/usr/share/tetsu/medium
+Where=/usr/share/tetsu/medium
+Type=none
+Options=bind

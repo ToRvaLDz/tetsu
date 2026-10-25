@@ -1,0 +1,14 @@
+# Microsoft Secure Boot certificates for the installer medium (DER).
+# <sha256>  <destination under usr/share/tetsu/secureboot/microsoft>  <source URL>
+#
+# The URLs are the download links of Microsoft's "Windows Secure Boot Key
+# Creation and Management Guidance" (learn.microsoft.com). Every hash was
+# computed from the file those links serve and matches, byte for byte, the
+# same certificate in https://github.com/microsoft/secureboot_objects
+# (PreSignedObjects/{KEK,DB}/Certificates, commit 586ca9475c07).
+a1117f516a32cefcba3f2d1ace10a87972fd6bbe8fe0d0b996e09e65d802a503  kek/microsoft-kek-ca-2011.der  https://go.microsoft.com/fwlink/p/?linkid=321185
+3cd3f0309edae228767a976dd40d9f4affc4fbd5218f2e8cc3c9dd97e8ac6f9d  kek/microsoft-kek-2k-ca-2023.der  https://go.microsoft.com/fwlink/p/?linkid=2239775
+48e99b991f57fc52f76149599bff0a58c47154229b9f8d603ac40d3500248507  db/microsoft-uefi-ca-2011.der  https://go.microsoft.com/fwlink/p/?linkid=321194
+e8e95f0733a55e8bad7be0a1413ee23c51fcea64b3c8fa6a786935fddcc71961  db/microsoft-windows-production-pca-2011.der  https://go.microsoft.com/fwlink/p/?linkid=321192
+f6124e34125bee3fe6d79a574eaa7b91c0e7bd9d929c1a321178efd611dad901  db/microsoft-uefi-ca-2023.der  https://go.microsoft.com/fwlink/?linkid=2239872
+076f1fea90ac29155ebf77c17682f75f1fdd1be196da302dc8461e350a9ae330  db/windows-uefi-ca-2023.der  https://go.microsoft.com/fwlink/?linkid=2239776

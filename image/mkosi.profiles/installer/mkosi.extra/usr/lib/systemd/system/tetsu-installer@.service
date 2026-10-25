@@ -1,0 +1,27 @@
+[Unit]
+Description=Tetsu installer on %I
+After=systemd-user-sessions.service getty-pre.target
+Before=getty.target
+RequiresMountsFor=/usr/share/tetsu/medium
+# The installer owns the console: no login prompt next to it.
+Conflicts=getty@%i.service serial-getty@%i.service
+
+[Service]
+Type=idle
+ExecStart=/usr/libexec/tetsu-installer-session %I
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/%I
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+UtmpIdentifier=%I
+UtmpMode=user
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+KillMode=process
+
+[Install]
+WantedBy=getty.target
+DefaultInstance=tty1

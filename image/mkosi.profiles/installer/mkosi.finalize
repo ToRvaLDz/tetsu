@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Installer clean-up, run by mkosi on the host with $BUILDROOT, after the
+# presets: the installer owns tty1 and ttyS0, so their login prompts are
+# masked (a mask is not something `preset-all` tolerates, hence not in the
+# static tree).
+set -euo pipefail
+unitdir=$BUILDROOT/etc/systemd/system
+
+ln -sf /dev/null "$unitdir/getty@tty1.service"
+ln -sf /dev/null "$unitdir/serial-getty@ttyS0.service"
+
+# One installer session per console. `preset-all` does not enable instances
+# of a template, so the links are made here, after it.
+mkdir -p "$unitdir/getty.target.wants"
+for tty in tty1 ttyS0; do
+  ln -sf /usr/lib/systemd/system/tetsu-installer@.service \
+    "$unitdir/getty.target.wants/tetsu-installer@$tty.service"
+done
+
+# No systemd-firstboot dialog: the medium asks nothing but the installer's questions.
+mkdir -p "$BUILDROOT/etc/systemd/system"
+ln -sf /dev/null "$BUILDROOT/etc/systemd/system/systemd-firstboot.service"
+
+# Fail the build rather than ship a medium that cannot install.
+[ -s "$BUILDROOT/usr/share/tetsu/medium/tetsu-payload.tar" ] || {
+  echo "installer: the payload is missing from the image" >&2
+  exit 1
+}
