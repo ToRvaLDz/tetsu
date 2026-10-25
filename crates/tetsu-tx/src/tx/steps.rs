@@ -3,66 +3,157 @@
 //! initrd. Downloads run online and applying runs offline, so a failed
 //! download touches nothing and an install never reaches the network.
 
+use std::fs;
 use std::path::Path;
 
 use super::TxError;
-use super::nspawn::Nspawn;
+use super::nspawn::{DEFAULT_CACHE, Network, Nspawn, PROGRAM};
+use super::pkg::{blocking_packages, output_or_empty, parse_names};
+use crate::boot::BootError;
 use crate::boot::tool::Runner;
+
+/// The initrd a snapshot boots with, inside the snapshot.
+const INITRD: &str = "/usr/lib/tetsu/initrd.img";
+
+/// Lines of a tool's stderr, for the transaction log.
+fn stderr_lines(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A failed step: the reason quotes the tool's stderr, the log keeps it.
+fn step_failed(what: &str, e: BootError) -> TxError {
+    match e {
+        BootError::Tool { status, stderr, .. } => {
+            let stderr = stderr.trim();
+            let reason = if stderr.is_empty() {
+                format!("{what} failed ({status})")
+            } else {
+                format!("{what} failed: {stderr}")
+            };
+            TxError::Failed {
+                reason,
+                proposal: None,
+                log: stderr_lines(stderr),
+            }
+        }
+        other => other.into(),
+    }
+}
+
+fn in_container(
+    runner: &dyn Runner,
+    ns: &Nspawn,
+    net: Network,
+    what: &str,
+    cmd: &[&str],
+) -> Result<(), TxError> {
+    runner
+        .run(PROGRAM, &ns.args(net, cmd))
+        .map_err(|e| step_failed(what, e))
+}
+
+/// A pacman command with a package list appended.
+fn with_pkgs<'a>(base: &[&'a str], pkgs: &'a [String]) -> Vec<&'a str> {
+    let mut cmd = base.to_vec();
+    cmd.extend(pkgs.iter().map(String::as_str));
+    cmd
+}
 
 /// Download the keyring (online).
 pub fn keyring_download(runner: &dyn Runner, ns: &Nspawn) -> Result<(), TxError> {
-    let _ = (runner, ns);
-    todo!()
+    let cmd = ["pacman", "-Syw", "--noconfirm", "archlinux-keyring"];
+    in_container(runner, ns, Network::Online, "keyring download", &cmd)
 }
 
 /// Install the downloaded keyring (offline).
 pub fn keyring_install(runner: &dyn Runner, ns: &Nspawn) -> Result<(), TxError> {
-    let _ = (runner, ns);
-    todo!()
+    let cmd = [
+        "pacman",
+        "-S",
+        "--noconfirm",
+        "--needed",
+        "archlinux-keyring",
+    ];
+    in_container(runner, ns, Network::Offline, "keyring install", &cmd)
 }
 
 /// Download a full upgrade (online).
 pub fn update_download(runner: &dyn Runner, ns: &Nspawn) -> Result<(), TxError> {
-    let _ = (runner, ns);
-    todo!()
+    let cmd = ["pacman", "-Suw", "--noconfirm"];
+    in_container(runner, ns, Network::Online, "update download", &cmd)
 }
 
 /// Apply the downloaded upgrade (offline).
 pub fn update_install(runner: &dyn Runner, ns: &Nspawn) -> Result<(), TxError> {
-    let _ = (runner, ns);
-    todo!()
+    let cmd = ["pacman", "-Su", "--noconfirm"];
+    in_container(runner, ns, Network::Offline, "update", &cmd)
 }
 
 /// Packages installed as dependencies that nothing needs any more.
+/// `pacman -Qdtq` exits 1 with no output when there are none.
 pub fn orphans(runner: &dyn Runner, ns: &Nspawn) -> Result<Vec<String>, TxError> {
-    let _ = (runner, ns);
-    todo!()
+    let args = ns.args(Network::Offline, &["pacman", "-Qdtq"]);
+    let out = output_or_empty(runner, PROGRAM, &args)?;
+    Ok(parse_names(&out))
 }
 
 /// Remove `orphans` with their configuration and unneeded dependencies;
 /// nothing to do for an empty list.
 pub fn remove_orphans(runner: &dyn Runner, ns: &Nspawn, orphans: &[String]) -> Result<(), TxError> {
-    let _ = (runner, ns, orphans);
-    todo!()
+    if orphans.is_empty() {
+        return Ok(());
+    }
+    let cmd = with_pkgs(&["pacman", "-Rns", "--noconfirm"], orphans);
+    in_container(runner, ns, Network::Offline, "orphan removal", &cmd)
+}
+
+/// A name pacman could take for a package: not an option, no whitespace.
+fn is_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['-', '.'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@._+-".contains(c))
 }
 
 /// Check every name against the sync databases: `PackageNotFound` for the
 /// first that does not exist (or is not a package name).
 pub fn check_available(runner: &dyn Runner, ns: &Nspawn, pkgs: &[String]) -> Result<(), TxError> {
-    let _ = (runner, ns, pkgs);
-    todo!()
+    if pkgs.is_empty() {
+        return Err(TxError::failed("no package given"));
+    }
+    if let Some(bad) = pkgs.iter().find(|p| !is_package_name(p)) {
+        return Err(TxError::PackageNotFound(bad.clone()));
+    }
+    for name in pkgs {
+        let args = ns.args(Network::Offline, &["pacman", "-Si", name]);
+        match runner.output(PROGRAM, &args) {
+            Ok(_) => {}
+            Err(BootError::Tool { stderr, .. }) if stderr.contains("was not found") => {
+                return Err(TxError::PackageNotFound(name.clone()));
+            }
+            Err(e) => return Err(step_failed(&format!("lookup of {name}"), e)),
+        }
+    }
+    Ok(())
 }
 
 /// Check, then download `pkgs` (online). No `-y`: no partial upgrade.
 pub fn install_download(runner: &dyn Runner, ns: &Nspawn, pkgs: &[String]) -> Result<(), TxError> {
-    let _ = (runner, ns, pkgs);
-    todo!()
+    check_available(runner, ns, pkgs)?;
+    let cmd = with_pkgs(&["pacman", "-Sw", "--noconfirm", "--needed"], pkgs);
+    in_container(runner, ns, Network::Online, "download", &cmd)
 }
 
 /// Install the downloaded `pkgs` (offline).
 pub fn install_apply(runner: &dyn Runner, ns: &Nspawn, pkgs: &[String]) -> Result<(), TxError> {
-    let _ = (runner, ns, pkgs);
-    todo!()
+    let cmd = with_pkgs(&["pacman", "-S", "--noconfirm", "--needed"], pkgs);
+    in_container(runner, ns, Network::Offline, "install", &cmd)
 }
 
 /// Remove user packages (offline), without cascading to dependents. Every
@@ -74,15 +165,64 @@ pub fn remove(
     pkgs: &[String],
     user_layer: &[String],
 ) -> Result<(), TxError> {
-    let _ = (runner, ns, pkgs, user_layer);
-    todo!()
+    if pkgs.is_empty() {
+        return Err(TxError::failed("no package given"));
+    }
+    if let Some(other) = pkgs.iter().find(|p| !user_layer.contains(p)) {
+        return Err(TxError::NotUserPackage(other.clone()));
+    }
+    let cmd = with_pkgs(&["pacman", "-Rns", "--noconfirm"], pkgs);
+    let Err(e) = runner.run(PROGRAM, &ns.args(Network::Offline, &cmd)) else {
+        return Ok(());
+    };
+    let blockers = match &e {
+        BootError::Tool { stderr, .. } => blocking_packages(stderr, user_layer)
+            .into_iter()
+            .filter(|b| !pkgs.contains(b))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut failure = step_failed("removal", e);
+    if let (
+        false,
+        TxError::Failed {
+            reason, proposal, ..
+        },
+    ) = (blockers.is_empty(), &mut failure)
+    {
+        let list = blockers.join(", ");
+        *reason = format!("{reason} (blocked by user package(s): {list})");
+        *proposal = Some(format!("remove {list} together with {}", pkgs.join(", ")));
+    }
+    Err(failure)
 }
 
 /// The kernel version of a snapshot: the single
 /// `usr/lib/modules/<ver>/vmlinuz`.
 pub fn kernel_version(root: &Path) -> Result<String, TxError> {
-    let _ = root;
-    todo!()
+    let dir = root.join("usr/lib/modules");
+    let read = fs::read_dir(&dir).map_err(|e| BootError::io(&dir, e))?;
+    let mut found = Vec::new();
+    for item in read {
+        let item = item.map_err(|e| BootError::io(&dir, e))?;
+        let is_kernel = fs::symlink_metadata(item.path().join("vmlinuz"))
+            .is_ok_and(|m| m.file_type().is_file());
+        if is_kernel {
+            found.push(item.file_name().to_string_lossy().into_owned());
+        }
+    }
+    found.sort();
+    match found.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(TxError::failed(format!(
+            "no kernel found under {}",
+            dir.display()
+        ))),
+        many => Err(TxError::failed(format!(
+            "several kernels found, cannot tell which to boot: {}",
+            many.join(", ")
+        ))),
+    }
 }
 
 /// Build the initrd of `ver` at `/usr/lib/tetsu/initrd.img` inside `root`
@@ -93,8 +233,20 @@ pub fn build_initrd(
     scratch: &Path,
     ver: &str,
 ) -> Result<(), TxError> {
-    let _ = (runner, root, scratch, ver);
-    todo!()
+    if ver.is_empty() || ver == "." || ver == ".." || ver.contains(['/', '\0']) {
+        return Err(BootError::InvalidKernelVersion(ver.to_owned()).into());
+    }
+    let ns = Nspawn::new(root, scratch, Path::new(DEFAULT_CACHE));
+    let cmd = ["mkinitcpio", "-k", ver, "-g", INITRD];
+    in_container(runner, &ns, Network::Offline, "initrd build", &cmd)?;
+    let built = root.join(INITRD.trim_start_matches('/'));
+    if !fs::symlink_metadata(&built).is_ok_and(|m| m.file_type().is_file()) {
+        return Err(TxError::failed(format!(
+            "mkinitcpio did not write {}",
+            built.display()
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
