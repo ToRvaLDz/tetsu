@@ -5,10 +5,12 @@
 //! baseline, tag and doc rules, and the event fixtures. Nothing here is
 //! linked into a daemon.
 
+mod compat;
 mod load;
 mod model;
 mod violation;
 
+pub use compat::check_compat;
 pub use load::{LoadError, load_dir, read_dir_sources};
 pub use model::{
     Contract, CustomType, Doc, ErrorDef, Field, Interface, Method, Ty, TypeDef, Variant,
