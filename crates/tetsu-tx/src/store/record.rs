@@ -154,29 +154,44 @@ impl Records {
     /// counting: blessed is good, exhausted is bad, anything else unknown.
     pub fn load_or_reconstruct(&self, esp: &EspState) -> Result<BTreeMap<u64, Record>, StoreError> {
         let mut all = self.load()?;
-        for entry in &esp.entries {
-            let counter = entry.name.counter;
-            if all.contains_key(&counter) {
-                continue;
-            }
-            let boot = match entry.state() {
-                BootState::Good => Some(BootVerdict::Good),
-                BootState::Bad => Some(BootVerdict::Bad),
-                BootState::Untried | BootState::Trying => None,
-            };
-            let record = Record {
-                counter,
-                kind: None,
-                source: None,
-                boot,
-                reconstructed: true,
-                ..Record::default()
-            };
+        for record in missing_records(&all, esp) {
             self.write(&record)?;
-            all.insert(counter, record);
+            all.insert(record.counter, record);
         }
         Ok(all)
     }
+
+    /// [`Records::load`] with the records of ESP entries that have none
+    /// derived in memory, as [`Records::load_or_reconstruct`] would write
+    /// them. Writes nothing, so it is safe without the transaction lock.
+    pub fn load_derived(&self, esp: &EspState) -> Result<BTreeMap<u64, Record>, StoreError> {
+        let mut all = self.load()?;
+        for record in missing_records(&all, esp) {
+            all.insert(record.counter, record);
+        }
+        Ok(all)
+    }
+}
+
+/// The records of ESP entries not in `have`, reconstructed from the entry's
+/// boot counting.
+fn missing_records(have: &BTreeMap<u64, Record>, esp: &EspState) -> Vec<Record> {
+    esp.entries
+        .iter()
+        .filter(|entry| !have.contains_key(&entry.name.counter))
+        .map(|entry| Record {
+            counter: entry.name.counter,
+            kind: None,
+            source: None,
+            boot: match entry.state() {
+                BootState::Good => Some(BootVerdict::Good),
+                BootState::Bad => Some(BootVerdict::Bad),
+                BootState::Untried | BootState::Trying => None,
+            },
+            reconstructed: true,
+            ..Record::default()
+        })
+        .collect()
 }
 
 fn read_record(path: &Path) -> Result<Record, StoreError> {
@@ -359,6 +374,25 @@ mod tests {
         assert!(all.values().all(|x| x.reconstructed && x.kind.is_none()));
         // Persisted: a plain load sees them.
         assert_eq!(r.load().unwrap(), all);
+    }
+
+    #[test]
+    fn load_derived_reconstructs_in_memory_and_writes_nothing() {
+        let (_d, r) = records();
+        let st = esp(&["tetsu-2.efi", "tetsu-3+0-3.efi", "tetsu-5+3.efi"]);
+        let all = r.load_derived(&st).unwrap();
+        let verdicts: Vec<_> = all.values().map(|x| (x.counter, x.boot)).collect();
+        assert_eq!(
+            verdicts,
+            [
+                (2, Some(BootVerdict::Good)),
+                (3, Some(BootVerdict::Bad)),
+                (5, None)
+            ]
+        );
+        assert!(all.values().all(|x| x.reconstructed));
+        assert!(r.load().unwrap().is_empty());
+        assert!(!r.dir().exists());
     }
 
     #[test]

@@ -121,7 +121,7 @@ fn list(options: &Options, host: &Host<'_>, json: bool) -> Outcome {
     let read = || -> Result<_, String> {
         let esp = Esp::open(&options.esp).scan().map_err(|e| e.to_string())?;
         let records = Records::new(&options.records)
-            .load_or_reconstruct(&esp)
+            .load_derived(&esp)
             .map_err(|e| e.to_string())?;
         Ok((esp, records))
     };
@@ -357,6 +357,19 @@ mod tests {
         assert_eq!(value[1]["default"], true);
         assert_eq!(value[0]["booted"], false);
         assert!(fx.runner.lines().is_empty(), "list runs nothing");
+    }
+
+    #[test]
+    fn list_over_an_entry_without_a_record_shows_it_and_writes_nothing() {
+        let fx = Fixture::new();
+        let esp = fx.tmp.path().join("esp/EFI/Linux");
+        fs::create_dir_all(&esp).unwrap();
+        fs::write(esp.join("tetsu-1.efi"), b"uki").unwrap();
+        let out = fx.run(&["list", "--json"], "rootflags=subvol=@snapshots/1/root");
+        assert_eq!(out.code, 0, "{out:?}");
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(value.as_array().unwrap().len(), 1);
+        assert!(!fx.tmp.path().join("records").exists());
     }
 
     #[test]
