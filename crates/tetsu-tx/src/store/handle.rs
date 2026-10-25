@@ -86,6 +86,39 @@ impl<'a> Store<'a> {
     where
         F: FnOnce() -> Result<EspState, BootError>,
     {
+        self.start(lock_path, read_esp, booted, |esp| {
+            select::select_source(esp, booted)
+        })
+    }
+
+    /// Like [`Store::begin`], from an explicit `source` (a rollback) instead
+    /// of the selected one. `NotFound` when `source` has no snapshot.
+    pub fn begin_from<F>(
+        &self,
+        lock_path: &Path,
+        read_esp: F,
+        booted: u64,
+        source: Source,
+    ) -> Result<Begun, StoreError>
+    where
+        F: FnOnce() -> Result<EspState, BootError>,
+    {
+        self.start(lock_path, read_esp, booted, |_| source)
+    }
+
+    /// The body of `begin` and `begin_from`; `pick` chooses the source from
+    /// the ESP read under the lock.
+    fn start<F, P>(
+        &self,
+        lock_path: &Path,
+        read_esp: F,
+        booted: u64,
+        pick: P,
+    ) -> Result<Begun, StoreError>
+    where
+        F: FnOnce() -> Result<EspState, BootError>,
+        P: FnOnce(&EspState) -> Source,
+    {
         let lock = TxLock::acquire(lock_path)?;
         let esp = read_esp()?;
         let gc_failures = match self.gc_orphans(&lock, &esp, Some(booted)) {
@@ -93,7 +126,7 @@ impl<'a> Store<'a> {
             Err(StoreError::Cleanup { failures }) => failures,
             Err(e) => return Err(e),
         };
-        let source = select::select_source(&esp, booted);
+        let source = pick(&esp);
         let snapshots = self.layout.list_snapshots()?;
         let records = self.records.load()?;
         let counter = select::next_counter(&snapshots, &records, &esp);
@@ -116,22 +149,6 @@ impl<'a> Store<'a> {
             esp,
             gc_failures,
         })
-    }
-
-    /// Like [`Store::begin`], from an explicit `source` (a rollback) instead
-    /// of the selected one. `NotFound` when `source` has no snapshot.
-    pub fn begin_from<F>(
-        &self,
-        lock_path: &Path,
-        read_esp: F,
-        booted: u64,
-        source: Source,
-    ) -> Result<Begun, StoreError>
-    where
-        F: FnOnce() -> Result<EspState, BootError>,
-    {
-        let _ = (lock_path, read_esp, booted, source);
-        todo!()
     }
 
     /// Mark the snapshot of a begun transaction committed: call it right
