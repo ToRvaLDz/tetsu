@@ -20,6 +20,17 @@ pub struct UkiSpec {
 }
 
 impl UkiSpec {
+    /// Reject inputs that cannot name a build: bad keys or a kernel version
+    /// that is not a single normal path component.
+    pub fn validate(&self) -> Result<(), BootError> {
+        self.keys.validate()?;
+        let v = self.kernel_version.as_str();
+        if v.is_empty() || v == "." || v == ".." || v.contains(['/', '\0']) {
+            return Err(BootError::InvalidKernelVersion(v.to_owned()));
+        }
+        Ok(())
+    }
+
     pub fn kernel_path(&self) -> PathBuf {
         self.snapshot_root
             .join("usr/lib/modules")
@@ -89,7 +100,7 @@ pub fn ukify_args(spec: &UkiSpec, os_release: &str, out: &Path) -> Vec<OsString>
 
 /// Build and sign the UKI into `out`.
 pub fn build_uki(runner: &dyn Runner, spec: &UkiSpec, out: &Path) -> Result<(), BootError> {
-    spec.keys.validate()?;
+    spec.validate()?;
     let path = spec.os_release_path();
     let text = fs::read_to_string(&path).map_err(|e| BootError::io(&path, e))?;
     let os_release = with_image_version(&text, spec.counter);
