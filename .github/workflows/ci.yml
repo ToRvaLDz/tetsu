@@ -41,3 +41,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
+
+  # Unit tests of the VM harness: no ISO, no KVM, no QEMU needed.
+  vm-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n tools/vm/tetsu-vm tools/vm/fetch-arch-iso tools/vm/lib/*.sh tools/vm/tests/*.sh
+      - run: tools/vm/tests/unit.sh
