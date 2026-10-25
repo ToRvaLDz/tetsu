@@ -160,7 +160,7 @@ mod tests {
                         kind: None,
                         source: None,
                         boot,
-                        reconstructed: false,
+                        ..Record::default()
                     },
                 )
             })

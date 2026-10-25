@@ -225,7 +225,7 @@ mod tests {
                     kind: None,
                     source: None,
                     boot,
-                    reconstructed: false,
+                    ..Record::default()
                 })
                 .unwrap();
             self.btrfs.take_ops();

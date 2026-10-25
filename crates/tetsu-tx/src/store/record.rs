@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::StoreError;
 use crate::boot::entry::{BootState, canonical};
 use crate::boot::esp::EspState;
+use crate::tx::PackageChange;
 
 /// Default directory of the records.
 pub const RECORDS_DIR: &str = "/var/lib/tetsu/transactions";
@@ -39,7 +40,7 @@ pub enum BootVerdict {
 }
 
 /// One committed transaction.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     pub counter: u64,
     /// `None` when rebuilt from the ESP.
@@ -52,6 +53,23 @@ pub struct Record {
     /// Rebuilt from the ESP rather than written by the transaction.
     #[serde(default)]
     pub reconstructed: bool,
+    /// The packages the user asked to install or remove.
+    #[serde(default)]
+    pub packages: Vec<String>,
+    /// Every package whose version the transaction changed.
+    #[serde(default)]
+    pub changes: Vec<PackageChange>,
+    /// Unix seconds; `None` for records written before they were kept.
+    #[serde(default)]
+    pub started_at: Option<u64>,
+    #[serde(default)]
+    pub finished_at: Option<u64>,
+    /// For a rollback, the snapshot that was running when it was asked for.
+    #[serde(default)]
+    pub rolled_back_from: Option<u64>,
+    /// Notes worth keeping: the `/var` report, DKMS owners, tool output.
+    #[serde(default)]
+    pub log: Vec<String>,
 }
 
 /// The records directory.
@@ -152,6 +170,7 @@ impl Records {
                 source: None,
                 boot,
                 reconstructed: true,
+                ..Record::default()
             };
             self.write(&record)?;
             all.insert(counter, record);
@@ -193,7 +212,7 @@ mod tests {
             kind: Some(TxKind::Update),
             source: Some(counter - 1),
             boot: None,
-            reconstructed: false,
+            ..Record::default()
         }
     }
 
@@ -210,6 +229,43 @@ mod tests {
             });
         }
         st
+    }
+
+    #[test]
+    fn a_record_written_before_the_transaction_details_still_loads() {
+        let (_d, r) = records();
+        fs::create_dir_all(r.dir()).unwrap();
+        let old = r#"{"counter":3,"kind":"update","source":2,"boot":"good"}"#;
+        fs::write(r.path(3), old).unwrap();
+        let got = &r.load().unwrap()[&3];
+        assert_eq!(got.kind, Some(TxKind::Update));
+        assert_eq!(got.boot, Some(BootVerdict::Good));
+        assert!(!got.reconstructed);
+        assert!(got.packages.is_empty() && got.changes.is_empty() && got.log.is_empty());
+        assert_eq!(
+            (got.started_at, got.finished_at, got.rolled_back_from),
+            (None, None, None)
+        );
+    }
+
+    #[test]
+    fn transaction_details_round_trip() {
+        let (_d, r) = records();
+        let full = Record {
+            packages: vec!["vim".into()],
+            changes: vec![PackageChange {
+                name: "vim".into(),
+                from: None,
+                to: Some("9.1-1".into()),
+            }],
+            started_at: Some(1_700_000_000),
+            finished_at: Some(1_700_000_042),
+            rolled_back_from: Some(5),
+            log: vec!["/var/lib/foo".into()],
+            ..rec(6)
+        };
+        r.write(&full).unwrap();
+        assert_eq!(r.load().unwrap()[&6], full);
     }
 
     #[test]
