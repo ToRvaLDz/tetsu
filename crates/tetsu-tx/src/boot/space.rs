@@ -1,5 +1,7 @@
 //! Free-space check on the ESP, done before anything is deleted.
 
+use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use super::BootError;
@@ -19,7 +21,8 @@ pub struct StatvfsProbe;
 
 impl SpaceProbe for StatvfsProbe {
     fn available_bytes(&self, path: &Path) -> Result<u64, BootError> {
-        todo!()
+        let st = rustix::fs::statvfs(path).map_err(|e| BootError::io(path, e.into()))?;
+        Ok(st.f_bavail.saturating_mul(st.f_frsize))
     }
 }
 
@@ -31,12 +34,30 @@ pub fn check_space(
     plan: &GcPlan,
     needed: u64,
 ) -> Result<(), BootError> {
-    todo!()
+    let available = probe
+        .available_bytes(dir)?
+        .saturating_add(plan.freed_bytes);
+    let required = needed.saturating_add(SPACE_MARGIN);
+    if available >= required {
+        Ok(())
+    } else {
+        Err(BootError::InsufficientSpace {
+            needed: required,
+            available,
+        })
+    }
 }
 
 /// Delete everything in `plan`. Call only after [`check_space`] passed.
 pub fn apply_gc(plan: &GcPlan) -> Result<(), BootError> {
-    todo!()
+    for path in &plan.remove {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(BootError::io(path, e)),
+        }
+    }
+    Ok(())
 }
 
 /// [`check_space`], then [`apply_gc`]: nothing is deleted on failure.
