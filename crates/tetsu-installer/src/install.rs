@@ -18,6 +18,22 @@ use crate::cleanup::cleanup;
 
 /// Asked when the user cancels after the disk was touched.
 pub const ABORT_PROMPT: &str = "Abort the install? The disk is already wiped";
+/// Asked when the user cancels before the first action ran.
+pub const ABORT_PROMPT_UNTOUCHED: &str = "Abort the install? Nothing has been changed yet";
+/// Asked when the user cancels once the keys are in the firmware.
+pub const ABORT_PROMPT_ENROLLED: &str =
+    "Abort the install? The Secure Boot keys are already enrolled, the disk will be kept";
+
+/// The abort question that matches what the install has done so far.
+fn abort_prompt(touched: bool, keys_enrolled: bool) -> &'static str {
+    if keys_enrolled {
+        ABORT_PROMPT_ENROLLED
+    } else if touched {
+        ABORT_PROMPT
+    } else {
+        ABORT_PROMPT_UNTOUCHED
+    }
+}
 
 /// What the machine offers the install.
 pub struct Machine<'a> {
@@ -116,7 +132,8 @@ pub fn install(
             Err(InstallError::Cancelled) => {
                 machine.cancel.store(false, Ordering::SeqCst);
                 // A closed console counts as a yes: nobody can answer.
-                let abort = fe.borrow_mut().confirm(ABORT_PROMPT).unwrap_or(true);
+                let prompt = abort_prompt(exec.touched(), exec.keys_enrolled());
+                let abort = fe.borrow_mut().confirm(prompt).unwrap_or(true);
                 if abort {
                     break Err(InstallError::Cancelled);
                 }
@@ -274,7 +291,8 @@ mod tests {
         );
         target.run_dir = t.path().join("run");
         target.cache_dir = t.path().join("cache");
-        let cancel = AtomicBool::new(false);
+        // An empty prefix means: cancelled before the first action.
+        let cancel = AtomicBool::new(raise == Some(""));
         let tools = Tools {
             calls: RefCell::default(),
             raise: raise.map(|p| (p, &cancel)),
@@ -342,6 +360,23 @@ mod tests {
         assert!(!o.console.contains(ABORT_PROMPT));
         let all = o.report.log.join("\n") + &o.console;
         assert!(!all.contains("Correct-Horse"));
+    }
+
+    #[test]
+    fn a_cancel_before_the_first_action_neither_claims_a_wipe_nor_wipes() {
+        let o = run("y\n", Some(""));
+        assert!(matches!(o.report.result, Err(InstallError::Cancelled)));
+        assert!(o.console.contains(ABORT_PROMPT_UNTOUCHED));
+        assert!(!o.console.contains("already wiped"));
+        assert!(o.calls.is_empty(), "{:?}", o.calls);
+        assert!(o.report.cleanup_problems.is_none());
+    }
+
+    #[test]
+    fn the_abort_question_matches_what_was_done() {
+        assert_eq!(abort_prompt(false, false), ABORT_PROMPT_UNTOUCHED);
+        assert_eq!(abort_prompt(true, false), ABORT_PROMPT);
+        assert_eq!(abort_prompt(true, true), ABORT_PROMPT_ENROLLED);
     }
 
     #[test]
