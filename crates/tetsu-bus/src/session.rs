@@ -54,7 +54,10 @@ struct RemoteError {
 
 /// An open `WatchSession` stream.
 #[derive(Debug)]
-pub struct SessionWatch(Connection<zlink::tokio::unix::Stream>);
+pub struct SessionWatch {
+    connection: Connection<zlink::tokio::unix::Stream>,
+    ended: bool,
+}
 
 /// Connects to the compositor socket and starts `WatchSession`.
 pub async fn watch(path: &Path) -> io::Result<SessionWatch> {
@@ -67,22 +70,35 @@ pub async fn watch(path: &Path) -> io::Result<SessionWatch> {
         .send_call(&call, Vec::new())
         .await
         .map_err(into_io)?;
-    Ok(SessionWatch(connection))
+    Ok(SessionWatch {
+        connection,
+        ended: false,
+    })
 }
 
 impl SessionWatch {
-    /// The next event; an error once the stream ended or failed.
+    /// The next event. After the final reply, or once the compositor went
+    /// away, an `UnexpectedEof` error.
     pub async fn next(&mut self) -> io::Result<SessionEvent> {
+        if self.ended {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "WatchSession ended",
+            ));
+        }
         let (reply, _fds) = self
-            .0
+            .connection
             .receive_reply::<WatchReply, RemoteError>()
             .await
             .map_err(into_io)?;
         match reply {
-            Ok(reply) => reply
-                .into_parameters()
-                .map(|parameters| parameters.event)
-                .ok_or_else(|| io::Error::other("WatchSession reply without parameters")),
+            Ok(reply) => {
+                self.ended = reply.continues() != Some(true);
+                reply
+                    .into_parameters()
+                    .map(|parameters| parameters.event)
+                    .ok_or_else(|| io::Error::other("WatchSession reply without parameters"))
+            }
             Err(error) => Err(io::Error::other(format!(
                 "WatchSession failed: {}",
                 error.error
