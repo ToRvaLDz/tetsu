@@ -20,6 +20,7 @@ type Item (
 
 type Color (red, green)
 
+# @capability test.do scope=name
 method Do(
   # The name.
   name: string,
@@ -30,6 +31,7 @@ method Do(
 
 # Wipes.
 # @destructive
+# @capability test.wipe
 method Wipe() -> ()
 
 method Watch() -> (event: Item)
@@ -413,6 +415,54 @@ fn destructive_removed() {
 }
 
 #[test]
+fn capability_class_changed() {
+    expect(
+        &mutated("# @capability test.wipe\n", "# @capability test.erase\n"),
+        Kind::CapabilityChanged,
+        "Wipe",
+    );
+}
+
+#[test]
+fn capability_scope_added() {
+    expect(
+        &mutated(
+            "# @capability test.wipe\n",
+            "# @capability test.wipe scope=what\n",
+        ),
+        Kind::CapabilityChanged,
+        "Wipe",
+    );
+}
+
+#[test]
+fn capability_scope_changed() {
+    expect(
+        &mutated("scope=name", "scope=note"),
+        Kind::CapabilityChanged,
+        "Do",
+    );
+}
+
+#[test]
+fn capability_scope_removed() {
+    expect(
+        &mutated("test.do scope=name", "test.do"),
+        Kind::CapabilityChanged,
+        "Do",
+    );
+}
+
+#[test]
+fn capability_removed() {
+    expect(
+        &mutated("# @capability test.wipe\n", ""),
+        Kind::CapabilityChanged,
+        "Wipe",
+    );
+}
+
+#[test]
 fn untrusted_removed_from_field() {
     expect(
         &mutated("# @untrusted\n  title: ?string", "title: ?string"),
@@ -567,6 +617,14 @@ fn new_custom_enum_value_is_allowed() {
 #[test]
 fn input_required_to_optional_is_allowed() {
     expect_clean(&mutated("name: string,", "name: ?string,"));
+}
+
+#[test]
+fn capability_added_is_allowed() {
+    expect_clean(&mutated(
+        "method Watch()",
+        "# @capability test.watch\nmethod Watch()",
+    ));
 }
 
 #[test]
