@@ -3,6 +3,8 @@
 
 pub mod core;
 pub mod daemon;
+pub mod fdo;
+pub mod icon;
 pub mod lock;
 pub mod markup;
 pub mod varlink;

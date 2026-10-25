@@ -13,7 +13,7 @@ use tetsu_notifyd::daemon::{Command, Daemon, UiMsg};
 use tetsu_notifyd::fdo;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
-use zbus::zvariant::Value;
+use zbus::Variant as Value;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -99,13 +99,12 @@ fn notify_send_style_calls_show_and_answer() {
         let (daemon, commands) = Daemon::new(ui_tx);
         tokio::task::spawn_local(daemon.with_fdo_signals(signals_tx).run());
         commands.send(Command::Lock(false)).unwrap();
-        let builder = zbus::connection::Builder::address(bus.1.as_str()).unwrap();
+        let builder = zbus::connection::Builder::address(bus.1.as_str());
         let _server = fdo::serve(builder, commands.clone(), signals_rx, false)
             .await
             .unwrap();
 
         let client = zbus::connection::Builder::address(bus.1.as_str())
-            .unwrap()
             .build()
             .await
             .unwrap();

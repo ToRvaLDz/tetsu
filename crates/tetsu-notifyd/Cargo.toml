@@ -15,6 +15,7 @@ workspace = true
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.154"
 tetsu-bus = { path = "../tetsu-bus" }
+tiny-skia = "0.12.0"
 tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "time", "sync"] }
 zbus = { version = "6.1.0", default-features = false, features = ["tokio", "proxy", "service"] }
 
