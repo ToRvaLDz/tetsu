@@ -67,12 +67,27 @@ test_dry_run_smbios() {
 }
 
 test_dry_run_errors() {
-  assert_status "start: needs disk or iso" 1 "$VM" start --dry-run --state "$SCRATCH/dry"
+  assert_status "start: needs disk or iso (usage 64)" 64 "$VM" start --dry-run --state "$SCRATCH/dry"
   assert_status "start: missing iso file" 1 "$VM" start --dry-run --state "$SCRATCH/dry" --iso "$SCRATCH/none.iso"
-  assert_status "start: unknown flag" 1 "$VM" start --dry-run --bogus
+  assert_status "start: unknown flag (usage 64)" 64 "$VM" start --dry-run --bogus
+}
+
+test_usage_errors() {
+  assert_status "usage: unknown command is 64" 64 "$VM" frobnicate
+  assert_status "usage: no command is 64" 64 "$VM"
+  assert_status "usage: wait-for without regex is 64" 64 "$VM" wait-for --state "$SCRATCH/none"
+  assert_status "usage: status bad option is 64" 64 "$VM" status --bogus
+  assert_status "usage: power-cut bad timeout is 64" 64 "$VM" stop --timeout x
+  assert_status "usage: start --mem not a number is 64" 64 "$VM" start --dry-run --iso "$SCRATCH/boot.iso" --mem x
+  assert_status "usage: send without text is 64" 64 "$VM" send --state "$SCRATCH/none"
+  # Invalid regex: fail fast with 64, not poll until the timeout.
+  local code=0
+  timeout 10 "$VM" wait-for --state "$SCRATCH/none" --timeout 60 '(' >/dev/null 2>&1 || code=$?
+  assert_eq "wait-for: invalid regex exits 64 quickly" 64 "$code"
 }
 
 test_dry_run
+test_usage_errors
 test_dry_run_smbios
 test_dry_run_errors
 
