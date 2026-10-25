@@ -156,13 +156,20 @@ impl Contract {
 /// as `(file name, text)`.
 pub fn read_dir_sources(dir: &Path) -> Result<Vec<(String, String)>, LoadError> {
     let io = |e: std::io::Error, p: &Path| LoadError(format!("{}: {e}", p.display()));
-    let mut names: Vec<String> = fs::read_dir(dir)
-        .map_err(|e| io(e, dir))?
-        .filter_map(|entry| entry.ok())
-        .filter(|e| e.path().is_file())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.ends_with(".varlink"))
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for entry in fs::read_dir(dir).map_err(|e| io(e, dir))? {
+        let entry = entry.map_err(|e| io(e, dir))?;
+        if !entry.path().is_file() {
+            continue;
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|n| LoadError(format!("{}: file name {n:?} is not UTF-8", dir.display())))?;
+        if name.ends_with(".varlink") {
+            names.push(name);
+        }
+    }
     names.sort();
     names
         .into_iter()
