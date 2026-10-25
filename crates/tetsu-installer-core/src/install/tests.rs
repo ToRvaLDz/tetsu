@@ -68,7 +68,9 @@ fn stage_one_runs_the_commands_in_order() {
         .collect();
     let want = [
         "wipefs -a /dev/sda".to_owned(),
-        format!("sh -c exec sfdisk --wipe always \"$0\" < \"$1\" /dev/sda {r}/sfdisk.script"),
+        format!(
+            "sh -c exec sfdisk --wipe always --wipe-partitions always \"$0\" < \"$1\" /dev/sda {r}/sfdisk.script"
+        ),
         "udevadm settle".to_owned(),
         "mkfs.vfat -F 32 -n TETSU-ESP /dev/sda1".to_owned(),
         format!("mount /dev/sda1 {w}/esp"),

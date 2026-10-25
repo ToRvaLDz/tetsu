@@ -32,7 +32,9 @@ pub(super) fn partition_script() -> String {
 /// `sfdisk` reads its script from stdin and the runner has none, so a
 /// shell redirects the script file into it: `$0` is the disk, `$1` the
 /// script.
-const SFDISK_SH: &str = "exec sfdisk --wipe always \"$0\" < \"$1\"";
+/// New partitions are wiped too: an old filesystem at the same offset would
+/// otherwise stay next to the new ESP and make `mount` refuse it as ambiguous.
+const SFDISK_SH: &str = "exec sfdisk --wipe always --wipe-partitions always \"$0\" < \"$1\"";
 
 impl Executor<'_> {
     pub(super) fn disk_action(&mut self, action: Action) -> Result<(), InstallError> {
