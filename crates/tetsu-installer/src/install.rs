@@ -67,9 +67,9 @@ fn should_clean(failed: bool, touched: bool, keys_enrolled: bool) -> bool {
 
 /// The executor owns the frontend for the whole run; this lets the binary
 /// ask its abort question in between.
-struct Shared<'a>(&'a RefCell<dyn Frontend + 'a>);
+struct SharedFrontend<'a>(&'a RefCell<dyn Frontend + 'a>);
 
-impl Frontend for Shared<'_> {
+impl Frontend for SharedFrontend<'_> {
     fn ask(&mut self, prompt: &str, validate: Validate<'_>) -> Result<String, InstallError> {
         self.0.borrow_mut().ask(prompt, validate)
     }
@@ -114,7 +114,7 @@ pub fn install(
         entropy: machine.entropy,
         cancelled: &cancelled,
     };
-    let mut shared = Shared(fe);
+    let mut shared = SharedFrontend(fe);
     let mut exec = match Executor::new(deps, answers, target, &mut shared) {
         Ok(exec) => exec,
         // Nothing ran yet: there is nothing to clean up.

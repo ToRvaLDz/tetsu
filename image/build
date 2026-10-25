@@ -22,7 +22,7 @@ MKOSI_OUT="$OUT/mkosi"
 RUST=${TETSU_RUST_TOOLCHAIN:-+1.99.1}
 
 BINS_PAYLOAD=(tetsu-tx tetsu tetsu-unlock-seal tetsu-secrets)
-CRATES=(tetsu-tx tetsu-cli tetsu-installer tetsu-installer-core tetsu-secrets tetsu-installer)
+CRATES=(tetsu-tx tetsu-cli tetsu-installer tetsu-installer-core tetsu-secrets)
 
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'image/build: %s\n' "$*" >&2; exit 1; }

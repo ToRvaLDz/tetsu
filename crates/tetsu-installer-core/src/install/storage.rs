@@ -7,7 +7,7 @@ use tetsu_tx::store::snapshot::{FIRST_COUNTER, init_layout};
 
 use crate::error::InstallError;
 
-use super::exec::{Executor, Shared};
+use super::exec::{Executor, RunnerRef};
 use super::log::LOG_FILE;
 use super::plan::Action;
 use super::target::{BTRFS_LABEL, ESP_LABEL, MAPPER_NAME, ROOT_LABEL};
@@ -166,7 +166,7 @@ impl Executor<'_> {
     }
 
     fn init_layout(&mut self) -> Result<(), InstallError> {
-        let btrfs = CliBtrfs::new(Shared(self.deps.runner));
+        let btrfs = CliBtrfs::new(RunnerRef(self.deps.runner));
         init_layout(&self.target.layout(), &btrfs)?;
         Ok(())
     }

@@ -15,7 +15,7 @@ use tetsu_tx::store::snapshot::{FIRST_COUNTER, capture_etc_base, mark_committed,
 
 use crate::error::InstallError;
 
-use super::exec::{Executor, Shared};
+use super::exec::{Executor, RunnerRef};
 use super::plan::{Action, KeyKind};
 use super::rundir::private_dir;
 use super::system::write_file;
@@ -129,8 +129,8 @@ impl Executor<'_> {
         )
     }
 
-    fn btrfs(&self) -> CliBtrfs<Shared<'_>> {
-        CliBtrfs::new(Shared(self.deps.runner))
+    fn btrfs(&self) -> CliBtrfs<RunnerRef<'_>> {
+        CliBtrfs::new(RunnerRef(self.deps.runner))
     }
 
     /// The configuration is complete: take the read-only `etc-base` from

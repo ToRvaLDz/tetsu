@@ -63,9 +63,9 @@ pub struct Executor<'a> {
 }
 
 /// Lets a `&dyn Runner` be handed to APIs that take a `Runner` by value.
-pub(super) struct Shared<'a>(pub &'a dyn Runner);
+pub(super) struct RunnerRef<'a>(pub &'a dyn Runner);
 
-impl Runner for Shared<'_> {
+impl Runner for RunnerRef<'_> {
     fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
         self.0.run(program, args)
     }
