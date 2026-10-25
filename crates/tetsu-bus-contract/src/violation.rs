@@ -18,6 +18,7 @@ pub enum Kind {
     TagRemoved,
     ErrorClassChanged,
     StreamingChanged,
+    CapabilityChanged,
     // Tag and doc rules.
     UnknownTag,
     MisplacedTag,
@@ -27,6 +28,8 @@ pub enum Kind {
     MissingPermissionDenied,
     StreamingUnknown,
     WatchNotStreaming,
+    MissingCapability,
+    InvalidCapability,
     // Event fixtures.
     MissingFixture,
     OrphanFixture,

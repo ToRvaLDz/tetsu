@@ -22,6 +22,7 @@ type Item (
 )
 
 # Does a thing.
+# @capability test.do
 method Do(
   # The name.
   # @untrusted
@@ -31,6 +32,7 @@ method Do(
 # Wipes everything.
 # @destructive
 # @deprecated
+# @capability test.wipe
 method Wipe() -> ()
 
 # Streams items.
@@ -334,4 +336,144 @@ fn watch_method_missing_from_streaming_list() {
 fn streaming_list_comments_and_blanks_are_ignored() {
     let v = rules_of(GOOD, "# the list\n\norg.test.v1.WatchItems # stream\n");
     assert!(v.is_empty(), "{v:#?}");
+}
+
+// The capability tag.
+
+/// The `org.tetsu.cap.v1` methods the required-capability rule exempts.
+const CAP_IDL: &str = r#"
+interface org.tetsu.cap.v1
+
+# Declares an intent.
+method Intent(
+  # The method.
+  method: string
+) -> ()
+
+# Sets a grant.
+method Set(
+  # The class.
+  class: string
+) -> ()
+
+# Asks for a decision.
+method Check(
+  # The method.
+  method: string
+) -> ()
+
+# The caller may not use this interface.
+# @permanent
+error PermissionDenied ()
+"#;
+
+/// Violations of GOOD with `extra` appended.
+fn extended(extra: &str) -> Vec<Violation> {
+    rules_of(&format!("{GOOD}\n{extra}\n"), STREAMING)
+}
+
+#[test]
+fn state_changing_method_without_capability() {
+    expect(
+        &mutated("# @capability test.do\n", ""),
+        Kind::MissingCapability,
+        "Do",
+    );
+}
+
+#[test]
+fn untagged_reads_pass() {
+    let v = extended(
+        "# Lists items.\nmethod ListItems() -> (items: []Item)\n\n\
+         # Gets the item.\nmethod GetItem() -> (item: Item)",
+    );
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn tagged_read_passes() {
+    let v =
+        extended("# Lists items.\n# @capability test.read\nmethod ListItems() -> (items: []Item)");
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn capability_with_scope_naming_an_input_passes() {
+    let v = mutated(
+        "# @capability test.do\n",
+        "# @capability test.do scope=name\n",
+    );
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn malformed_capability_tags() {
+    for bad in [
+        "@capability",
+        "@capability packages",
+        "@capability Test.do",
+        "@capability test.Do",
+        "@capability test..do",
+        "@capability 1test.do",
+        "@capability test.do extra",
+        "@capability test.do scope=nope",
+        "@capability test.do scope=",
+        "@capability test.do scope=name extra",
+        "@capability scope=name",
+    ] {
+        let v = mutated("@capability test.do", bad);
+        expect(&v, Kind::InvalidCapability, "Do");
+    }
+}
+
+#[test]
+fn capability_on_field() {
+    expect(
+        &mutated("# @untrusted\n  title", "# @capability test.x\n  title"),
+        Kind::MisplacedTag,
+        "Item.title",
+    );
+}
+
+#[test]
+fn capability_on_error() {
+    expect(
+        &mutated(
+            "# Try again later.",
+            "# Try again later.\n# @capability test.x",
+        ),
+        Kind::MisplacedTag,
+        "Busy",
+    );
+}
+
+#[test]
+fn duplicate_capability() {
+    expect(
+        &mutated(
+            "# @capability test.do\n",
+            "# @capability test.do\n# @capability test.do\n",
+        ),
+        Kind::DuplicateTag,
+        "Do",
+    );
+}
+
+#[test]
+fn capability_interface_methods_are_exempt() {
+    let v = check_rules(&Contract::from_sources(&[("cap.varlink", CAP_IDL)], "").unwrap());
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn exemption_is_limited_to_the_capability_interface() {
+    let idl = CAP_IDL.replacen("org.tetsu.cap.v1", "org.other.v1", 1);
+    let v = check_rules(&Contract::from_sources(&[("other.varlink", &idl)], "").unwrap());
+    for m in ["Intent", "Set", "Check"] {
+        assert!(
+            v.iter()
+                .any(|x| x.kind == Kind::MissingCapability && x.path == format!("org.other.v1.{m}")),
+            "{m}: {v:#?}"
+        );
+    }
 }
