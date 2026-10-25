@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::boot::BootError;
 use crate::store::StoreError;
 
+pub mod accounts;
 pub mod dkms;
 #[cfg(test)]
 pub(crate) mod fake;
