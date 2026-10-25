@@ -31,6 +31,15 @@ impl UnlockLevel {
         }
     }
 
+    /// Stable identifier written to configuration files.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Paranoid => "paranoid",
+            Self::Comfort => "comfort",
+            Self::Balanced => "balanced",
+        }
+    }
+
     pub fn needs_tpm(self) -> bool {
         self != Self::Paranoid
     }

@@ -18,6 +18,15 @@ pub enum ApiProvider {
 impl ApiProvider {
     pub const ALL: [Self; 3] = [Self::Anthropic, Self::OpenAi, Self::Google];
 
+    /// Stable identifier written to configuration files.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAi => "openai",
+            Self::Google => "google",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Anthropic => "Anthropic",
@@ -37,6 +46,15 @@ pub enum CliTool {
 
 impl CliTool {
     pub const ALL: [Self; 3] = [Self::ClaudeCode, Self::Codex, Self::Antigravity];
+
+    /// Stable identifier written to configuration files.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+            Self::Antigravity => "antigravity",
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
