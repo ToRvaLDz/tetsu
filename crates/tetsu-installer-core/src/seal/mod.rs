@@ -33,6 +33,8 @@
 //! tries again.
 
 pub mod cmdline;
+#[cfg(test)]
+mod dist;
 pub mod runner;
 #[cfg(test)]
 mod tests;

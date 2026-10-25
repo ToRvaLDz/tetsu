@@ -1,0 +1,19 @@
+[Unit]
+Description=Seal the disk to the TPM (first boot)
+Documentation=man:systemd-cryptenroll(1)
+DefaultDependencies=no
+ConditionPathExists=/etc/initrd-release
+Requires=sysroot.mount
+After=sysroot.mount
+Before=initrd-switch-root.target
+
+[Service]
+Type=oneshot
+# The binary exits 0 on every error: sealing never blocks the boot.
+ExecStart=/usr/bin/tetsu-unlock-seal
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=initrd.target

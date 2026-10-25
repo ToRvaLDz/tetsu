@@ -1,0 +1,30 @@
+#!/bin/bash
+# mkinitcpio install hook "tetsu-seal" (systemd-based initrd). Installed as
+# /usr/lib/initcpio/install/tetsu-seal; add "tetsu-seal" to HOOKS after
+# "sd-encrypt" and "systemd".
+
+build() {
+    add_binary /usr/bin/tetsu-unlock-seal
+    add_binary /usr/bin/systemd-cryptenroll
+    add_binary /usr/bin/systemd-ask-password
+    add_binary mount
+    add_binary umount
+
+    # The TPM2 stack systemd-cryptenroll loads at run time.
+    local lib
+    for lib in /usr/lib/libtss2-*.so*; do
+        [[ -e $lib ]] && add_binary "$lib"
+    done
+    add_module 'tpm_tis?' 'tpm_crb?' 'btrfs?'
+
+    add_systemd_unit tetsu-unlock-seal.service
+    add_symlink /usr/lib/systemd/system/initrd.target.wants/tetsu-unlock-seal.service \
+        ../tetsu-unlock-seal.service
+}
+
+help() {
+    cat <<HELPEOF
+Seals the root volume to the TPM at the first boot with Secure Boot on
+(Comfort and Balanced unlock levels), before the switch to the real root.
+HELPEOF
+}
