@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::boot::BootError;
 use crate::store::StoreError;
 
+#[cfg(test)]
+pub(crate) mod fake;
+
 /// Errors a transaction step returns, shaped for the engine.
 #[derive(Debug, thiserror::Error)]
 pub enum TxError {
