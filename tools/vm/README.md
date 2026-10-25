@@ -48,6 +48,7 @@ gitignored); `start` also takes it, together with the flags below.
 | Flag                  | Meaning                                                        |
 |-----------------------|----------------------------------------------------------------|
 | `--disk IMG`          | virtio disk (format auto-probed)                               |
+| `--target-disk IMG`   | second virtio disk, always written to (an install target; `--snapshot` does not apply); needs a boot disk or ISO |
 | `--iso ISO`           | ISO attached as a read-only cdrom (at least one of disk/iso)   |
 | `--state DIR`         | state directory                                                |
 | `--mem MB`            | memory, default 2048                                           |

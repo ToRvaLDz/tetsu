@@ -68,6 +68,20 @@ test_dry_run_smbios() {
   assert_contains "smbios: credential commas doubled" "$out" "io.systemd.credential:x.y=1,,2"
 }
 
+test_dry_run_target_disk() {
+  local st="$SCRATCH/dry" out
+  : >"$SCRATCH/target.img"
+  out=$("$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" \
+    --target-disk "$SCRATCH/target.img" --snapshot 2>&1)
+  assert_contains "target-disk: second virtio drive" "$out" "file=$SCRATCH/target.img,if=virtio"
+  assert_not_contains "target-disk: never snapshotted" "$out" "target.img,if=virtio,snapshot"
+  assert_contains "target-disk: boot disk still snapshotted" "$out" "file=$SCRATCH/disk.img,if=virtio,snapshot=on"
+  assert_status "target-disk: needs a boot disk or iso (usage 64)" 64 \
+    "$VM" start --dry-run --state "$st" --target-disk "$SCRATCH/target.img"
+  assert_status "target-disk: missing file" 1 \
+    "$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" --target-disk "$SCRATCH/none.img"
+}
+
 test_dry_run_errors() {
   assert_status "start: needs disk or iso (usage 64)" 64 "$VM" start --dry-run --state "$SCRATCH/dry"
   assert_status "start: missing iso file" 1 "$VM" start --dry-run --state "$SCRATCH/dry" --iso "$SCRATCH/none.iso"
@@ -159,6 +173,7 @@ test_send
 test_stale_swtpm
 test_usage_errors
 test_dry_run_smbios
+test_dry_run_target_disk
 test_dry_run_errors
 
 # ---------------------------------------------------------------- wait-for
