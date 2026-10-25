@@ -6,12 +6,14 @@
 //! linked into a daemon.
 
 mod compat;
+mod fixtures;
 mod load;
 mod model;
 mod rules;
 mod violation;
 
 pub use compat::check_compat;
+pub use fixtures::{EventType, Fixture, check_fixtures, event_types, read_fixtures};
 pub use load::{LoadError, load_dir, read_dir_sources};
 pub use model::{
     Contract, CustomType, Doc, ErrorDef, Field, Interface, Method, Ty, TypeDef, Variant,
