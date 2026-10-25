@@ -69,6 +69,17 @@ pub struct SigningKeys {
 }
 
 impl SigningKeys {
+    /// Reject inconsistent combinations: a PCR public key alone would add a
+    /// `.pcrpkey` without a `.pcrsig` to match.
+    pub fn validate(&self) -> Result<(), BootError> {
+        if self.pcr_key.is_none() && self.pcr_public.is_some() {
+            return Err(BootError::InvalidKeys(
+                "pcr_public is set without pcr_key".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Keys laid out as `db.key`, `db.crt` and, when `with_pcr`,
     /// `pcr.key` and `pcr.pub` inside `dir`.
     pub fn in_dir(dir: &Path, with_pcr: bool) -> Self {

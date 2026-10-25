@@ -1,6 +1,6 @@
 //! UKI assembly (`ukify`) and signing (`sbsign`, `sbverify`).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -56,36 +56,40 @@ pub fn with_image_version(os_release: &str, counter: u64) -> String {
     out
 }
 
-/// The `ukify build` argument vector.
+/// The `ukify build` argument vector. Every value is glued to its flag
+/// (`--opt=value`) so a value with a leading dash is never read as an option.
 pub fn ukify_args(spec: &UkiSpec, os_release: &str, out: &Path) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["build".into()];
-    let mut flag = |name: &str, value: OsString| {
-        args.push(name.into());
-        args.push(value);
+    let mut flag = |name: &str, value: &OsStr| {
+        let mut arg = OsString::from(name);
+        arg.push("=");
+        arg.push(value);
+        args.push(arg);
     };
-    flag("--linux", spec.kernel_path().into());
-    flag("--initrd", spec.initrd_path().into());
-    flag("--cmdline", spec.cmdline().into());
+    flag("--linux", spec.kernel_path().as_os_str());
+    flag("--initrd", spec.initrd_path().as_os_str());
+    flag("--cmdline", spec.cmdline().as_ref());
     // ukify takes literal text when the value does not start with `@`.
-    flag("--os-release", os_release.into());
-    flag("--uname", spec.kernel_version.clone().into());
+    flag("--os-release", os_release.as_ref());
+    flag("--uname", spec.kernel_version.as_ref());
     flag(
         "--secureboot-private-key",
-        spec.keys.db_key.as_path().into(),
+        spec.keys.db_key.as_path().as_os_str(),
     );
-    flag("--secureboot-certificate", spec.keys.db_cert.clone().into());
+    flag("--secureboot-certificate", spec.keys.db_cert.as_os_str());
     if let Some(pcr_key) = &spec.keys.pcr_key {
-        flag("--pcr-private-key", pcr_key.as_path().into());
+        flag("--pcr-private-key", pcr_key.as_path().as_os_str());
         if let Some(public) = &spec.keys.pcr_public {
-            flag("--pcr-public-key", public.clone().into());
+            flag("--pcr-public-key", public.as_os_str());
         }
     }
-    flag("--output", out.into());
+    flag("--output", out.as_os_str());
     args
 }
 
 /// Build and sign the UKI into `out`.
 pub fn build_uki(runner: &dyn Runner, spec: &UkiSpec, out: &Path) -> Result<(), BootError> {
+    spec.keys.validate()?;
     let path = spec.os_release_path();
     let text = fs::read_to_string(&path).map_err(|e| BootError::io(&path, e))?;
     let os_release = with_image_version(&text, spec.counter);
@@ -99,21 +103,28 @@ pub fn sign_efi(
     output: &Path,
     keys: &SigningKeys,
 ) -> Result<(), BootError> {
+    keys.validate()?;
+    let glued = |name: &str, value: &OsStr| {
+        let mut arg = OsString::from(name);
+        arg.push("=");
+        arg.push(value);
+        arg
+    };
     let args: Vec<OsString> = vec![
-        "--key".into(),
-        keys.db_key.as_path().into(),
-        "--cert".into(),
-        keys.db_cert.clone().into(),
-        "--output".into(),
-        output.into(),
+        glued("--key", keys.db_key.as_path().as_os_str()),
+        glued("--cert", keys.db_cert.as_os_str()),
+        glued("--output", output.as_os_str()),
+        "--".into(),
         input.into(),
     ];
     runner.run("sbsign", &args)
 }
 
-/// `sbverify --cert <cert> <path>`.
+/// `sbverify --cert=<cert> -- <path>`.
 pub fn verify_signature(runner: &dyn Runner, path: &Path, cert: &Path) -> Result<(), BootError> {
-    runner.run("sbverify", &["--cert".into(), cert.into(), path.into()])
+    let mut cert_arg = OsString::from("--cert=");
+    cert_arg.push(cert);
+    runner.run("sbverify", &[cert_arg, "--".into(), path.into()])
 }
 
 #[cfg(test)]

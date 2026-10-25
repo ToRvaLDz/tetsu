@@ -58,8 +58,11 @@ mod tests {
     struct FakeUkify;
     impl Runner for FakeUkify {
         fn run(&self, _: &str, args: &[OsString]) -> Result<(), BootError> {
-            let i = args.iter().position(|a| a == "--output").unwrap();
-            let out = Path::new(&args[i + 1]);
+            let out = args
+                .iter()
+                .find_map(|a| a.to_str()?.strip_prefix("--output="))
+                .unwrap();
+            let out = Path::new(out);
             fs::write(out, b"uki").map_err(|e| BootError::io(out, e))
         }
     }
