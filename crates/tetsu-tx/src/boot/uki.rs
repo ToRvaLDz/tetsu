@@ -143,6 +143,8 @@ mod tests {
     use super::*;
     use crate::boot::keys::KeyRef;
     use std::cell::RefCell;
+    use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
 
     #[derive(Default)]
     struct Recorder(RefCell<Vec<(String, Vec<String>)>>);
@@ -307,6 +309,59 @@ mod tests {
             );
             assert!(rec.0.borrow().is_empty());
         }
+    }
+
+    fn assert_refused(snap: &TempDir) {
+        let rec = Recorder::default();
+        let err = build_uki(&rec, &spec(snap.path(), false), Path::new("/o")).unwrap_err();
+        assert!(matches!(err, BootError::InputEscapesSnapshot { .. }), "{err:?}");
+        assert!(rec.0.borrow().is_empty(), "ukify must not run");
+    }
+
+    #[test]
+    fn symlinked_initrd_is_refused() {
+        let snap = snapshot("NAME=T\n");
+        let secret = snap.path().join("../secret.key");
+        fs::write(&secret, b"secret").unwrap();
+        let initrd = snap.path().join("usr/lib/tetsu/initrd.img");
+        fs::remove_file(&initrd).unwrap();
+        symlink(&secret, &initrd).unwrap();
+        assert_refused(&snap);
+        fs::remove_file(secret).unwrap();
+    }
+
+    #[test]
+    fn symlinked_kernel_and_os_release_are_refused() {
+        for rel in ["usr/lib/modules/6.1.0/vmlinuz", "usr/lib/os-release"] {
+            let snap = snapshot("NAME=T\n");
+            let p = snap.path().join(rel);
+            let target = snap.path().join("inside");
+            fs::write(&target, b"x").unwrap();
+            fs::remove_file(&p).unwrap();
+            symlink(&target, &p).unwrap();
+            assert_refused(&snap);
+        }
+    }
+
+    #[test]
+    fn symlinked_directory_component_is_refused() {
+        let snap = snapshot("NAME=T\n");
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("initrd.img"), b"host").unwrap();
+        let dir = snap.path().join("usr/lib/tetsu");
+        fs::remove_dir_all(&dir).unwrap();
+        symlink(outside.path(), &dir).unwrap();
+        assert_refused(&snap);
+    }
+
+    #[test]
+    fn missing_input_is_an_io_error() {
+        let snap = snapshot("NAME=T\n");
+        fs::remove_file(snap.path().join("usr/lib/tetsu/initrd.img")).unwrap();
+        let rec = Recorder::default();
+        let err = build_uki(&rec, &spec(snap.path(), false), Path::new("/o")).unwrap_err();
+        assert!(matches!(err, BootError::Io { .. }), "{err:?}");
+        assert!(rec.0.borrow().is_empty());
     }
 
     #[test]

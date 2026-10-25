@@ -29,6 +29,10 @@ pub enum BootError {
     /// The signing key URI scheme is recognised but not implemented yet.
     #[error("unsupported key URI: {0}")]
     UnsupportedKeyUri(String),
+    /// A UKI input is a symlink (or has a symlink component) inside the
+    /// snapshot, so it could pull host files into the signed image.
+    #[error("{path}: symlink in snapshot input is not allowed", path = path.display())]
+    InputEscapesSnapshot { path: PathBuf },
     /// `kernel_version` is not a single normal path component.
     #[error("invalid kernel version: {0:?}")]
     InvalidKernelVersion(String),
