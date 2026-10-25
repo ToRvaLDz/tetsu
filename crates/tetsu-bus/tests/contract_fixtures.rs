@@ -17,6 +17,7 @@ type Event (
   on: ?bool,
   text: ?string,
   meta: ?object,
+  blobs: ?[]object,
   labels: ?[string]string,
   mode: ?(fast, slow),
   size: ?(w: int, h: ?int),
@@ -283,18 +284,21 @@ fn string_field_wrong_type() {
 }
 
 #[test]
-fn object_field_wrong_type() {
+fn object_field_rejects_null_element() {
     expect(
-        &with_field(r#""meta":[1]"#),
+        &with_field(r#""blobs":[{"a":1},null]"#),
         Kind::FixtureWrongType,
         CHANGED_PATH,
-        "meta",
+        "blobs[1]",
     );
 }
 
 #[test]
-fn object_field_accepts_any_object() {
+fn object_field_accepts_any_json_value() {
     expect_clean(&with_field(r#""meta":{"anything":[1,{"x":null}]}"#));
+    expect_clean(&with_field(r#""meta":300000"#));
+    expect_clean(&with_field(r#""meta":"text""#));
+    expect_clean(&with_field(r#""blobs":[true,[1],{"a":1}]"#));
 }
 
 #[test]
