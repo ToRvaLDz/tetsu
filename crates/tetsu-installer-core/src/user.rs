@@ -55,6 +55,14 @@ const RESERVED: &[&str] = &[
     "dhcpcd",
 ];
 
+/// The `crypt(3)` methods accepted: SHA-256, SHA-512 and yescrypt.
+const CRYPT_IDS: [&str; 3] = ["5", "6", "y"];
+
+/// The digest alphabet of those methods.
+fn is_crypt_digit(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '.' || c == '/'
+}
+
 /// How the session password reaches the install plan.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Password {
@@ -74,18 +82,25 @@ impl std::fmt::Debug for Password {
 }
 
 impl Password {
-    /// Accept a `$id$...` crypt hash.
+    /// Accept a `$id$[params$]salt$digest` crypt hash of a method the
+    /// image's libxcrypt supports. A hash that cannot match any password
+    /// would leave the machine without a login (root is locked).
     pub fn from_hash(hash: &str) -> Result<Self, String> {
         let mut parts = hash.split('$');
-        let shape = parts.next() == Some("")
-            && parts
-                .next()
-                .is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
-            && parts.next().is_some_and(|s| !s.is_empty())
-            && !hash.chars().any(|c| c.is_whitespace() || c == ':');
+        let lead = parts.next();
+        let id = parts.next();
+        let rest: Vec<&str> = parts.collect();
+        let shape = lead == Some("")
+            && id.is_some_and(|id| CRYPT_IDS.contains(&id))
+            && rest.len() >= 2
+            && rest.iter().all(|p| !p.is_empty())
+            && rest.last().is_some_and(|d| d.chars().all(is_crypt_digit))
+            && !hash
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || c == ':');
         shape
             .then(|| Self::Hash(hash.to_owned()))
-            .ok_or_else(|| "not a crypt hash ($id$salt$hash)".to_owned())
+            .ok_or_else(|| "not a crypt hash ($6$salt$hash, $5$ or $y$ also work)".to_owned())
     }
 }
 
@@ -233,6 +248,25 @@ mod tests {
         assert!(Password::from_hash("plaintext").is_err());
         assert!(Password::from_hash("$6$").is_err());
         assert!(Password::from_hash("$6$a$b:c").is_err());
+        assert!(Password::from_hash("$5$rounds=5000$salt$abc.D/0").is_ok());
+    }
+
+    #[test]
+    fn a_hash_that_can_never_log_in_is_refused() {
+        for bad in [
+            "$6$salt",           // no digest
+            "$6$salt$",          // empty digest
+            "$6$$digest",        // empty salt
+            "$zzz$a$b",          // unknown method
+            "$1$salt$digest",    // MD5 is not supported
+            "$6$salt$dig est",   // whitespace
+            "$6$salt$dig\u{7}x", // control character
+            "$6$salt$dig\nest",  // newline
+            "$6$salt$dig*est",   // not in the digest alphabet
+            "$6$salt$dig$",      // empty last part
+        ] {
+            assert!(Password::from_hash(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
