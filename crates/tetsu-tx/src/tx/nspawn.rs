@@ -1,7 +1,8 @@
 //! The container a transaction runs its package commands in: a pure argv
 //! builder for `systemd-nspawn` over the new snapshot.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 /// The program.
@@ -64,12 +65,25 @@ impl Nspawn {
     }
 }
 
+/// `path` as systemd-nspawn reads one side of a `--bind=` spec: `\` and `:`
+/// escaped with a backslash.
+fn escape(path: &OsStr) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &b in path.as_bytes() {
+        if b == b'\\' || b == b':' {
+            out.push(b'\\');
+        }
+        out.push(b);
+    }
+    out
+}
+
 fn bind(host: &Path, inside: &str) -> OsString {
-    let mut arg = OsString::from("--bind=");
-    arg.push(host);
-    arg.push(":");
-    arg.push(inside);
-    arg
+    let mut spec = b"--bind=".to_vec();
+    spec.extend(escape(host.as_os_str()));
+    spec.push(b':');
+    spec.extend(escape(OsStr::new(inside)));
+    OsString::from_vec(spec)
 }
 
 #[cfg(test)]
@@ -127,5 +141,17 @@ mod tests {
         assert!(args.contains(&"--bind=/s:/var"));
         assert!(args.contains(&"--bind=/c:/var/cache/pacman/pkg"));
         assert_eq!(args[1], "/r");
+    }
+
+    #[test]
+    fn colons_and_backslashes_in_paths_are_escaped() {
+        let c = Nspawn::new(Path::new("/r"), Path::new("/s:v\\x"), Path::new("/c:d"));
+        let args = c.args(Network::Offline, &[]);
+        let args = strs(&args);
+        assert!(args.contains(&"--bind=/s\\:v\\\\x:/var"), "{args:?}");
+        assert!(
+            args.contains(&"--bind=/c\\:d:/var/cache/pacman/pkg"),
+            "{args:?}"
+        );
     }
 }
