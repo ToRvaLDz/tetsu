@@ -171,6 +171,7 @@ impl Daemon {
                 let _ = done.send(self.core.pending_count());
             }
             Command::WatchPending(stream) => {
+                self.watchers.retain(|w| !w.is_closed());
                 let initial = PendingEvent::initial(self.core.pending_count());
                 if stream
                     .send(StreamItem::Reply(json!({ "event": initial })))

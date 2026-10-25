@@ -114,6 +114,8 @@ pub async fn serve(
         .serve_at(PATH, Notifications { commands })
         .name(BUS_NAME)
         .replace_existing_names(replace)
+        // Nobody takes the name from a running notifyd behind its back.
+        .allow_name_replacements(false)
         .build()
         .await?;
     let emitting = connection.clone();

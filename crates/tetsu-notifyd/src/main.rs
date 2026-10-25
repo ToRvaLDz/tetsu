@@ -59,9 +59,8 @@ fn run(replace: bool) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|e| format!("cannot start the runtime: {e}"))?;
-    let result = LocalSet::new().block_on(&runtime, serve(&path, replace));
-    let _ = std::fs::remove_file(&path);
-    result
+    // The listener removes its own socket when dropped, never another's.
+    LocalSet::new().block_on(&runtime, serve(&path, replace))
 }
 
 async fn serve(path: &std::path::Path, replace: bool) -> Result<(), String> {
@@ -100,6 +99,10 @@ async fn serve(path: &std::path::Path, replace: bool) -> Result<(), String> {
         }
     });
 
+    // The socket exists before the bus name, which is what readiness means
+    // for `Type=dbus`.
+    let listener =
+        server::bind(path).map_err(|e| format!("cannot bind {}: {e}", path.display()))?;
     let _bus = fdo::serve(
         zbus::connection::Builder::session(),
         commands.clone(),
@@ -109,8 +112,6 @@ async fn serve(path: &std::path::Path, replace: bool) -> Result<(), String> {
     .await
     .map_err(|e| format!("cannot own {} on the session bus: {e}", fdo::BUS_NAME))?;
 
-    let listener =
-        server::bind(path).map_err(|e| format!("cannot bind {}: {e}", path.display()))?;
     let service = Rc::new(NotifyService::new(commands));
     let mut terminate =
         signal(SignalKind::terminate()).map_err(|e| format!("cannot watch SIGTERM: {e}"))?;
