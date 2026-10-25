@@ -1,13 +1,14 @@
 //! Write one UKI to the ESP: scan, plan GC, check space, GC, stage, commit.
 
-use std::ffi::OsString;
+use std::fs;
 use std::path::PathBuf;
 
 use super::BootError;
 use super::esp::Esp;
-use super::space::SpaceProbe;
+use super::retention::plan_gc;
+use super::space::{SpaceProbe, make_room};
 use super::tool::Runner;
-use super::uki::UkiSpec;
+use super::uki::{UkiSpec, build_uki};
 
 /// A UKI that is on the ESP under its final name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,7 +27,22 @@ pub fn write_uki(
     booted: Option<u64>,
     estimated_size: u64,
 ) -> Result<Committed, BootError> {
-    todo!()
+    fs::create_dir_all(esp.dir()).map_err(|e| BootError::io(esp.dir(), e))?;
+    let state = esp.scan()?;
+    // Refuse a stale counter before GC deletes anything.
+    if let Some(newest) = state.newest_counter()
+        && spec.counter <= newest
+    {
+        return Err(BootError::StaleCounter {
+            counter: spec.counter,
+            newest,
+        });
+    }
+    let plan = plan_gc(&state, booted);
+    make_room(probe, esp.dir(), &plan, estimated_size)?;
+    esp.stage(spec.counter, |tmp| build_uki(runner, spec, tmp))?;
+    let path = esp.commit(spec.counter)?;
+    Ok(Committed { path })
 }
 
 #[cfg(test)]
@@ -34,6 +50,7 @@ mod tests {
     use super::*;
     use crate::boot::keys::{KeyRef, SigningKeys};
     use crate::boot::space::{SPACE_MARGIN, StatvfsProbe};
+    use std::ffi::OsString;
     use std::fs;
     use std::path::Path;
 
@@ -105,7 +122,13 @@ mod tests {
         assert_eq!(done.path, esp.dir().join("tetsu-10+3.efi"));
         assert_eq!(
             names(&esp),
-            vec!["other.efi", "tetsu-10+3.efi", "tetsu-2.efi", "tetsu-3.efi", "tetsu-4.efi"]
+            vec![
+                "other.efi",
+                "tetsu-10+3.efi",
+                "tetsu-2.efi",
+                "tetsu-3.efi",
+                "tetsu-4.efi"
+            ]
         );
     }
 
@@ -113,8 +136,15 @@ mod tests {
     fn no_space_fails_before_deleting_or_building() {
         let (_t, esp, spec) = fixture(&["tetsu-1.efi", "tetsu-2+0-3.efi"]);
         let before = names(&esp);
-        let err = write_uki(&esp, &Fixed(0), &FakeUkify, &spec, Some(1), 10 * SPACE_MARGIN)
-            .unwrap_err();
+        let err = write_uki(
+            &esp,
+            &Fixed(0),
+            &FakeUkify,
+            &spec,
+            Some(1),
+            10 * SPACE_MARGIN,
+        )
+        .unwrap_err();
         assert!(matches!(err, BootError::InsufficientSpace { .. }));
         assert_eq!(names(&esp), before);
     }

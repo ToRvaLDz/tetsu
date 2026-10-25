@@ -34,9 +34,7 @@ pub fn check_space(
     plan: &GcPlan,
     needed: u64,
 ) -> Result<(), BootError> {
-    let available = probe
-        .available_bytes(dir)?
-        .saturating_add(plan.freed_bytes);
+    let available = probe.available_bytes(dir)?.saturating_add(plan.freed_bytes);
     let required = needed.saturating_add(SPACE_MARGIN);
     if available >= required {
         Ok(())
@@ -167,6 +165,10 @@ mod tests {
     fn statvfs_probe_reads_a_real_directory() {
         let d = tempfile::tempdir().unwrap();
         assert!(StatvfsProbe.available_bytes(d.path()).unwrap() > 0);
-        assert!(StatvfsProbe.available_bytes(&d.path().join("nope")).is_err());
+        assert!(
+            StatvfsProbe
+                .available_bytes(&d.path().join("nope"))
+                .is_err()
+        );
     }
 }

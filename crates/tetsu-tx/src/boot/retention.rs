@@ -46,7 +46,11 @@ pub fn plan_gc(state: &EspState, booted: Option<u64>) -> GcPlan {
             .collect(),
     };
     let mut plan = GcPlan::default();
-    for e in state.entries.iter().filter(|e| !keep.contains(&e.name.counter)) {
+    for e in state
+        .entries
+        .iter()
+        .filter(|e| !keep.contains(&e.name.counter))
+    {
         plan.remove.push(e.path.clone());
         plan.freed_bytes += e.size;
     }
@@ -60,8 +64,8 @@ pub fn plan_gc(state: &EspState, booted: Option<u64>) -> GcPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boot::esp::{EspEntry, OrphanTmp};
     use crate::boot::entry::{FileKind, parse_file_name};
+    use crate::boot::esp::{EspEntry, OrphanTmp};
 
     fn state(names: &[&str], tmps: &[u64]) -> EspState {
         let mut st = EspState::default();
@@ -117,10 +121,7 @@ mod tests {
 
     #[test]
     fn bad_entries_and_orphans_are_removed() {
-        let st = state(
-            &["tetsu-1+0-3.efi", "tetsu-2.efi", "tetsu-3+0.efi"],
-            &[9],
-        );
+        let st = state(&["tetsu-1+0-3.efi", "tetsu-2.efi", "tetsu-3+0.efi"], &[9]);
         let plan = plan_gc(&st, Some(2));
         assert_eq!(
             removed(&plan),
@@ -146,7 +147,12 @@ mod tests {
     #[test]
     fn non_good_entries_older_than_booted_are_removed() {
         let st = state(
-            &["tetsu-1+3.efi", "tetsu-2+1-2.efi", "tetsu-3.efi", "tetsu-4.efi"],
+            &[
+                "tetsu-1+3.efi",
+                "tetsu-2+1-2.efi",
+                "tetsu-3.efi",
+                "tetsu-4.efi",
+            ],
             &[],
         );
         let plan = plan_gc(&st, Some(4));

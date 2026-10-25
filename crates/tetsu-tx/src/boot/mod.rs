@@ -45,9 +45,9 @@ impl BootError {
 
 pub mod entry;
 pub mod esp;
+pub mod install;
+pub mod keys;
 pub mod retention;
 pub mod space;
-pub mod keys;
 pub mod tool;
 pub mod uki;
-pub mod install;

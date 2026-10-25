@@ -105,9 +105,8 @@ pub fn parse_file_name(name: &str) -> Option<FileKind> {
 
 /// Digits only, no sign and no leading zeros, so every name has one spelling.
 fn canonical(s: &str) -> Option<u64> {
-    let ok = !s.is_empty()
-        && s.bytes().all(|b| b.is_ascii_digit())
-        && (s == "0" || !s.starts_with('0'));
+    let ok =
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
     if ok { s.parse().ok() } else { None }
 }
 
@@ -136,7 +135,10 @@ mod tests {
         assert_eq!(e.counter, 12);
         assert_eq!(e.tries, Some(Tries { left: 2, done: 1 }));
         assert_eq!(entry("tetsu-12.efi").tries, None);
-        assert_eq!(entry("tetsu-5+3.efi").tries, Some(Tries { left: 3, done: 0 }));
+        assert_eq!(
+            entry("tetsu-5+3.efi").tries,
+            Some(Tries { left: 3, done: 0 })
+        );
     }
 
     #[test]

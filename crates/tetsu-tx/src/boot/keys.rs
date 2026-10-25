@@ -100,7 +100,10 @@ mod tests {
     #[test]
     fn file_uris() {
         for uri in ["file:///k/db.key", "file:/k/db.key"] {
-            assert_eq!(KeyRef::parse(uri).unwrap().as_path(), Path::new("/k/db.key"));
+            assert_eq!(
+                KeyRef::parse(uri).unwrap().as_path(),
+                Path::new("/k/db.key")
+            );
         }
         assert_eq!(
             KeyRef::parse("file:rel/db.key").unwrap().as_path(),

@@ -174,7 +174,10 @@ mod tests {
     #[test]
     fn inputs_live_inside_the_snapshot() {
         let s = spec(Path::new("/snap"), false);
-        assert_eq!(s.kernel_path(), Path::new("/snap/usr/lib/modules/6.1.0/vmlinuz"));
+        assert_eq!(
+            s.kernel_path(),
+            Path::new("/snap/usr/lib/modules/6.1.0/vmlinuz")
+        );
         assert_eq!(s.initrd_path(), Path::new("/snap/usr/lib/tetsu/initrd.img"));
         assert_eq!(s.os_release_path(), Path::new("/snap/usr/lib/os-release"));
     }
