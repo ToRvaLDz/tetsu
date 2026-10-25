@@ -446,6 +446,7 @@ fn fdo(replaces_id: u32, expire_timeout: i32) -> FdoShow {
         urgency: Urgency::Normal,
         category: Some("transfer.complete".into()),
         expire_timeout,
+        icon: None,
     }
 }
 

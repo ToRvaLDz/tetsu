@@ -1,5 +1,6 @@
 //! The public types of the state machine.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tetsu_bus::notify::{Action, NotifyReply, Urgency};
@@ -53,6 +54,19 @@ pub struct FdoShow {
     pub category: Option<String>,
     /// `expire_timeout`: -1 default, 0 never, else milliseconds.
     pub expire_timeout: i32,
+    /// The icon, already decoded.
+    pub icon: Option<Icon>,
+}
+
+/// A still icon, straight (not premultiplied) RGBA8, row after row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Icon {
+    /// Pixels per row.
+    pub width: u32,
+    /// Rows.
+    pub height: u32,
+    /// `width * height * 4` bytes.
+    pub rgba: Arc<[u8]>,
 }
 
 /// Where a notification is drawn.
@@ -165,6 +179,8 @@ pub struct NoteView {
     pub default_action: bool,
     /// When the buttons accept clicks.
     pub armed_at: Instant,
+    /// A freedesktop icon.
+    pub icon: Option<Icon>,
 }
 
 /// One past notification.

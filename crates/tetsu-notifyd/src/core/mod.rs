@@ -74,6 +74,7 @@ impl Core {
             place: Place::Popup,
             popped_at: now,
             armed_from: now,
+            icon: None,
         };
         let effects = self.tracking_pending(|core| {
             core.notes.insert(id, note);
@@ -113,6 +114,7 @@ impl Core {
             place: Place::Popup,
             popped_at: now,
             armed_from: now,
+            icon: show.icon,
         };
         self.notes.insert(id, note);
         self.enforce_popup_limit();

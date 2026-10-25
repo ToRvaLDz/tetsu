@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use tetsu_bus::notify::{Action, Urgency};
 
-use super::types::{HistoryView, NoteId, NoteView, Outcome, Place, Source};
+use super::types::{HistoryView, Icon, NoteId, NoteView, Outcome, Place, Source};
 
 /// The freedesktop action invoked by clicking the body.
 pub(super) const DEFAULT_ACTION: &str = "default";
@@ -33,6 +33,7 @@ pub(super) struct Note {
     pub place: Place,
     pub popped_at: Instant,
     pub armed_from: Instant,
+    pub icon: Option<Icon>,
 }
 
 impl Note {
@@ -64,6 +65,7 @@ impl Note {
                 .collect(),
             default_action: fdo && self.actions.iter().any(|a| a.id == DEFAULT_ACTION),
             armed_at: self.armed_from + super::ARM_DELAY,
+            icon: self.icon.clone(),
         }
     }
 
