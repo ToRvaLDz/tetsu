@@ -14,7 +14,7 @@ use tetsu_installer_core::install::{Deps, Executor, InstallPlan, InstallTarget};
 use tetsu_tx::boot::space::SpaceProbe;
 use tetsu_tx::boot::tool::Runner;
 
-use crate::cleanup::cleanup;
+use crate::cleanup::{cleanup, release};
 
 /// Asked when the user cancels after the disk was touched.
 pub const ABORT_PROMPT: &str = "Abort the install? The disk is already wiped";
@@ -55,6 +55,9 @@ pub struct Report {
     /// The install failed after the keys were enrolled: the disk holds the
     /// keys the firmware trusts, so it was left as it is.
     pub disk_kept: bool,
+    /// Steps of the flush, unmount and close of a kept disk that failed;
+    /// `None` when the disk was not kept.
+    pub release_problems: Option<Vec<String>>,
 }
 
 /// Whether a failed install is cleaned up: only when an action ran (a
@@ -124,6 +127,7 @@ pub fn install(
                 log: Vec::new(),
                 cleanup_problems: None,
                 disk_kept: false,
+                release_problems: None,
             };
         }
     };
@@ -145,14 +149,31 @@ pub fn install(
     let log = exec.log().lines().to_vec();
     let (touched, keys_enrolled) = (exec.touched(), exec.keys_enrolled());
     drop(exec);
-    let cleanup_problems = should_clean(result.is_err(), touched, keys_enrolled)
-        .then(|| cleanup(machine.runner, target));
+    let failed = result.is_err();
+    let (cleanup_problems, release_problems) =
+        tidy(machine.runner, target, failed, touched, keys_enrolled);
     Report {
-        disk_kept: result.is_err() && keys_enrolled,
+        disk_kept: failed && keys_enrolled,
         result,
         log,
         cleanup_problems,
+        release_problems,
     }
+}
+
+/// What to do with the machine after a failed or aborted run: wipe it, or,
+/// once the keys are enrolled, only flush and release it. Returns the
+/// problems of the cleanup and those of the release.
+fn tidy(
+    runner: &dyn Runner,
+    target: &InstallTarget,
+    failed: bool,
+    touched: bool,
+    keys_enrolled: bool,
+) -> (Option<Vec<String>>, Option<Vec<String>>) {
+    let cleaned = should_clean(failed, touched, keys_enrolled).then(|| cleanup(runner, target));
+    let released = (failed && keys_enrolled).then(|| release(runner, target));
+    (cleaned, released)
 }
 
 #[cfg(test)]
@@ -339,6 +360,35 @@ mod tests {
         assert!(!should_clean(true, false, false));
         assert!(!should_clean(false, true, false));
         assert!(!should_clean(false, true, true));
+    }
+
+    #[test]
+    fn a_kept_disk_is_released_without_a_wipe() {
+        let t = tempfile::tempdir().unwrap();
+        let target = InstallTarget::new(
+            &t.path().join("sda"),
+            Path::new("/medium/payload.tar"),
+            &t.path().join("work"),
+            SecureBoot::Off,
+        );
+        let tools = Tools {
+            calls: RefCell::default(),
+            raise: None,
+            missing: None,
+        };
+        let (cleaned, released) = tidy(&tools, &target, true, true, true);
+        assert!(cleaned.is_none());
+        assert!(released.is_some());
+        let calls = tools.calls.borrow().clone();
+        assert!(calls[0].starts_with("sync"), "{calls:?}");
+        assert!(calls.iter().any(|c| c.starts_with("umount")), "{calls:?}");
+        assert!(!calls.iter().any(|c| c.starts_with("wipefs")), "{calls:?}");
+        // Without enrolled keys the disk is wiped, as before, and not kept.
+        let (cleaned, released) = tidy(&tools, &target, true, true, false);
+        assert!(cleaned.is_some() && released.is_none());
+        // A successful run touches nothing.
+        let (cleaned, released) = tidy(&tools, &target, false, true, true);
+        assert!(cleaned.is_none() && released.is_none());
     }
 
     #[test]

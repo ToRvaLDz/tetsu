@@ -163,12 +163,14 @@ fn finish(fe: &mut dyn Frontend, run_dir: &Path, report: Report) -> Result<(), S
             fe.message(&format!("Cleanup problem: {p}"));
         }
     }
+    if let Some(problems) = &report.release_problems {
+        for p in problems {
+            fe.message(&format!("Release problem: {p}"));
+        }
+    }
     if report.disk_kept {
-        fe.message(
-            "The Secure Boot keys are already enrolled in the firmware, so the disk was kept \
-             as it is, not wiped. Look at the log; to start over, reset the keys in the \
-             firmware setup first.",
-        );
+        let aborted = matches!(report.result, Err(InstallError::Cancelled));
+        fe.message(kept_message(aborted));
     }
     match report.result {
         Ok(()) => {
@@ -179,6 +181,19 @@ fn finish(fe: &mut dyn Frontend, run_dir: &Path, report: Report) -> Result<(), S
         }
         Err(InstallError::Cancelled) => Err(format!("install aborted. {log_note}")),
         Err(e) => Err(format!("install failed: {e}. {log_note}")),
+    }
+}
+
+/// Said when the disk is kept because the keys are already enrolled.
+fn kept_message(aborted: bool) -> &'static str {
+    if aborted {
+        "You aborted after the Secure Boot keys were enrolled in the firmware, so the disk \
+         was kept as it is, not wiped. The install is incomplete. To start over, reset the \
+         keys in the firmware setup first."
+    } else {
+        "The install failed after the Secure Boot keys were enrolled in the firmware, so the \
+         disk was kept as it is, not wiped. Look at the log; to start over, reset the keys \
+         in the firmware setup first."
     }
 }
 
@@ -204,6 +219,14 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    #[test]
+    fn the_kept_disk_message_fits_an_abort_and_a_failure() {
+        let abort = kept_message(true);
+        assert!(abort.contains("You aborted") && !abort.contains("Look at the log"));
+        let failure = kept_message(false);
+        assert!(failure.contains("failed") && failure.contains("Look at the log"));
+    }
 
     #[test]
     fn the_log_is_written_private_and_replaces_an_older_one() {

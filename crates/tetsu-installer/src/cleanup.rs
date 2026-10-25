@@ -14,6 +14,26 @@ fn arg(s: impl Into<OsString>) -> OsString {
     s.into()
 }
 
+/// For a disk that is kept: flush what was written, release the mounts and
+/// close the encrypted volume, and wipe nothing. Best effort; returns one
+/// line per step that failed.
+pub fn release(runner: &dyn Runner, target: &InstallTarget) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut step = |program: &str, args: Vec<OsString>| {
+        if let Err(e) = runner.run(program, &args) {
+            problems.push(format!("{program}: {e}"));
+        }
+    };
+    step("sync", Vec::new());
+    for dir in [target.esp(), target.top()] {
+        let _ = runner.run("umount", &[arg(dir)]);
+    }
+    if target.mapper().exists() {
+        step("cryptsetup", vec![arg("close"), arg(MAPPER_NAME)]);
+    }
+    problems
+}
+
 /// Best-effort cleanup; returns one line per step that failed. Unmounting
 /// something that is not mounted is not a failure worth reporting.
 pub fn cleanup(runner: &dyn Runner, target: &InstallTarget) -> Vec<String> {
@@ -115,6 +135,34 @@ mod tests {
                 format!("wipefs -a {r}/sda"),
             ]
         );
+    }
+
+    #[test]
+    fn release_flushes_and_unmounts_but_never_wipes() {
+        let t = tempfile::tempdir().unwrap();
+        let tg = target(t.path(), &["sda", "sda1", "sda2"]);
+        let rec = Recorder::default();
+        assert!(release(&rec, &tg).is_empty());
+        let r = t.path().display();
+        let calls = rec.calls.borrow();
+        assert_eq!(calls[0].trim_end(), "sync");
+        assert_eq!(calls[1], format!("umount {r}/work/esp"));
+        assert_eq!(calls[2], format!("umount {r}/work/top"));
+        assert!(!calls.iter().any(|c| c.starts_with("wipefs")), "{calls:?}");
+    }
+
+    #[test]
+    fn a_failing_release_step_is_reported_and_the_rest_still_runs() {
+        let t = tempfile::tempdir().unwrap();
+        let tg = target(t.path(), &["sda"]);
+        let rec = Recorder {
+            fail: Some("sync"),
+            ..Recorder::default()
+        };
+        let problems = release(&rec, &tg);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("sync"));
+        assert!(rec.calls.borrow().len() >= 3);
     }
 
     #[test]
