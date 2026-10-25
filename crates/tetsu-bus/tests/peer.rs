@@ -20,9 +20,7 @@ fn a_transient_child_unit_of_the_agent_slice_is_an_agent_peer() {
 
 #[test]
 fn a_nested_slice_under_the_agent_slice_is_an_agent_peer() {
-    let path = format!(
-        "{USER}/tetsu.slice/tetsu-agent.slice/tetsu-agent-tools.slice/run-u7.scope"
-    );
+    let path = format!("{USER}/tetsu.slice/tetsu-agent.slice/tetsu-agent-tools.slice/run-u7.scope");
     assert!(is_agent_cgroup(&path));
 }
 
