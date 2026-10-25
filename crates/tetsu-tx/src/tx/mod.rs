@@ -7,10 +7,13 @@ use serde::{Deserialize, Serialize};
 use crate::boot::BootError;
 use crate::store::StoreError;
 
+pub mod dkms;
 #[cfg(test)]
 pub(crate) mod fake;
 pub mod nspawn;
 pub mod pkg;
+pub mod steps;
+pub mod varreport;
 
 /// Errors a transaction step returns, shaped for the engine.
 #[derive(Debug, thiserror::Error)]

@@ -20,7 +20,9 @@ pub(crate) enum Reply {
 type Effect = Box<dyn Fn(&[String])>;
 
 struct Rule {
+    /// The argv fragment to match: a prefix, or the tail when `tail` is set.
     prefix: Vec<String>,
+    tail: bool,
     reply: Reply,
     effect: Option<Effect>,
     /// Consumed by its first match.
@@ -36,14 +38,25 @@ pub(crate) struct ScriptedRunner {
     missing: RefCell<Vec<String>>,
 }
 
+impl Rule {
+    fn matches(&self, line: &[String]) -> bool {
+        if self.tail {
+            line.ends_with(&self.prefix)
+        } else {
+            line.starts_with(&self.prefix)
+        }
+    }
+}
+
 impl ScriptedRunner {
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn push(&self, prefix: &[&str], reply: Reply, effect: Option<Effect>, once: bool) {
+    fn push(&self, prefix: &[&str], tail: bool, reply: Reply, effect: Option<Effect>, once: bool) {
         self.rules.borrow_mut().push(Rule {
             prefix: prefix.iter().map(|s| (*s).to_owned()).collect(),
+            tail,
             reply,
             effect,
             once,
@@ -52,13 +65,13 @@ impl ScriptedRunner {
 
     /// Answer every call that starts with `prefix` (program first).
     pub fn on(&self, prefix: &[&str], reply: Reply) -> &Self {
-        self.push(prefix, reply, None, false);
+        self.push(prefix, false, reply, None, false);
         self
     }
 
     /// Like [`ScriptedRunner::on`], for the first matching call only.
     pub fn on_once(&self, prefix: &[&str], reply: Reply) -> &Self {
-        self.push(prefix, reply, None, true);
+        self.push(prefix, false, reply, None, true);
         self
     }
 
@@ -66,6 +79,27 @@ impl ScriptedRunner {
     pub fn on_effect(&self, prefix: &[&str], effect: impl Fn(&[String]) + 'static) -> &Self {
         self.push(
             prefix,
+            false,
+            Reply::Out(String::new()),
+            Some(Box::new(effect)),
+            false,
+        );
+        self
+    }
+
+    /// Answer every call that ends with `tail`: the command run inside a
+    /// `systemd-nspawn` line, whatever the container options.
+    pub fn on_tail(&self, tail: &[&str], reply: Reply) -> &Self {
+        self.push(tail, true, reply, None, false);
+        self
+    }
+
+    /// Run `effect` with the full command line of a call that ends with
+    /// `tail`, then succeed.
+    pub fn on_tail_effect(&self, tail: &[&str], effect: impl Fn(&[String]) + 'static) -> &Self {
+        self.push(
+            tail,
+            true,
             Reply::Out(String::new()),
             Some(Box::new(effect)),
             false,
@@ -90,7 +124,7 @@ impl ScriptedRunner {
         self.calls.borrow_mut().push(line.clone());
         let (reply, run_effect) = {
             let mut rules = self.rules.borrow_mut();
-            let Some(i) = rules.iter().position(|r| line.starts_with(&r.prefix)) else {
+            let Some(i) = rules.iter().position(|r| r.matches(&line)) else {
                 return Ok(String::new());
             };
             let reply = rules[i].reply.clone();
@@ -166,6 +200,21 @@ mod tests {
         r.on(&["x"], Reply::Out("later".into()));
         assert!(r.run("x", &[]).is_err());
         assert_eq!(r.output("x", &[]).unwrap(), "later");
+    }
+
+    #[test]
+    fn tail_rules_match_the_command_inside_a_container_line() {
+        let r = ScriptedRunner::new();
+        r.on_tail(&["pacman", "-Qdtq"], Reply::Out("orphan\n".into()));
+        let out = r
+            .output("systemd-nspawn", &args(&["-D", "/r", "pacman", "-Qdtq"]))
+            .unwrap();
+        assert_eq!(out, "orphan\n");
+        assert_eq!(
+            r.output("systemd-nspawn", &args(&["pacman", "-Q"]))
+                .unwrap(),
+            ""
+        );
     }
 
     #[test]
