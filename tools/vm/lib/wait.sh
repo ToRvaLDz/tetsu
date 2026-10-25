@@ -6,7 +6,7 @@ clean_serial() {
   # OSC (BEL or ST terminated), CSI, then two-character escapes; "#" is the
   # s### delimiter so that "/" and "|" stay literal. LC_ALL=C because range
   # expressions like [@-~] are locale-collated otherwise.
-  LC_ALL=C sed -E $'s#\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)##g; s#\x1b\\[[0-9;?]*[ -/]*[@-~]##g; s#\x1b[@-Z\\\\^_0-9=>]##g' "$1" \
+  LC_ALL=C sed -E $'s#\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)##g; s#\x1b\\[[0-9;?]*[ -/]*[@-~]##g; s#\x1b[()*+][0-9A-Za-z]##g; s#\x1b[@-Z\\\\^_0-9=>]##g' "$1" \
     | tr -d '\r'
 }
 
