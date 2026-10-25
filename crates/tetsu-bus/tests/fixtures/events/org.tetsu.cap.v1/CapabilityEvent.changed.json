@@ -1,19 +1,17 @@
 {
   "kind": "changed",
   "capability": {
-    "class": "notify.send",
+    "class": "packages.install",
     "scope": null,
-    "state": "automatic",
-    "layer": "image",
+    "state": "ask",
+    "layer": "user",
     "destructive": false,
     "methods": [
-      "org.tetsu.notify.v1.Show",
-      "org.tetsu.notify.v1.Close",
-      "org.tetsu.notify.v1.OpenPanel"
+      "org.tetsu.tx.v1.Install"
     ],
-    "asks": 0,
-    "approvals": 0,
-    "denials": 0,
+    "asks": 3,
+    "approvals": 2,
+    "denials": 1,
     "suppressions": 1,
     "last_used_at": "2026-10-25T09:31:00.000Z",
     "suppressed_until_at": "2026-10-25T09:41:00.000Z"
