@@ -25,7 +25,36 @@ pub struct GcPlan {
 /// The booted entry is never removed, even when it looks Bad. Without a
 /// booted counter the three newest non-Bad entries stay.
 pub fn plan_gc(state: &EspState, booted: Option<u64>) -> GcPlan {
-    todo!()
+    let keep: Vec<u64> = match booted {
+        Some(b) => {
+            let previous = state
+                .entries
+                .iter()
+                .rev()
+                .filter(|e| e.name.counter < b && e.state() == BootState::Good)
+                .take(KEEP_PREVIOUS_GOOD)
+                .map(|e| e.name.counter);
+            std::iter::once(b).chain(previous).collect()
+        }
+        None => state
+            .entries
+            .iter()
+            .rev()
+            .filter(|e| e.state() != BootState::Bad)
+            .take(KEEP_PREVIOUS_GOOD + 1)
+            .map(|e| e.name.counter)
+            .collect(),
+    };
+    let mut plan = GcPlan::default();
+    for e in state.entries.iter().filter(|e| !keep.contains(&e.name.counter)) {
+        plan.remove.push(e.path.clone());
+        plan.freed_bytes += e.size;
+    }
+    for t in &state.orphan_tmps {
+        plan.remove.push(t.path.clone());
+        plan.freed_bytes += t.size;
+    }
+    plan
 }
 
 #[cfg(test)]
