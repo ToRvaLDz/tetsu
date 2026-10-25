@@ -2,3 +2,4 @@
 //! `org.freedesktop.Notifications` for applications (#23).
 
 pub mod core;
+pub mod markup;
