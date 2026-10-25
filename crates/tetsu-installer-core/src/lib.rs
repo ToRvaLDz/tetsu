@@ -5,6 +5,7 @@ pub mod agent;
 pub mod answers;
 pub mod disk;
 pub mod driver;
+pub mod efi;
 pub mod entropy;
 pub mod env;
 pub mod error;
