@@ -13,6 +13,11 @@ use crate::frontend::{Frontend, ask_valid};
 
 use super::trust::Kind;
 
+/// The question. Nothing mounts a USB stick for it: the path must already
+/// be readable, and the installer has no shell to mount one from.
+const PROMPT: &str = "Certificate to trust (.der, .crt, .pem or .auth file; it must be on a \
+     filesystem that is already mounted, nothing mounts a USB stick here), empty to skip";
+
 /// Shown when nothing is asked or the question is skipped.
 const LATER: &str = "Add its certificate later with `tetsu secureboot trust <file>`.";
 
@@ -62,11 +67,7 @@ pub fn offer(
         fe.message(&format!("Nothing is asked with an answer file. {LATER}"));
         return Ok(None);
     }
-    let path = ask_valid(
-        fe,
-        "Certificate to trust (.der, .crt, .pem or .auth file), empty to skip",
-        &check,
-    )?;
+    let path = ask_valid(fe, PROMPT, &check)?;
     if path.is_empty() {
         fe.message(LATER);
         return Ok(None);
@@ -143,6 +144,15 @@ mod tests {
             assert!(fe.messages[0].starts_with("Warning:"));
             fe.assert_done();
         }
+    }
+
+    #[test]
+    fn the_prompt_says_the_file_must_be_on_a_mounted_filesystem() {
+        let t = root(None);
+        let mut fe = Script::new().text("");
+        offer(&mut fe, t.path(), &others(), false).unwrap();
+        assert_eq!(fe.prompts, [PROMPT]);
+        assert!(PROMPT.contains("already mounted"));
     }
 
     #[test]

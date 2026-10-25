@@ -110,6 +110,12 @@ boots. systemd-boot with the UKI mkosi builds; kernel command line
   `image/microsoft-certs.sha256`. The payload carries the same files, since
   `tetsu secureboot enroll` on the installed system refuses to run without them
   (unless `--without-microsoft`).
+- When the target has other systems and an empty Secure Boot db, the installer
+  asks for a certificate to trust. It takes a path on a filesystem that is
+  already mounted: nothing mounts a USB stick for this question, and the
+  session has no shell to do it from. Leave it empty to skip, then mount the
+  stick on the installed system and run `tetsu secureboot trust <file>`. An
+  answer file only warns and never asks.
 - An answer file reaches the installer as the installer expects it (`tetsu.answers=`
   on the command line, or a filesystem labelled `TETSU-ANSWERS`, `TETSU-ANS` on
   FAT).
