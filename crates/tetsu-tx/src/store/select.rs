@@ -24,8 +24,16 @@ pub struct Source {
 /// The pending default (committed, untried) if there is one, else the
 /// booted snapshot.
 pub fn select_source(esp: &EspState, booted: u64) -> Source {
-    let _ = (esp, booted);
-    todo!()
+    match esp.default_entry() {
+        Some(e) if e.name.counter != booted && is_untried(e.state()) => Source {
+            counter: e.name.counter,
+            inherit_etc_base: true,
+        },
+        _ => Source {
+            counter: booted,
+            inherit_etc_base: false,
+        },
+    }
 }
 
 /// Snapshots left by an interrupted transaction: no record and newer than
@@ -38,35 +46,60 @@ pub fn orphans(
     esp: &EspState,
     booted: Option<u64>,
 ) -> Vec<u64> {
-    let _ = (snapshots, records, esp, booted);
-    todo!()
+    let newest = esp.newest_counter();
+    snapshots
+        .iter()
+        .copied()
+        .filter(|&n| Some(n) != booted && !records.contains_key(&n))
+        .filter(|&n| newest.is_none_or(|m| n > m))
+        .collect()
 }
 
 /// One above every counter in use: snapshots, records, ESP entries and
 /// staged files.
 pub fn next_counter(snapshots: &[u64], records: &BTreeMap<u64, Record>, esp: &EspState) -> u64 {
-    let _ = (snapshots, records, esp);
-    todo!()
+    let entries = esp.entries.iter().map(|e| e.name.counter);
+    let tmps = esp.orphan_tmps.iter().map(|t| t.counter);
+    snapshots
+        .iter()
+        .copied()
+        .chain(records.keys().copied())
+        .chain(entries)
+        .chain(tmps)
+        .max()
+        .map_or(1, |m| m + 1)
 }
 
 /// The implicit rollback target: the newest existing snapshot older than
 /// the booted one whose boot was blessed good.
 pub fn last_good(snapshots: &[u64], records: &BTreeMap<u64, Record>, booted: u64) -> Option<u64> {
-    let _ = (snapshots, records, booted);
-    todo!()
+    snapshots
+        .iter()
+        .rev()
+        .copied()
+        .find(|&n| n < booted && is_good(records, n))
 }
 
 /// The newest existing snapshot whose boot was blessed good.
 pub fn newest_good(snapshots: &[u64], records: &BTreeMap<u64, Record>) -> Option<u64> {
-    let _ = (snapshots, records);
-    todo!()
+    snapshots
+        .iter()
+        .rev()
+        .copied()
+        .find(|&n| is_good(records, n))
 }
 
 /// Snapshots retention deletes: everything outside the newest `keep`,
 /// except the `protected` ones (the booted, the default, the newest good).
 pub fn plan_retention(snapshots: &[u64], protected: &[u64], keep: usize) -> Vec<u64> {
-    let _ = (snapshots, protected, keep);
-    todo!()
+    let mut sorted = snapshots.to_vec();
+    sorted.sort_unstable();
+    let cut = sorted.len().saturating_sub(keep);
+    sorted[..cut]
+        .iter()
+        .copied()
+        .filter(|n| !protected.contains(n))
+        .collect()
 }
 
 /// Counter of the entry systemd-boot picks, if any.
@@ -74,12 +107,10 @@ pub fn default_counter(esp: &EspState) -> Option<u64> {
     esp.default_entry().map(|e| e.name.counter)
 }
 
-#[allow(dead_code)]
 fn is_untried(state: BootState) -> bool {
     state == BootState::Untried
 }
 
-#[allow(dead_code)]
 fn is_good(records: &BTreeMap<u64, Record>, counter: u64) -> bool {
     records
         .get(&counter)
