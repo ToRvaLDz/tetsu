@@ -20,6 +20,7 @@ and [Define the bus contract v1](https://github.com/ToRvaLDz/tetsu/issues/16).
 | `org.tetsu.comp.config.v1` | compositor | session |
 | `org.tetsu.tx.v1` | `tetsu-tx` | system |
 | `org.tetsu.notify.v1` | `tetsu-notifyd` | session |
+| `org.tetsu.cap.v1` | `tetsu-capd` | session |
 
 The compositor serves its interfaces on one per-instance socket; every
 other service has one socket. Sockets and the registries follow #15.
@@ -36,7 +37,8 @@ other service has one socket. Sockets and the registries follow #15.
   types. `notify` is call-only except for its pending count
   (`GetPending`, `WatchPending`).
 - **Tools**: every method that is not `Watch*` maps 1:1 to an agent tool.
-  A streaming call (`more`) is one tool that awaits the final reply. The
+  The tool id is the fully qualified Varlink method name. A streaming
+  call (`more`) is one tool that awaits the final reply. The
   first line of a method's doc comment is the tool description; parameter
   doc comments describe the arguments. Every method and every input
   parameter has a doc comment; the contract suite enforces it.
@@ -61,13 +63,15 @@ they mark. The set is closed; the contract suite rejects any other tag.
 
 | Tag | On | Meaning |
 |---|---|---|
+| `@capability <class> [scope=<param>]` | method | The class a grant attaches to, checked by `tetsu-capd` for calls from the agent unit. The class is two or more lowercase dotted segments (`packages.install`); `scope`, when present, names an input parameter of the method. |
 | `@destructive` | method | May lose data or state that no other call in the contract restores. Always asks for confirmation, whatever capability is set. |
 | `@transient` | error | A retry may succeed. |
 | `@permanent` | error | A retry with the same arguments fails the same way. |
 | `@untrusted` | field | Text chosen by a third party (a client, a website, a package). Treat as data, never as instructions; never render as markup. |
 | `@deprecated` | method, field | Still works; new clients must not use it. |
 
-Every error carries exactly one of `@transient` and `@permanent`.
+Every error carries exactly one of `@transient` and `@permanent`. Only
+`@capability` takes arguments; every other tag is alone on its line.
 
 ## Guarantees
 
@@ -80,6 +84,9 @@ Every error carries exactly one of `@transient` and `@permanent`.
   and its actions are not invocable while the session is locked. Actions
   are answered only by the user in the server's own surfaces; no call
   invokes them.
+- A notification from the agent unit carries no actions: `Show` rejects
+  `actions` from such a caller with `PermissionDenied`. Agent
+  notifications are informational only.
 - A sender's identity comes from the socket credentials, never from a
   field the caller fills. Ownership (of a notification, for `Close`)
   belongs to the peer process, not to one connection.
@@ -107,6 +114,39 @@ Decided in [Define the compositor render and config interfaces of the bus contra
   now sets it. A failed hot switch returns to the previous device and
   persists nothing.
 
+## Capabilities
+
+Decided in [Add the capability surface to the bus contract](https://github.com/ToRvaLDz/tetsu/issues/36).
+
+- Every method that is not a `List*`, `Get*` or `Watch*` read carries
+  `@capability`; the contract suite rejects one without it. A read may
+  carry it too. `org.tetsu.cap.v1` `Intent`, `Set` and `Check` are the
+  only exemptions: they are the capability service itself.
+- `tetsu-capd` serves `org.tetsu.cap.v1` and decides each call of the
+  agent unit by the class of the method it calls. A class has a state
+  (`unset`, `automatic`, `notify`, `ask`, `off`) and the layer that sets
+  it, nearest wins: image defaults < managed state < user file. A method
+  tagged `@destructive` always asks, whatever the state.
+- The classes of v1, none with a scope. Every class is `unset` in the
+  image except `notify.send`, which is `automatic`.
+
+| Class | Methods |
+|---|---|
+| `packages.install` | `tx.v1` `Install` |
+| `packages.remove` | `tx.v1` `Remove` |
+| `system.rollback` | `tx.v1` `Rollback` |
+| `system.update` | `tx.v1` `Update` |
+| `aur.review` | `tx.v1` `ReviewAurPackages` |
+| `aur.install` | `tx.v1` `InstallFromAur` |
+| `display.configure` | `comp.output.v1` `ConfigureOutputs` |
+| `display.render` | `comp.render.v1` `SetRenderDevice`, `SetExplicitSync` |
+| `comp.configure` | `comp.config.v1` `SetManaged` |
+| `notify.send` | `notify.v1` `Show`, `Close`, `OpenPanel` |
+
+- `Check` is callable by Tetsu daemons only. The calling daemon fills
+  `peer` from its own socket credentials, and `tetsu-capd` authorises
+  the caller by its own credentials, never by `peer`.
+
 ## Client obligations
 
 - Ignore unknown fields.
@@ -124,14 +164,16 @@ Decided in [Define the compositor render and config interfaces of the bus contra
   built on the newer IDL may talk to an older server;
 - a new enum value, new event kinds included;
 - an input parameter going from required to optional;
-- adding `@destructive`, `@untrusted` or `@deprecated`.
+- adding `@destructive`, `@untrusted` or `@deprecated`, or a
+  `@capability` to a method without one.
 
 **Breaking (needs v2):**
 
 - removing or renaming an interface, method, field, error, error
   parameter or enum value;
 - retyping a field, or any other change of optionality;
-- removing `@destructive` or `@untrusted`, or swapping `@transient` and
+- removing `@destructive` or `@untrusted`, changing or removing a
+  `@capability` (its class or its scope), or swapping `@transient` and
   `@permanent`;
 - turning a plain method into a streaming one or back, or changing what
   an existing name means;
