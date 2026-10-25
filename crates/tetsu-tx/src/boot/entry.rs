@@ -5,6 +5,10 @@
 //! * `tetsu-<n>+<left>-<done>.efi`   booted at least once (Trying / Bad)
 //! * `tetsu-<n>.efi.tmp`             staged, not yet committed
 
+const PREFIX: &str = "tetsu-";
+const EXT: &str = ".efi";
+const TMP_EXT: &str = ".tmp";
+
 /// Boot-counting suffix: attempts left and attempts done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tries {
@@ -46,22 +50,65 @@ impl EntryName {
     }
 
     pub fn state(&self) -> BootState {
-        todo!()
+        match self.tries {
+            None => BootState::Good,
+            Some(t) if t.left == 0 => BootState::Bad,
+            Some(t) if t.done == 0 => BootState::Untried,
+            Some(_) => BootState::Trying,
+        }
     }
 
     pub fn file_name(&self) -> String {
-        todo!()
+        match self.tries {
+            None => format!("{PREFIX}{}{EXT}", self.counter),
+            Some(Tries { left, done: 0 }) => format!("{PREFIX}{}+{left}{EXT}", self.counter),
+            Some(Tries { left, done }) => {
+                format!("{PREFIX}{}+{left}-{done}{EXT}", self.counter)
+            }
+        }
     }
 }
 
 /// Name of the staged file for `counter`.
 pub fn tmp_file_name(counter: u64) -> String {
-    todo!()
+    format!("{PREFIX}{counter}{EXT}{TMP_EXT}")
 }
 
 /// Classify a file name; `None` for anything that is not Tetsu's.
 pub fn parse_file_name(name: &str) -> Option<FileKind> {
-    todo!()
+    let rest = name.strip_prefix(PREFIX)?;
+    if let Some(num) = rest.strip_suffix(TMP_EXT) {
+        let num = num.strip_suffix(EXT)?;
+        return canonical(num).map(FileKind::Tmp);
+    }
+    let body = rest.strip_suffix(EXT)?;
+    let (counter, suffix) = match body.split_once('+') {
+        Some((c, s)) => (c, Some(s)),
+        None => (body, None),
+    };
+    let counter = canonical(counter)?;
+    let tries = match suffix {
+        None => None,
+        Some(s) => {
+            let (left, done) = match s.split_once('-') {
+                Some((l, d)) => (canonical(l)?, canonical(d)?),
+                None => (canonical(s)?, 0),
+            };
+            Some(Tries {
+                left: u32::try_from(left).ok()?,
+                done: u32::try_from(done).ok()?,
+            })
+        }
+    };
+    Some(FileKind::Entry(EntryName { counter, tries }))
+}
+
+/// Digits only, no sign and no leading zeros, so every name has one spelling.
+fn canonical(s: &str) -> Option<u64> {
+    let ok = !s.is_empty()
+        && s.bytes().all(|b| b.is_ascii_digit())
+        && (s == "0" || !s.starts_with('0'));
+    if ok { s.parse().ok() } else { None }
 }
 
 #[cfg(test)]
