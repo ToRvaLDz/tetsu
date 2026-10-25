@@ -25,6 +25,7 @@ use crate::answer_file::AnswerFile;
 use crate::cli::{self, Command, Options, USAGE};
 use crate::collect::collect;
 use crate::install::{Machine, Report, install};
+use crate::isolated::IsolatedRunner;
 use crate::locate::{self, Source};
 use crate::probe::MountProbe;
 use crate::system;
@@ -95,10 +96,12 @@ fn run(opts: &Options) -> Result<(), String> {
     let cancel = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel))
         .map_err(|e| format!("cannot install the Ctrl+C handler: {e}"))?;
+    // The tools of the install run in their own process group, so Ctrl+C
+    // reaches the handler above and not the tool that is running.
     let report = install(
         &fe,
         &Machine {
-            runner: &runner,
+            runner: &IsolatedRunner,
             space: &StatvfsProbe,
             entropy: &SystemEntropy,
             cancel: &cancel,
