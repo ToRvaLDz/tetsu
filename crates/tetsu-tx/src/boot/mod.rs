@@ -46,3 +46,4 @@ impl BootError {
 pub mod entry;
 pub mod esp;
 pub mod retention;
+pub mod space;
