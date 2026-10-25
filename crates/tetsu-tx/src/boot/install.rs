@@ -11,11 +11,11 @@ use super::tool::Runner;
 use super::uki::{UkiSpec, build_uki, preflight};
 
 /// A UKI that is on the ESP under its final name.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Committed {
     pub path: PathBuf,
     /// Post-commit retention failed; the entry itself is in place.
-    pub gc_warning: Option<String>,
+    pub gc_error: Option<BootError>,
 }
 
 /// Build `spec` into the ESP. `booted` is the counter of the running
@@ -54,8 +54,8 @@ pub fn write_uki(
     let path = esp.commit(spec.counter)?;
     // The entry is committed: a failed cleanup must not look like a failed
     // write. It is reported and the next write retries the same GC.
-    let gc_warning = apply_gc(&remaining).err().map(|e| e.to_string());
-    Ok(Committed { path, gc_warning })
+    let gc_error = apply_gc(&remaining).err();
+    Ok(Committed { path, gc_error })
 }
 
 #[cfg(test)]
@@ -301,5 +301,49 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, BootError::InsufficientSpace { .. }));
         assert_eq!(names(&esp), before);
+    }
+
+    /// Fake ukify that writes the output, then turns `tetsu-1.efi` into a
+    /// directory so the post-commit removal fails (for any uid).
+    struct SabotagingUkify;
+    impl Runner for SabotagingUkify {
+        fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
+            FakeUkify.run(program, args)?;
+            let out = args
+                .iter()
+                .find_map(|a| a.to_str()?.strip_prefix("--output="))
+                .unwrap();
+            let one = Path::new(out).parent().unwrap().join("tetsu-1.efi");
+            fs::remove_file(&one).unwrap();
+            fs::create_dir(&one).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn post_commit_gc_failure_is_a_typed_error_and_the_write_succeeds() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        let done = write_uki(&esp, &StatvfsProbe, &SabotagingUkify, &spec, Some(4), 1000).unwrap();
+        assert_eq!(done.path, esp.dir().join("tetsu-10+3.efi"));
+        match done.gc_error {
+            Some(BootError::GcFailed { failures }) => {
+                assert_eq!(failures.len(), 1);
+                assert!(
+                    matches!(&failures[0], BootError::Io { path, .. } if path.ends_with("tetsu-1.efi")),
+                    "{failures:?}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        // The other superseded entry was still removed.
+        assert!(!esp.dir().join("tetsu-5+3.efi").exists());
+        assert!(esp.dir().join("tetsu-10+3.efi").is_file());
+    }
+
+    #[test]
+    fn clean_write_has_no_gc_error() {
+        let (_t, esp, spec) = fixture(&BUSY);
+        let done = write_uki(&esp, &StatvfsProbe, &FakeUkify, &spec, Some(4), 1000).unwrap();
+        assert!(done.gc_error.is_none());
     }
 }

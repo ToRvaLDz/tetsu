@@ -48,6 +48,14 @@ pub fn check_space(
     }
 }
 
+pub(crate) fn apply_gc_with(
+    plan: &GcPlan,
+    sync: &mut dyn FnMut(&Path) -> Result<(), BootError>,
+) -> Result<(), BootError> {
+    let _ = sync;
+    apply_gc(plan)
+}
+
 /// Delete everything in `plan`. Call only after [`check_space`] passed.
 pub fn apply_gc(plan: &GcPlan) -> Result<(), BootError> {
     let mut dirs = BTreeSet::new();
@@ -123,6 +131,7 @@ mod tests {
     use crate::boot::esp::Esp;
     use crate::boot::retention::plan_gc;
     use std::fs;
+    use std::path::PathBuf;
 
     struct Fake(u64);
     impl SpaceProbe for Fake {
@@ -200,22 +209,108 @@ mod tests {
         assert_eq!(listing(&e), vec!["tetsu-2.efi"]);
     }
 
+    /// Records the directories it is asked to sync; fails on `fail_on`.
+    struct SyncLog {
+        calls: Vec<PathBuf>,
+        fail_on: Option<PathBuf>,
+    }
+
+    impl SyncLog {
+        fn new(fail_on: Option<PathBuf>) -> Self {
+            Self {
+                calls: Vec::new(),
+                fail_on,
+            }
+        }
+
+        fn sync(&mut self, dir: &Path) -> Result<(), BootError> {
+            self.calls.push(dir.to_path_buf());
+            if self.fail_on.as_deref() == Some(dir) {
+                return Err(BootError::io(dir, std::io::Error::other("sync failed")));
+            }
+            Ok(())
+        }
+    }
+
     #[test]
-    fn apply_gc_fsyncs_the_directory() {
-        use std::os::unix::fs::PermissionsExt;
-        // Write+search without read: unlink works, opening it to fsync cannot.
+    fn apply_gc_syncs_each_touched_directory_once() {
         let d = tempfile::tempdir().unwrap();
-        let file = d.path().join("tetsu-1.efi");
-        fs::write(&file, b"x").unwrap();
-        fs::set_permissions(d.path(), fs::Permissions::from_mode(0o300)).unwrap();
+        let (a, b) = (d.path().join("a"), d.path().join("b"));
+        let other = d.path().join("sub");
+        fs::create_dir(&other).unwrap();
+        let c = other.join("c");
+        for f in [&a, &b, &c] {
+            fs::write(f, b"x").unwrap();
+        }
         let plan = GcPlan {
-            remove: vec![file.clone()],
+            remove: vec![a.clone(), b.clone(), c.clone()],
+            freed_bytes: 3,
+        };
+        let mut log = SyncLog::new(None);
+        apply_gc_with(&plan, &mut |p| log.sync(p)).unwrap();
+        assert!(!a.exists() && !b.exists() && !c.exists());
+        let mut calls = log.calls.clone();
+        calls.sort();
+        assert_eq!(calls, vec![d.path().to_path_buf(), other]);
+    }
+
+    #[test]
+    fn apply_gc_skips_the_sync_when_nothing_was_removed() {
+        let plan = GcPlan {
+            remove: vec!["/nonexistent-tetsu-test/x.efi".into()],
+            freed_bytes: 0,
+        };
+        let mut log = SyncLog::new(None);
+        apply_gc_with(&plan, &mut |p| log.sync(p)).unwrap();
+        assert!(log.calls.is_empty());
+    }
+
+    #[test]
+    fn apply_gc_surfaces_a_sync_error() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("a");
+        fs::write(&f, b"x").unwrap();
+        let plan = GcPlan {
+            remove: vec![f],
             freed_bytes: 1,
         };
-        let res = apply_gc(&plan);
-        fs::set_permissions(d.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(!file.exists());
-        assert!(matches!(res, Err(BootError::Io { .. })), "{res:?}");
+        let mut log = SyncLog::new(Some(d.path().to_path_buf()));
+        match apply_gc_with(&plan, &mut |p| log.sync(p)).unwrap_err() {
+            BootError::GcFailed { failures } => {
+                assert_eq!(failures.len(), 1);
+                assert!(matches!(failures[0], BootError::Io { .. }));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn one_failing_removal_does_not_stop_the_others() {
+        let d = tempfile::tempdir().unwrap();
+        let (first, last) = (d.path().join("1"), d.path().join("3"));
+        // unlink of a directory fails for every uid, root included.
+        let stuck = d.path().join("2");
+        fs::write(&first, b"x").unwrap();
+        fs::create_dir(&stuck).unwrap();
+        fs::write(&last, b"x").unwrap();
+        let plan = GcPlan {
+            remove: vec![first.clone(), stuck.clone(), last.clone()],
+            freed_bytes: 2,
+        };
+        let mut log = SyncLog::new(None);
+        match apply_gc_with(&plan, &mut |p| log.sync(p)).unwrap_err() {
+            BootError::GcFailed { failures } => {
+                assert_eq!(failures.len(), 1);
+                assert!(
+                    matches!(&failures[0], BootError::Io { path, .. } if *path == stuck),
+                    "{failures:?}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!first.exists() && !last.exists() && stuck.exists());
+        // The deletions that did happen are still made durable.
+        assert_eq!(log.calls, vec![d.path().to_path_buf()]);
     }
 
     #[test]

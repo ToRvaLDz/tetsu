@@ -29,6 +29,9 @@ pub enum BootError {
     /// The signing key URI scheme is recognised but not implemented yet.
     #[error("unsupported key URI: {0}")]
     UnsupportedKeyUri(String),
+    /// Some GC deletions or directory syncs failed; the rest were attempted.
+    #[error("GC left {} failure(s), first: {}", failures.len(), failures.first().map_or_else(String::new, ToString::to_string))]
+    GcFailed { failures: Vec<BootError> },
     /// A UKI input is a symlink (or has a symlink component) inside the
     /// snapshot, so it could pull host files into the signed image.
     #[error("{path}: symlink in snapshot input is not allowed", path = path.display())]

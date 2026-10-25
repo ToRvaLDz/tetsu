@@ -99,6 +99,28 @@ impl Esp {
         Ok(tmp)
     }
 
+    pub(crate) fn stage_with<F>(
+        &self,
+        counter: u64,
+        write: F,
+        sync: &mut dyn FnMut(&Path) -> Result<(), BootError>,
+    ) -> Result<PathBuf, BootError>
+    where
+        F: FnOnce(&Path) -> Result<(), BootError>,
+    {
+        let _ = sync;
+        self.stage(counter, write)
+    }
+
+    pub(crate) fn commit_with(
+        &self,
+        counter: u64,
+        sync: &mut dyn FnMut(&Path) -> Result<(), BootError>,
+    ) -> Result<PathBuf, BootError> {
+        let _ = sync;
+        self.commit(counter)
+    }
+
     /// Rename the staged file to `tetsu-<counter>+3.efi` and fsync the
     /// directory. Returns the committed path.
     pub fn commit(&self, counter: u64) -> Result<PathBuf, BootError> {
@@ -302,15 +324,55 @@ mod tests {
     }
 
     #[test]
-    fn stage_fsyncs_the_parents_of_a_created_directory() {
-        use std::os::unix::fs::PermissionsExt;
-        // Write+search without read: mkdir works, opening the root to fsync cannot.
+    fn stage_syncs_the_file_and_the_parents_of_a_created_directory() {
         let root = tempfile::tempdir().unwrap();
-        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o300)).unwrap();
         let esp = Esp::open(root.path());
-        let res = esp.stage(1, |p| fs::write(p, b"x").map_err(|e| BootError::io(p, e)));
-        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let mut calls: Vec<PathBuf> = Vec::new();
+        let tmp = esp
+            .stage_with(
+                1,
+                |p| fs::write(p, b"x").map_err(|e| BootError::io(p, e)),
+                &mut |p| {
+                    calls.push(p.to_path_buf());
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert!(calls.contains(&root.path().to_path_buf()), "{calls:?}");
+        assert!(calls.contains(&root.path().join("EFI")), "{calls:?}");
+        assert!(calls.contains(&tmp), "{calls:?}");
+        // Directory entries are made durable before the file is written.
+        let file_at = calls.iter().position(|c| *c == tmp).unwrap();
+        let root_at = calls.iter().position(|c| c == root.path()).unwrap();
+        assert!(root_at < file_at);
+    }
+
+    #[test]
+    fn stage_surfaces_a_parent_sync_error_and_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let esp = Esp::open(root.path());
+        let res = esp.stage_with(1, |_| panic!("must not write"), &mut |p| {
+            if p == root.path() {
+                Err(BootError::io(p, std::io::Error::other("sync failed")))
+            } else {
+                Ok(())
+            }
+        });
         assert!(matches!(res, Err(BootError::Io { .. })), "{res:?}");
+    }
+
+    #[test]
+    fn commit_syncs_the_directory() {
+        let (_r, esp) = esp_with(&[]);
+        esp.stage(1, |p| fs::write(p, b"x").map_err(|e| BootError::io(p, e)))
+            .unwrap();
+        let mut calls: Vec<PathBuf> = Vec::new();
+        esp.commit_with(1, &mut |p| {
+            calls.push(p.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(calls, vec![esp.dir().to_path_buf()]);
     }
 
     #[test]
