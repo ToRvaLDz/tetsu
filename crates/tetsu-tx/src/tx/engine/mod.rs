@@ -11,7 +11,7 @@ use super::dkms::{self, Dkms};
 use super::nspawn::Nspawn;
 use super::{PackageChange, TxError, pkg, steps, varreport};
 use crate::boot::BootError;
-use crate::boot::esp::Esp;
+use crate::boot::esp::{Esp, EspState};
 use crate::boot::install::write_uki;
 use crate::boot::keys::SigningKeys;
 use crate::boot::space::SpaceProbe;
@@ -136,6 +136,47 @@ pub struct Engine<'a> {
     pub clock: &'a dyn Fn() -> u64,
 }
 
+/// Where a transaction stands after `write_uki` failed, judged by rescanning
+/// the ESP.
+#[derive(Debug)]
+enum CommitState {
+    /// The entry is on the ESP.
+    Committed,
+    /// The ESP was read and has no entry.
+    NotCommitted,
+    /// The ESP could not be read: the rename may or may not have happened.
+    Unknown(BootError),
+}
+
+/// The commit state from the result of an ESP rescan.
+fn commit_state(scan: Result<EspState, BootError>, counter: u64) -> CommitState {
+    match scan {
+        Ok(state) if state.entries.iter().any(|e| e.name.counter == counter) => {
+            CommitState::Committed
+        }
+        Ok(_) => CommitState::NotCommitted,
+        Err(e) => CommitState::Unknown(e),
+    }
+}
+
+/// A build that failed before the commit, with whether its snapshot may be
+/// deleted.
+struct Aborted {
+    error: TxError,
+    /// The snapshot may already be committed: keep it, the next
+    /// transaction's GC decides.
+    keep_snapshot: bool,
+}
+
+impl<E: Into<TxError>> From<E> for Aborted {
+    fn from(e: E) -> Self {
+        Self {
+            error: e.into(),
+            keep_snapshot: false,
+        }
+    }
+}
+
 /// What the build up to and including the commit produced.
 struct Built {
     log: Vec<String>,
@@ -160,7 +201,8 @@ impl Engine<'_> {
             .filter(|e| e.kind() != ErrorKind::NotFound);
         match built {
             Ok(built) => Ok(self.finish(&store, &begun, request, built, started, leftover)),
-            Err(e) => Err(self.discard(&begun, e)),
+            Err(a) if a.keep_snapshot => Err(a.error),
+            Err(a) => Err(self.discard(&begun, a.error)),
         }
     }
 
@@ -183,7 +225,7 @@ impl Engine<'_> {
         begun: &Begun,
         request: &Request,
         scratch: &Path,
-    ) -> Result<Built, TxError> {
+    ) -> Result<Built, Aborted> {
         let root = self.layout.root(begun.counter);
         let mut log: Vec<String> = begun
             .gc_failures
@@ -212,9 +254,12 @@ impl Engine<'_> {
             estimate,
         ) {
             Ok(committed) => committed.gc_error,
-            // Renamed into place and a later sync failed: it is committed.
-            Err(e) if self.is_on_esp(begun.counter) => Some(e),
-            Err(e) => return Err(e.into()),
+            Err(e) => match commit_state(self.esp.scan(), begun.counter) {
+                // Renamed into place and a later sync failed: it is committed.
+                CommitState::Committed => Some(e),
+                CommitState::NotCommitted => return Err(e.into()),
+                CommitState::Unknown(scan) => return Err(unknown_commit(begun.counter, &e, &scan)),
+            },
         };
         Ok(Built {
             log,
@@ -310,12 +355,6 @@ impl Engine<'_> {
         }
     }
 
-    fn is_on_esp(&self, counter: u64) -> bool {
-        self.esp
-            .scan()
-            .is_ok_and(|s| s.entries.iter().any(|e| e.name.counter == counter))
-    }
-
     /// The UKI is committed: marker, record, retention. Nothing here fails
     /// the transaction.
     fn finish(
@@ -407,6 +446,23 @@ impl Engine<'_> {
     }
 }
 
+/// The failure of a UKI write whose outcome could not be checked: the
+/// snapshot stays, the next transaction's GC decides.
+fn unknown_commit(counter: u64, write: &BootError, scan: &BootError) -> Aborted {
+    Aborted {
+        error: TxError::Failed {
+            reason: format!(
+                "writing the boot entry failed ({write}) and the ESP could not be read to tell \
+                 whether it was committed ({scan}); snapshot {counter} is kept and the next \
+                 transaction's cleanup decides"
+            ),
+            proposal: None,
+            log: Vec::new(),
+        },
+        keep_snapshot: true,
+    }
+}
+
 /// Remove `path` when it is a scratch `/var` of a dead transaction; the
 /// problem, if any, as a log line.
 fn remove_stale(path: &Path) -> Option<String> {
@@ -426,4 +482,65 @@ fn estimated_size(spec: &UkiSpec) -> Result<u64, TxError> {
         Err(e) => Err(TxError::from(BootError::io(path, e))),
     };
     Ok(size(spec.kernel_path())? + size(spec.initrd_path())? + ESTIMATE_SLACK)
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::*;
+    use crate::boot::entry::{FileKind, parse_file_name};
+    use crate::boot::esp::EspEntry;
+
+    fn state(counters: &[u64]) -> EspState {
+        let mut st = EspState::default();
+        for n in counters {
+            let file = format!("tetsu-{n}.efi");
+            let Some(FileKind::Entry(name)) = parse_file_name(&file) else {
+                panic!("{file}")
+            };
+            st.entries.push(EspEntry {
+                name,
+                path: PathBuf::from(file),
+                size: 1,
+            });
+        }
+        st
+    }
+
+    fn unreadable() -> BootError {
+        BootError::Tool {
+            tool: "scan".into(),
+            status: "1".into(),
+            stderr: "boom".into(),
+        }
+    }
+
+    #[test]
+    fn an_entry_on_the_esp_is_committed_and_none_is_not() {
+        assert!(matches!(
+            commit_state(Ok(state(&[1, 2])), 2),
+            CommitState::Committed
+        ));
+        assert!(matches!(
+            commit_state(Ok(state(&[1])), 2),
+            CommitState::NotCommitted
+        ));
+    }
+
+    #[test]
+    fn a_failed_rescan_is_unknown_and_keeps_the_snapshot() {
+        assert!(matches!(
+            commit_state(Err(unreadable()), 2),
+            CommitState::Unknown(_)
+        ));
+        let kept = unknown_commit(2, &unreadable(), &unreadable());
+        assert!(kept.keep_snapshot);
+        match kept.error {
+            TxError::Failed { reason, .. } => {
+                assert!(reason.contains("snapshot 2 is kept"), "{reason}");
+                assert!(reason.contains("cleanup decides"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!Aborted::from(TxError::failed("x")).keep_snapshot);
+    }
 }
