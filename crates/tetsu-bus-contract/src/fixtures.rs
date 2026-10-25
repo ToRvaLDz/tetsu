@@ -182,9 +182,9 @@ impl Checker<'_> {
             Ty::Int if !v.is_i64() => self.wrong(path, "an int", v),
             Ty::Float if !v.is_number() => self.wrong(path, "a float", v),
             Ty::String if !v.is_string() => self.wrong(path, "a string", v),
-            // The IDL's `object` carries any JSON value but null: the contract
-            // uses it for config values, which are scalars as well.
-            Ty::ForeignObject if v.is_null() => self.wrong(path, "a JSON value", v),
+            Ty::ForeignObject if !v.is_object() => self.wrong(path, "an object", v),
+            // `any` carries any JSON value; null only where the field is optional.
+            Ty::Any if v.is_null() => self.wrong(path, "a JSON value", v),
             Ty::Optional(inner) => {
                 if !v.is_null() {
                     self.value(inner, v, path);
