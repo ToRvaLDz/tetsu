@@ -85,6 +85,10 @@ impl Esp {
             return Err(BootError::StaleCounter { counter, newest });
         }
         fs::create_dir_all(&self.dir).map_err(|e| BootError::io(&self.dir, e))?;
+        // Make the new directory entries durable: `EFI` in the root, `Linux` in `EFI`.
+        for parent in self.dir.ancestors().skip(1).take(2) {
+            sync_file(parent)?;
+        }
         let tmp = self.dir.join(tmp_file_name(counter));
         let written = write(&tmp).and_then(|()| sync_file(&tmp));
         if let Err(e) = written {
@@ -148,7 +152,7 @@ impl Esp {
 }
 
 /// fsync a file or a directory.
-fn sync_file(path: &Path) -> Result<(), BootError> {
+pub(crate) fn sync_file(path: &Path) -> Result<(), BootError> {
     fs::File::open(path)
         .and_then(|f| f.sync_all())
         .map_err(|e| BootError::io(path, e))

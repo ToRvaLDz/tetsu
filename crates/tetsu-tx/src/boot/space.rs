@@ -1,10 +1,12 @@
 //! Free-space check on the ESP, done before anything is deleted.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
 use super::BootError;
+use super::esp::sync_file;
 use super::retention::GcPlan;
 
 /// Slack kept free on top of the incoming entry (FAT metadata, rounding).
@@ -48,12 +50,21 @@ pub fn check_space(
 
 /// Delete everything in `plan`. Call only after [`check_space`] passed.
 pub fn apply_gc(plan: &GcPlan) -> Result<(), BootError> {
+    let mut dirs = BTreeSet::new();
     for path in &plan.remove {
         match fs::remove_file(path) {
-            Ok(()) => {}
+            Ok(()) => {
+                if let Some(parent) = path.parent() {
+                    dirs.insert(parent.to_path_buf());
+                }
+            }
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(e) => return Err(BootError::io(path, e)),
         }
+    }
+    // Make the deletions durable before the caller relies on the space.
+    for dir in dirs {
+        sync_file(&dir)?;
     }
     Ok(())
 }
