@@ -1,6 +1,6 @@
 //! Looking for other operating systems on the candidate disks. A partition
-//! is mounted read-only (no exec, no devices, no setuid) under the run
-//! directory, inspected and unmounted again.
+//! is mounted read-only (no exec, no devices, no setuid, no journal
+//! replay) under the run directory, inspected and unmounted again.
 
 use std::ffi::OsString;
 use std::fs;
@@ -11,6 +11,26 @@ use tetsu_installer_core::install::rundir::RunDir;
 use tetsu_tx::boot::tool::Runner;
 
 const MOUNT_OPTIONS: &str = "ro,nodev,noexec,nosuid";
+
+/// The mount options for a filesystem type, or `None` when the type is not
+/// one we know how to mount without writing. A read-only mount of a dirty
+/// ext4, XFS, Btrfs or F2FS still replays the journal onto a disk the user
+/// may never pick, so each gets its option against that.
+fn mount_options(fstype: &str) -> Option<String> {
+    let extra = match fstype {
+        "ext2" | "ext3" | "ext4" => "noload",
+        "btrfs" => "rescue=nologreplay",
+        "xfs" => "norecovery",
+        "f2fs" => "norecovery",
+        "vfat" | "exfat" | "ntfs" | "ntfs3" | "iso9660" | "udf" => "",
+        _ => return None,
+    };
+    Some(if extra.is_empty() {
+        MOUNT_OPTIONS.to_owned()
+    } else {
+        format!("{MOUNT_OPTIONS},{extra}")
+    })
+}
 const OS_RELEASE_FILES: [&str; 2] = ["etc/os-release", "usr/lib/os-release"];
 
 /// [`OsProbe`] backed by real (or, in tests, faked) mounts.
@@ -27,13 +47,24 @@ impl<'a> MountProbe<'a> {
         }
     }
 
+    /// The filesystem type of `partition`, from its signature.
+    fn fstype(&self, partition: &Path) -> Option<String> {
+        let args: [OsString; 3] = ["-n".into(), "-o".into(), "FSTYPE".into()];
+        let mut args = args.to_vec();
+        args.push(partition.into());
+        let out = self.runner.output("lsblk", &args).ok()?;
+        let fstype = out.lines().next()?.trim();
+        (!fstype.is_empty()).then(|| fstype.to_owned())
+    }
+
     /// Run `look` on the mounted partition; `None` when it cannot be
     /// mounted (unknown filesystem, encrypted, damaged).
     fn mounted<T>(&self, partition: &Path, look: impl FnOnce(&Path) -> T) -> Option<T> {
+        let options = mount_options(&self.fstype(partition)?)?;
         let dir = RunDir::create(&self.run_dir).ok()?.subdir("probe").ok()?;
         let args: [OsString; 4] = [
             "-o".into(),
-            MOUNT_OPTIONS.into(),
+            options.into(),
             partition.into(),
             dir.clone().into(),
         ];
@@ -99,6 +130,8 @@ mod tests {
     #[derive(Default)]
     struct Devices {
         files: HashMap<&'static str, Vec<(&'static str, &'static str)>>,
+        /// Filesystem type per device; ext4 when absent.
+        fstypes: HashMap<&'static str, &'static str>,
         calls: RefCell<Vec<String>>,
     }
 
@@ -133,8 +166,12 @@ mod tests {
             Ok(())
         }
 
-        fn output(&self, _: &str, _: &[OsString]) -> Result<String, BootError> {
-            unreachable!()
+        fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+            assert_eq!(program, "lsblk");
+            assert_eq!(args[..3], ["-n", "-o", "FSTYPE"]);
+            let device = args[3].to_string_lossy();
+            let fstype = self.fstypes.get(device.as_ref()).copied();
+            Ok(format!("{}\n", fstype.unwrap_or("ext4")))
         }
     }
 
@@ -165,7 +202,7 @@ mod tests {
             *calls,
             [
                 format!(
-                    "mount -o ro,nodev,noexec,nosuid /dev/sda1 {}",
+                    "mount -o ro,nodev,noexec,nosuid,noload /dev/sda1 {}",
                     mnt.display()
                 ),
                 format!("umount {}", mnt.display()),
@@ -211,6 +248,41 @@ mod tests {
         // Nothing was mounted, so nothing is unmounted.
         assert_eq!(dev.calls.borrow().len(), 2);
         assert!(dev.calls.borrow().iter().all(|c| c.starts_with("mount ")));
+    }
+
+    #[test]
+    fn no_filesystem_replays_its_journal() {
+        let with = |t: &str| mount_options(t).unwrap();
+        assert_eq!(with("ext4"), "ro,nodev,noexec,nosuid,noload");
+        assert_eq!(with("ext3"), "ro,nodev,noexec,nosuid,noload");
+        assert_eq!(with("btrfs"), "ro,nodev,noexec,nosuid,rescue=nologreplay");
+        assert_eq!(with("xfs"), "ro,nodev,noexec,nosuid,norecovery");
+        assert_eq!(with("vfat"), "ro,nodev,noexec,nosuid");
+        // Encrypted, swap, or something we cannot mount safely.
+        for other in ["crypto_LUKS", "swap", "reiserfs", ""] {
+            assert_eq!(mount_options(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn each_partition_is_mounted_with_the_options_of_its_filesystem() {
+        let t = probe_dir();
+        let mut dev = Devices::default();
+        dev.files
+            .insert("/dev/sda2", vec![("etc/os-release", "NAME=Fedora\n")]);
+        dev.fstypes.insert("/dev/sda2", "btrfs");
+        dev.files.insert("/dev/sda3", vec![]);
+        dev.fstypes.insert("/dev/sda3", "crypto_LUKS");
+        let probe = MountProbe::new(&dev, t.path());
+        assert_eq!(
+            probe.os_release(Path::new("/dev/sda2")).as_deref(),
+            Some("Fedora")
+        );
+        assert_eq!(probe.os_release(Path::new("/dev/sda3")), None);
+        let calls = dev.calls.borrow();
+        assert!(calls[0].starts_with("mount -o ro,nodev,noexec,nosuid,rescue=nologreplay "));
+        // The encrypted partition is never mounted.
+        assert_eq!(calls.len(), 2, "{calls:?}");
     }
 
     #[test]
