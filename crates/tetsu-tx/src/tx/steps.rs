@@ -13,7 +13,7 @@ use crate::boot::BootError;
 use crate::boot::tool::Runner;
 
 /// The initrd a snapshot boots with, inside the snapshot.
-const INITRD: &str = "/usr/lib/tetsu/initrd.img";
+pub(crate) const INITRD: &str = "/usr/lib/tetsu/initrd.img";
 
 /// Lines of a tool's stderr, for the transaction log.
 fn stderr_lines(stderr: &str) -> Vec<String> {

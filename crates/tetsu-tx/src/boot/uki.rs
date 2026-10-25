@@ -91,7 +91,7 @@ impl UkiSpec {
 
 /// Read a text file, refusing a symlink at the last component (guards the
 /// window between [`UkiSpec::check_inputs`] and the read).
-fn read_no_follow(path: &Path) -> Result<String, BootError> {
+pub(crate) fn read_no_follow(path: &Path) -> Result<String, BootError> {
     let mut text = String::new();
     fs::OpenOptions::new()
         .read(true)

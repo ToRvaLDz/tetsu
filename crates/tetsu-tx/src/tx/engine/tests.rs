@@ -717,7 +717,14 @@ fn rollback_keeps_the_accounts_of_the_running_system() {
 #[test]
 fn rollback_to_an_unknown_or_uncommitted_snapshot_is_not_found() {
     let env = Env::two_snapshots();
+    // Snapshot 7 has a record (so it is no orphan) but was never committed.
     env.btrfs.adopt(&env.layout.root(7));
+    env.records
+        .write(&Record {
+            counter: 7,
+            ..Record::default()
+        })
+        .unwrap();
     let before = env.state();
     for target in [9, 7] {
         let e = env.run(&Request::Rollback(Some(target))).unwrap_err();
@@ -748,4 +755,12 @@ fn rollback_to_a_snapshot_without_an_initrd_fails_cleanly() {
     assert!(reason.contains("initrd"), "{reason}");
     env.assert_unchanged(&before, "missing initrd");
     assert!(env.runner.lines().is_empty());
+}
+
+#[test]
+fn the_scratch_dirs_follow_the_nspawn_prefix() {
+    assert_eq!(
+        scratch_dir(Path::new(DEFAULT_RUN_DIR), 5),
+        crate::tx::nspawn::scratch_dir(5)
+    );
 }
