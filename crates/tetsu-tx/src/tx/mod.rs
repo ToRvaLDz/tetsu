@@ -1,6 +1,7 @@
 //! Transaction engine pieces on top of the snapshot store and the boot
 //! library: the package model, the container argv, the steps run inside a
-//! snapshot, the base guard and the account merge. No orchestration here.
+//! snapshot, the base guard and the account merge, and the engine that runs
+//! them in order.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +10,7 @@ use crate::store::StoreError;
 
 pub mod accounts;
 pub mod dkms;
+pub mod engine;
 #[cfg(test)]
 pub(crate) mod fake;
 pub mod guard;

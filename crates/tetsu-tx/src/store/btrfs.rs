@@ -91,7 +91,7 @@ impl<R: Runner> Btrfs for CliBtrfs<R> {
 pub(crate) mod tests {
     use super::*;
     use crate::boot::BootError;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::BTreeMap;
     use std::fs;
     use std::io;
@@ -133,6 +133,9 @@ pub(crate) mod tests {
         pub subvols: RefCell<BTreeMap<PathBuf, bool>>,
         /// Operation (first word of the record) that fails.
         pub fail: RefCell<Option<&'static str>>,
+        /// A snapshot also copies the files of its source (nested
+        /// subvolumes stay empty directories).
+        pub copy_files: Cell<bool>,
     }
 
     impl FakeBtrfs {
@@ -142,7 +145,31 @@ pub(crate) mod tests {
                 ops: RefCell::default(),
                 subvols: RefCell::default(),
                 fail: RefCell::default(),
+                copy_files: Cell::new(false),
             }
+        }
+
+        fn copy_tree(&self, src: &Path, dst: &Path) -> Result<(), StoreError> {
+            let read = fs::read_dir(src).map_err(|e| StoreError::io(src, e))?;
+            for item in read {
+                let item = item.map_err(|e| StoreError::io(src, e))?;
+                let from = item.path();
+                let to = dst.join(item.file_name());
+                if self.subvols.borrow().contains_key(&from) {
+                    continue;
+                }
+                let is_dir = item
+                    .file_type()
+                    .map_err(|e| StoreError::io(&from, e))?
+                    .is_dir();
+                if is_dir {
+                    fs::create_dir(&to).map_err(|e| StoreError::io(&to, e))?;
+                    self.copy_tree(&from, &to)?;
+                } else {
+                    fs::copy(&from, &to).map_err(|e| StoreError::io(&from, e))?;
+                }
+            }
+            Ok(())
         }
 
         fn rel(&self, p: &Path) -> String {
@@ -208,6 +235,9 @@ pub(crate) mod tests {
                 .collect();
             for n in nested {
                 fs::create_dir(dst.join(n.file_name().unwrap())).unwrap();
+            }
+            if self.copy_files.get() {
+                self.copy_tree(src, dst)?;
             }
             self.subvols
                 .borrow_mut()
