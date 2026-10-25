@@ -37,23 +37,59 @@ impl UkiSpec {
 
     /// Base command line plus the snapshot root subvolume.
     pub fn cmdline(&self) -> String {
-        todo!()
+        let root = format!("rootflags=subvol=@snapshots/{}/root", self.counter);
+        match self.base_cmdline.trim() {
+            "" => root,
+            base => format!("{base} {root}"),
+        }
     }
 }
 
 /// `os_release` with `IMAGE_VERSION=<counter>` set, replacing any existing one.
 pub fn with_image_version(os_release: &str, counter: u64) -> String {
-    todo!()
+    let mut out: String = os_release
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("IMAGE_VERSION="))
+        .flat_map(|l| [l, "\n"])
+        .collect();
+    out.push_str(&format!("IMAGE_VERSION={counter}\n"));
+    out
 }
 
 /// The `ukify build` argument vector.
 pub fn ukify_args(spec: &UkiSpec, os_release: &str, out: &Path) -> Vec<OsString> {
-    todo!()
+    let mut args: Vec<OsString> = vec!["build".into()];
+    let mut flag = |name: &str, value: OsString| {
+        args.push(name.into());
+        args.push(value);
+    };
+    flag("--linux", spec.kernel_path().into());
+    flag("--initrd", spec.initrd_path().into());
+    flag("--cmdline", spec.cmdline().into());
+    // ukify takes literal text when the value does not start with `@`.
+    flag("--os-release", os_release.into());
+    flag("--uname", spec.kernel_version.clone().into());
+    flag(
+        "--secureboot-private-key",
+        spec.keys.db_key.as_path().into(),
+    );
+    flag("--secureboot-certificate", spec.keys.db_cert.clone().into());
+    if let Some(pcr_key) = &spec.keys.pcr_key {
+        flag("--pcr-private-key", pcr_key.as_path().into());
+        if let Some(public) = &spec.keys.pcr_public {
+            flag("--pcr-public-key", public.clone().into());
+        }
+    }
+    flag("--output", out.into());
+    args
 }
 
 /// Build and sign the UKI into `out`.
 pub fn build_uki(runner: &dyn Runner, spec: &UkiSpec, out: &Path) -> Result<(), BootError> {
-    todo!()
+    let path = spec.os_release_path();
+    let text = fs::read_to_string(&path).map_err(|e| BootError::io(&path, e))?;
+    let os_release = with_image_version(&text, spec.counter);
+    runner.run("ukify", &ukify_args(spec, &os_release, out))
 }
 
 /// Sign an EFI binary (systemd-boot) with the db key.
@@ -63,12 +99,21 @@ pub fn sign_efi(
     output: &Path,
     keys: &SigningKeys,
 ) -> Result<(), BootError> {
-    todo!()
+    let args: Vec<OsString> = vec![
+        "--key".into(),
+        keys.db_key.as_path().into(),
+        "--cert".into(),
+        keys.db_cert.clone().into(),
+        "--output".into(),
+        output.into(),
+        input.into(),
+    ];
+    runner.run("sbsign", &args)
 }
 
 /// `sbverify --cert <cert> <path>`.
 pub fn verify_signature(runner: &dyn Runner, path: &Path, cert: &Path) -> Result<(), BootError> {
-    todo!()
+    runner.run("sbverify", &["--cert".into(), cert.into(), path.into()])
 }
 
 #[cfg(test)]

@@ -18,7 +18,23 @@ pub struct SystemRunner;
 
 impl Runner for SystemRunner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
-        todo!()
+        let out = match Command::new(program).args(args).output() {
+            Ok(o) => o,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(BootError::ToolMissing {
+                    tool: program.to_owned(),
+                });
+            }
+            Err(e) => return Err(BootError::io(program, e)),
+        };
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(BootError::Tool {
+            tool: program.to_owned(),
+            status: out.status.to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        })
     }
 }
 
