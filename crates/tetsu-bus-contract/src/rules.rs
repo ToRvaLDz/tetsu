@@ -13,7 +13,7 @@ const TAGS: [&str; 5] = [
 
 const ON_METHOD: &[&str] = &["@destructive", "@deprecated"];
 const ON_ERROR: &[&str] = &["@transient", "@permanent"];
-const ON_PARAMETER: &[&str] = &["@untrusted"];
+// Inputs, replies and error parameters are fields too, as in type members.
 const ON_FIELD: &[&str] = &["@untrusted", "@deprecated"];
 const ON_NOTHING: &[&str] = &[];
 
@@ -91,7 +91,7 @@ fn check_method(m: &Method, path: &str, out: &mut Vec<Violation>) {
         ));
     }
     let in_path = format!("{path}(in)");
-    check_fields(&m.inputs, &in_path, ON_PARAMETER, out);
+    check_fields(&m.inputs, &in_path, ON_FIELD, out);
     for p in &m.inputs {
         if !p.doc.has_prose() {
             out.push(Violation::new(
@@ -101,7 +101,7 @@ fn check_method(m: &Method, path: &str, out: &mut Vec<Violation>) {
             ));
         }
     }
-    check_fields(&m.outputs, &format!("{path}(out)"), ON_PARAMETER, out);
+    check_fields(&m.outputs, &format!("{path}(out)"), ON_FIELD, out);
 }
 
 fn check_error(e: &ErrorDef, path: &str, out: &mut Vec<Violation>) {
@@ -114,7 +114,7 @@ fn check_error(e: &ErrorDef, path: &str, out: &mut Vec<Violation>) {
             format!("error must carry exactly one of @transient and @permanent, has {classes}"),
         ));
     }
-    check_fields(&e.fields, path, ON_PARAMETER, out);
+    check_fields(&e.fields, path, ON_FIELD, out);
 }
 
 /// Checks the tags of `fields`, then those of every inline type below them.
