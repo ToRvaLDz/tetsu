@@ -7,7 +7,9 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use super::{PackageChange, TxError};
+use crate::boot::BootError;
 use crate::boot::tool::Runner;
+use crate::store::snapshot::PACMAN_DB;
 
 /// The meta-package that pulls in the base system.
 pub const BASE_PACKAGE: &str = "tetsu-base";
@@ -28,60 +30,210 @@ pub struct PackageInfo {
 /// `env LC_ALL=C pacman --root <root> --dbpath <root>/usr/lib/pacman <flags>`
 /// (the program is `env`).
 pub fn query_args(root: &Path, flags: &[&str]) -> Vec<OsString> {
-    todo!("{root:?} {flags:?}")
+    let mut args: Vec<OsString> = vec!["LC_ALL=C".into(), "pacman".into(), "--root".into()];
+    args.push(root.into());
+    args.push("--dbpath".into());
+    args.push(root.join(PACMAN_DB.trim_start_matches('/')).into());
+    args.extend(flags.iter().map(OsString::from));
+    args
+}
+
+fn malformed(what: &str, line: &str) -> TxError {
+    TxError::failed(format!("unexpected pacman output ({what}): {line:?}"))
 }
 
 /// Parse `pacman -Q` output (`name version` per line).
 pub fn parse_installed(out: &str) -> Result<Packages, TxError> {
-    todo!("{out}")
+    let mut all = Packages::new();
+    for line in out.lines().filter(|l| !l.trim().is_empty()) {
+        let mut parts = line.split_whitespace();
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(name), Some(version), None) => {
+                all.insert(name.to_owned(), version.to_owned());
+            }
+            _ => return Err(malformed("-Q", line)),
+        }
+    }
+    Ok(all)
+}
+
+/// The fields of one record being read, by key.
+type Fields = BTreeMap<String, String>;
+
+fn info_from_fields(fields: &Fields) -> Result<PackageInfo, TxError> {
+    let get = |key: &str| fields.get(key).map(String::as_str);
+    let list = |key: &str| -> Vec<String> {
+        get(key)
+            .filter(|v| *v != "None")
+            .map(|v| v.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default()
+    };
+    let (Some(name), Some(version)) = (get("Name"), get("Version")) else {
+        return Err(TxError::failed("pacman -Qi record without Name or Version"));
+    };
+    Ok(PackageInfo {
+        name: name.to_owned(),
+        version: version.to_owned(),
+        depends: list("Depends On"),
+        provides: list("Provides"),
+    })
 }
 
 /// Parse `pacman -Qi` output (records separated by a blank line).
 pub fn parse_info(out: &str) -> Result<Vec<PackageInfo>, TxError> {
-    todo!("{out}")
+    let mut infos = Vec::new();
+    let mut fields = Fields::new();
+    let mut last_key: Option<String> = None;
+    for line in out.lines() {
+        if line.trim().is_empty() {
+            if !fields.is_empty() {
+                infos.push(info_from_fields(&fields)?);
+                fields.clear();
+            }
+            last_key = None;
+        } else if line.starts_with(char::is_whitespace) {
+            // A wrapped value continues the previous field.
+            let Some(value) = last_key.as_ref().and_then(|k| fields.get_mut(k)) else {
+                return Err(malformed("-Qi continuation", line));
+            };
+            value.push(' ');
+            value.push_str(line.trim());
+        } else {
+            let Some((key, value)) = line.split_once(':') else {
+                return Err(malformed("-Qi", line));
+            };
+            let key = key.trim().to_owned();
+            fields.insert(key.clone(), value.trim().to_owned());
+            last_key = Some(key);
+        }
+    }
+    if !fields.is_empty() {
+        infos.push(info_from_fields(&fields)?);
+    }
+    Ok(infos)
 }
 
 /// Parse a `-q` listing: one package name per line.
 pub fn parse_names(out: &str) -> Vec<String> {
-    todo!("{out}")
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A dependency or provide without its version constraint.
+fn bare_name(dep: &str) -> &str {
+    dep.split(['<', '>', '=']).next().unwrap_or(dep)
 }
 
 /// The dependency closure of `root` over `infos`: names and provides are
-/// resolved, version constraints are stripped, optional dependencies are
-/// ignored. `None` when `root` is not installed.
+/// resolved (every installed provider of a virtual name counts), version
+/// constraints are stripped, optional dependencies are ignored. `None` when
+/// `root` is not installed.
 pub fn base_closure(infos: &[PackageInfo], root: &str) -> Option<BTreeSet<String>> {
-    todo!("{infos:?} {root}")
+    let by_name: BTreeMap<&str, usize> = infos
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.name.as_str(), i))
+        .collect();
+    let mut providers: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, p) in infos.iter().enumerate() {
+        for provide in &p.provides {
+            providers.entry(bare_name(provide)).or_default().push(i);
+        }
+    }
+    let start = *by_name.get(root)?;
+    let mut seen = BTreeSet::from([start]);
+    let mut queue = vec![start];
+    while let Some(i) = queue.pop() {
+        for dep in &infos[i].depends {
+            let dep = bare_name(dep);
+            let targets = match by_name.get(dep) {
+                Some(&t) => vec![t],
+                None => providers.get(dep).cloned().unwrap_or_default(),
+            };
+            for t in targets {
+                if seen.insert(t) {
+                    queue.push(t);
+                }
+            }
+        }
+    }
+    Some(seen.into_iter().map(|i| infos[i].name.clone()).collect())
 }
 
 /// The explicitly installed packages outside the base closure, sorted.
 pub fn user_layer(explicit: &[String], closure: &BTreeSet<String>) -> Vec<String> {
-    todo!("{explicit:?} {closure:?}")
+    let user: BTreeSet<&String> = explicit.iter().filter(|n| !closure.contains(*n)).collect();
+    user.into_iter().cloned().collect()
 }
 
 /// Packages whose version differs between `before` and `after`, by name.
 pub fn diff(before: &Packages, after: &Packages) -> Vec<PackageChange> {
-    todo!("{before:?} {after:?}")
+    let names: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    names
+        .into_iter()
+        .filter(|n| before.get(*n) != after.get(*n))
+        .map(|n| PackageChange {
+            name: n.clone(),
+            from: before.get(n).cloned(),
+            to: after.get(n).cloned(),
+        })
+        .collect()
 }
 
 /// The user packages named in a conflict or broken-dependency message of
 /// pacman, in order of first appearance.
 pub fn blocking_packages(stderr: &str, user_layer: &[String]) -> Vec<String> {
-    todo!("{stderr} {user_layer:?}")
+    const MARKERS: [&str; 3] = ["breaks dependency", "are in conflict", "required by"];
+    let mut found: Vec<String> = Vec::new();
+    for line in stderr
+        .lines()
+        .filter(|l| MARKERS.iter().any(|m| l.contains(m)))
+    {
+        for token in line.split_whitespace() {
+            let token = token.trim_matches(|c| "'\"(),:".contains(c));
+            let name = bare_name(token);
+            if user_layer.iter().any(|u| u == name) && !found.iter().any(|f| f == name) {
+                found.push(name.to_owned());
+            }
+        }
+    }
+    found
+}
+
+/// Run `program` and return its stdout. A failure with no message at all is
+/// an empty answer: `pacman -Q` with a filter exits 1 and prints nothing
+/// when nothing matches.
+pub(crate) fn output_or_empty(
+    runner: &dyn Runner,
+    program: &str,
+    args: &[OsString],
+) -> Result<String, TxError> {
+    match runner.output(program, args) {
+        Err(BootError::Tool { stderr, .. }) if stderr.is_empty() => Ok(String::new()),
+        other => Ok(other?),
+    }
+}
+
+fn query(runner: &dyn Runner, root: &Path, flags: &[&str]) -> Result<String, TxError> {
+    output_or_empty(runner, "env", &query_args(root, flags))
 }
 
 /// Installed packages of `root`.
 pub fn installed(runner: &dyn Runner, root: &Path) -> Result<Packages, TxError> {
-    todo!("{root:?} {}", runner.check_tool("x").is_ok())
+    parse_installed(&query(runner, root, &["-Q"])?)
 }
 
 /// `pacman -Qi` records of `root`.
 pub fn infos(runner: &dyn Runner, root: &Path) -> Result<Vec<PackageInfo>, TxError> {
-    todo!("{root:?} {}", runner.check_tool("x").is_ok())
+    parse_info(&query(runner, root, &["-Qi"])?)
 }
 
 /// Explicitly installed package names of `root`.
 pub fn explicit(runner: &dyn Runner, root: &Path) -> Result<Vec<String>, TxError> {
-    todo!("{root:?} {}", runner.check_tool("x").is_ok())
+    Ok(parse_names(&query(runner, root, &["-Qqe"])?))
 }
 
 #[cfg(test)]
