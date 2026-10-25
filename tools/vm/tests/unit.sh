@@ -44,8 +44,10 @@ test_dry_run() {
   assert_contains "dry-run: tcg without kvm" "$out" "q35,smm=on,accel=tcg"
   assert_contains "dry-run: cpu max without kvm" "$out" "-cpu max"
 
-  out=$("$VM" start --dry-run --state "$st" --iso "$SCRATCH/boot.iso" --snapshot 2>&1)
-  assert_contains "dry-run: --snapshot" "$out" "-snapshot"
+  out=$("$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" --iso "$SCRATCH/boot.iso" --snapshot 2>&1)
+  assert_contains "dry-run: --snapshot on the disk drive" "$out" "file=$SCRATCH/disk.img,if=virtio,snapshot=on"
+  assert_not_contains "dry-run: no global -snapshot (would hit VARS)" "$out" " -snapshot"
+  assert_not_contains "dry-run: iso drive not snapshotted" "$out" "readonly=on,snapshot"
 
   out=$("$VM" start --dry-run --state "$st" --iso "$SCRATCH/boot.iso" --mem 4096 --cpus 4 2>&1)
   assert_contains "dry-run: --mem" "$out" "-m 4096"
@@ -86,7 +88,49 @@ test_usage_errors() {
   assert_eq "wait-for: invalid regex exits 64 quickly" 64 "$code"
 }
 
+# ---------------------------------------------------------------- stale swtpm
+test_stale_swtpm() {
+  local st="$SCRATCH/stale" t
+  export TETSU_VM_SWTPM_COMM=sleep TETSU_VM_QEMU_COMM=nomatch
+  mkdir -p "$st"
+  sleep 60 & t=$!
+  echo "$t" >"$st/swtpm.pid"
+
+  local out
+  out=$("$VM" status --state "$st" 2>&1) || true
+  assert_contains "status: reports a stale swtpm" "$out" "stale swtpm"
+  assert_status "status: stale swtpm is still non-zero" 1 "$VM" status --state "$st"
+
+  # Seam: the helper start uses before touching tpm/ and the sockets.
+  (
+    VM_DIR=$(cd "$HERE/.." && pwd)
+    # shellcheck source=../lib/common.sh
+    . "$VM_DIR/lib/common.sh"
+    # shellcheck source=../lib/start.sh
+    . "$VM_DIR/lib/start.sh"
+    terminate_stale_swtpm "$st"
+  )
+  wait "$t" 2>/dev/null
+  assert_gone "start: leftover swtpm terminated" "$t"
+
+  # An unrelated process behind swtpm.pid must survive.
+  export TETSU_VM_SWTPM_COMM=nomatch
+  sleep 60 & t=$!
+  echo "$t" >"$st/swtpm.pid"
+  (
+    VM_DIR=$(cd "$HERE/.." && pwd)
+    . "$VM_DIR/lib/common.sh"
+    . "$VM_DIR/lib/start.sh"
+    terminate_stale_swtpm "$st"
+  )
+  if kill -0 "$t" 2>/dev/null; then pass "start: unrelated pid untouched"
+  else fail "start: unrelated pid untouched"; fi
+  kill "$t" 2>/dev/null
+  unset TETSU_VM_SWTPM_COMM TETSU_VM_QEMU_COMM
+}
+
 test_dry_run
+test_stale_swtpm
 test_usage_errors
 test_dry_run_smbios
 test_dry_run_errors
