@@ -32,6 +32,15 @@ pid_of() {
 qemu_pid() { pid_of "$1/qemu.pid" "$(qemu_comm)"; }
 swtpm_pid() { pid_of "$1/swtpm.pid" "$(swtpm_comm)"; }
 
+# Terminate swtpm with SIGTERM. Its state in <state>/tpm is non-volatile and
+# survives, as a TPM does on real hardware.
+term_swtpm() {
+  local pid
+  pid=$(swtpm_pid "$1") || return 0
+  kill "$pid" 2>/dev/null || true
+  wait_gone "$pid" 5 || { kill -KILL "$pid" 2>/dev/null || true; wait_gone "$pid" 5 || true; }
+}
+
 # Wait up to $2 seconds (default 10) for a pid to disappear.
 wait_gone() {
   local pid=$1 tries=$(( ${2:-10} * 10 ))

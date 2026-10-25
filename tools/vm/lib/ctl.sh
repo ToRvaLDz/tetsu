@@ -18,27 +18,22 @@ parse_ctl_args() {
   CTL_STATE=$(readlink -m "$CTL_STATE")
 }
 
-# Terminate swtpm with SIGTERM. Its state in <state>/tpm is non-volatile and
-# survives, as a TPM does on real hardware.
-term_swtpm() {
-  local pid
-  pid=$(swtpm_pid "$1") || return 0
-  kill "$pid" 2>/dev/null || true
-  wait_gone "$pid" 5 || { kill -KILL "$pid" 2>/dev/null || true; wait_gone "$pid" 5 || true; }
-}
-
+# SIGKILL QEMU; non-zero if it is still alive afterwards.
 kill_qemu() {
   local pid
   pid=$(qemu_pid "$1") || return 0
   kill -KILL "$pid" 2>/dev/null || true
-  wait_gone "$pid" 10 || die "QEMU (pid $pid) did not die after SIGKILL"
+  wait_gone "$pid" 10 || { warn "QEMU (pid $pid) did not die after SIGKILL"; return 1; }
 }
 
 # power-cut: SIGKILL QEMU (no flush, no ACPI), then stop swtpm. Idempotent.
 cmd_power_cut() {
   parse_ctl_args "$@"
-  kill_qemu "$CTL_STATE"
+  local rc=0
+  kill_qemu "$CTL_STATE" || rc=1
+  # Stop swtpm even when QEMU survived, then report the failure.
   term_swtpm "$CTL_STATE"
+  [ "$rc" -eq 0 ] || die "power-cut incomplete: QEMU is still running in $CTL_STATE"
   printf 'power cut: %s\n' "$CTL_STATE"
 }
 
@@ -73,6 +68,10 @@ cmd_status() {
   if pid=$(qemu_pid "$CTL_STATE"); then
     printf 'running (qemu pid %s, state %s)\n' "$pid" "$CTL_STATE"
     return 0
+  fi
+  if pid=$(swtpm_pid "$CTL_STATE"); then
+    printf 'stopped (stale swtpm pid %s, state %s)\n' "$pid" "$CTL_STATE"
+    return 1
   fi
   printf 'stopped (state %s)\n' "$CTL_STATE"
   return 1

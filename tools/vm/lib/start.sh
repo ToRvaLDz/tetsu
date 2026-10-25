@@ -59,7 +59,7 @@ Usage: tetsu-vm start [options]
   --state DIR           state directory (default <repo>/target/vm/default)
   --mem MB              memory (default 2048)
   --cpus N              vCPUs (default 2)
-  --snapshot            discard disk writes on exit
+  --snapshot            discard writes to --disk on exit (VARS and TPM persist)
   --vars TEMPLATE       VARS template (default: distro empty VARS = setup mode)
   --fresh               reset VARS and TPM state first
   --cmdline-extra STR   kernel cmdline addition (systemd-boot)
@@ -121,9 +121,12 @@ build_argv() {
     -drive "if=pflash,format=raw,unit=1,file=$(qesc "$st/vars.fd")"
     -chardev "socket,id=chrtpm,path=$(qesc "$st/swtpm.sock")"
     -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-crb,tpmdev=tpm0)
-  [ -z "$O_DISK" ] || ARGV+=(-drive "file=$(qesc "$O_DISK"),if=virtio")
+  # snapshot=on on the disk drive only: a global -snapshot would also redirect
+  # writes to the VARS pflash. The ISO is read-only already.
+  local snap=""
+  [ "$O_SNAPSHOT" -eq 0 ] || snap=",snapshot=on"
+  [ -z "$O_DISK" ] || ARGV+=(-drive "file=$(qesc "$O_DISK"),if=virtio$snap")
   [ -z "$O_ISO" ] || ARGV+=(-drive "file=$(qesc "$O_ISO"),media=cdrom,readonly=on")
-  [ "$O_SNAPSHOT" -eq 0 ] || ARGV+=(-snapshot)
 
   cmdline=$O_CMDLINE
   if [ "$O_SERIAL" -eq 1 ]; then
@@ -148,6 +151,7 @@ build_argv() {
 prepare_state() {
   local st=$O_STATE vars_src
   mkdir -p "$st"
+  terminate_stale_swtpm "$st"
   if [ "$O_FRESH" -eq 1 ]; then
     rm -rf "$st/tpm" "$st/vars.fd" "$st/serial.log"
   fi
@@ -168,11 +172,14 @@ start_swtpm() {
     || die "swtpm failed to start (see $st/swtpm.log)"
 }
 
-kill_swtpm() {
+# A swtpm left over from an earlier run must not be orphaned or have its tpm/
+# directory removed under it. The pid's command name is checked first.
+terminate_stale_swtpm() {
   local pid
-  pid=$(swtpm_pid "$O_STATE") || return 0
-  kill "$pid" 2>/dev/null || true
-  wait_gone "$pid" 5 || true
+  if pid=$(swtpm_pid "$1"); then
+    warn "terminating leftover swtpm (pid $pid) of $1"
+    term_swtpm "$1"
+  fi
 }
 
 cmd_start() {
@@ -191,9 +198,9 @@ cmd_start() {
   prepare_state
   start_swtpm
   if ! "${ARGV[@]}" 2>"$O_STATE/qemu.log"; then
-    kill_swtpm
+    term_swtpm "$O_STATE"
     die "QEMU failed to start: $(cat "$O_STATE/qemu.log")"
   fi
-  qemu_pid "$O_STATE" >/dev/null || { kill_swtpm; die "QEMU did not leave a live pidfile"; }
+  qemu_pid "$O_STATE" >/dev/null || { term_swtpm "$O_STATE"; die "QEMU did not leave a live pidfile"; }
   printf 'started: state=%s qemu pid=%s\n' "$O_STATE" "$(qemu_pid "$O_STATE")"
 }
