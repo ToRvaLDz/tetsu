@@ -106,6 +106,24 @@ impl<'a> Store<'a> {
         self.start(lock_path, read_esp, booted, |_| source)
     }
 
+    /// Like [`Store::begin`], with the source chosen by `pick` from the ESP
+    /// read under the lock, so a rollback target is judged on state no other
+    /// transaction can change. A failed `pick` leaves nothing behind.
+    pub fn begin_picking<F, P>(
+        &self,
+        lock_path: &Path,
+        read_esp: F,
+        booted: u64,
+        pick: P,
+    ) -> Result<Begun, StoreError>
+    where
+        F: FnOnce() -> Result<EspState, BootError>,
+        P: FnOnce(&EspState) -> Result<Source, StoreError>,
+    {
+        let _ = (lock_path, read_esp, booted, pick);
+        todo!()
+    }
+
     /// The body of `begin` and `begin_from`; `pick` chooses the source from
     /// the ESP read under the lock.
     fn start<F, P>(
@@ -592,5 +610,45 @@ mod tests {
         let lock = TxLock::acquire(&env.lock_path).unwrap();
         env.store().gc_orphans(&lock, &st, Some(1)).unwrap();
         assert!(env.layout.is_committed(2));
+    }
+
+    #[test]
+    fn begin_picking_uses_the_source_picked_under_the_lock() {
+        let env = Env::new();
+        env.committed(1, G);
+        env.committed(2, G);
+        let st = esp(&["tetsu-1.efi", "tetsu-2.efi"], &[]);
+        let lock_path = env.lock_path.clone();
+        let chosen = |seen: &EspState| {
+            assert!(matches!(
+                TxLock::acquire(&lock_path),
+                Err(StoreError::Busy { .. })
+            ));
+            assert_eq!(seen.entries.len(), 2);
+            Ok(pick(1, false))
+        };
+        let begun = env
+            .store()
+            .begin_picking(&env.lock_path, || Ok(st.clone()), 2, chosen)
+            .unwrap();
+        assert_eq!(begun.counter, 3);
+        assert_eq!(begun.source, pick(1, false));
+    }
+
+    #[test]
+    fn a_failed_pick_leaves_nothing_and_releases_the_lock() {
+        let env = Env::new();
+        env.committed(1, G);
+        let st = esp(&["tetsu-1.efi"], &[]);
+        let result = env.store().begin_picking(
+            &env.lock_path,
+            || Ok(st.clone()),
+            1,
+            |_| Err(StoreError::NotFound(7)),
+        );
+        assert!(matches!(result, Err(StoreError::NotFound(7))));
+        assert_eq!(env.snapshots(), vec![1]);
+        assert!(env.btrfs.take_ops().is_empty());
+        TxLock::acquire(&env.lock_path).unwrap();
     }
 }
