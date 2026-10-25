@@ -79,6 +79,8 @@ pub struct Machine {
     pub boot_output: RefCell<(String, String)>,
     /// A call whose joined line starts with one of these fails.
     pub fail: RefCell<Vec<String>>,
+    /// Programs `check_tool` reports as missing.
+    pub missing: RefCell<Vec<String>>,
 }
 
 impl Machine {
@@ -88,6 +90,7 @@ impl Machine {
             calls: RefCell::default(),
             seen: RefCell::default(),
             fail: RefCell::default(),
+            missing: RefCell::default(),
             boot_output: RefCell::new((FIRMWARE_BEFORE.to_owned(), FIRMWARE_AFTER.to_owned())),
         }
     }
@@ -214,6 +217,15 @@ impl Runner for Machine {
 
     fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
         self.answer(program, args)
+    }
+
+    fn check_tool(&self, program: &str) -> Result<(), BootError> {
+        if self.missing.borrow().iter().any(|m| m == program) {
+            return Err(BootError::ToolMissing {
+                tool: program.to_owned(),
+            });
+        }
+        Ok(())
     }
 }
 

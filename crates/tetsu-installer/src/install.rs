@@ -41,11 +41,12 @@ pub struct Report {
     pub disk_kept: bool,
 }
 
-/// Whether a failed install is cleaned up. Once the keys are enrolled the
-/// disk is kept: wiping it would leave the firmware trusting a Platform
-/// Key whose private half is gone.
-fn should_clean(failed: bool, keys_enrolled: bool) -> bool {
-    failed && !keys_enrolled
+/// Whether a failed install is cleaned up: only when an action ran (a
+/// failed precheck or an early cancel leaves the disk alone), and not once
+/// the keys are enrolled: wiping the disk would leave the firmware trusting
+/// a Platform Key whose private half is gone.
+fn should_clean(failed: bool, touched: bool, keys_enrolled: bool) -> bool {
+    failed && touched && !keys_enrolled
 }
 
 /// The executor owns the frontend for the whole run; this lets the binary
@@ -125,10 +126,10 @@ pub fn install(
     };
     // The executor holds the log file open on the ESP; release it first.
     let log = exec.log().lines().to_vec();
-    let keys_enrolled = exec.keys_enrolled();
+    let (touched, keys_enrolled) = (exec.touched(), exec.keys_enrolled());
     drop(exec);
-    let cleanup_problems =
-        should_clean(result.is_err(), keys_enrolled).then(|| cleanup(machine.runner, target));
+    let cleanup_problems = should_clean(result.is_err(), touched, keys_enrolled)
+        .then(|| cleanup(machine.runner, target));
     Report {
         disk_kept: result.is_err() && keys_enrolled,
         result,
@@ -162,6 +163,8 @@ mod tests {
     struct Tools<'a> {
         calls: RefCell<Vec<String>>,
         raise: Option<(&'static str, &'a AtomicBool)>,
+        /// A program `check_tool` does not find.
+        missing: Option<&'static str>,
     }
 
     impl Runner for Tools<'_> {
@@ -182,6 +185,15 @@ mod tests {
             }
             self.calls.borrow_mut().push(line);
             Ok(String::new())
+        }
+
+        fn check_tool(&self, program: &str) -> Result<(), BootError> {
+            if self.missing == Some(program) {
+                return Err(BootError::ToolMissing {
+                    tool: program.to_owned(),
+                });
+            }
+            Ok(())
         }
     }
 
@@ -241,6 +253,14 @@ mod tests {
 
     /// Run on a tempdir machine; `input` answers the abort question.
     fn run(input: &str, raise: Option<&'static str>) -> Outcome {
+        run_without(input, raise, None)
+    }
+
+    fn run_without(
+        input: &str,
+        raise: Option<&'static str>,
+        missing: Option<&'static str>,
+    ) -> Outcome {
         let t = tempfile::tempdir().unwrap();
         let disk = t.path().join("sda");
         for node in ["sda", "sda1", "sda2"] {
@@ -258,6 +278,7 @@ mod tests {
         let tools = Tools {
             calls: RefCell::default(),
             raise: raise.map(|p| (p, &cancel)),
+            missing,
         };
         let fe = RefCell::new(TextFrontend::new(input.as_bytes(), Vec::new()));
         let report = install(
@@ -294,11 +315,12 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_runs_on_failure_unless_the_keys_are_enrolled() {
-        assert!(should_clean(true, false));
-        assert!(!should_clean(true, true));
-        assert!(!should_clean(false, false));
-        assert!(!should_clean(false, true));
+    fn cleanup_runs_on_failure_after_an_action_unless_the_keys_are_enrolled() {
+        assert!(should_clean(true, true, false));
+        assert!(!should_clean(true, true, true));
+        assert!(!should_clean(true, false, false));
+        assert!(!should_clean(false, true, false));
+        assert!(!should_clean(false, true, true));
     }
 
     #[test]
@@ -320,6 +342,14 @@ mod tests {
         assert!(!o.console.contains(ABORT_PROMPT));
         let all = o.report.log.join("\n") + &o.console;
         assert!(!all.contains("Correct-Horse"));
+    }
+
+    #[test]
+    fn a_missing_tool_fails_at_once_and_leaves_the_disk_alone() {
+        let o = run_without("", None, Some("sbverify"));
+        assert!(matches!(o.report.result, Err(InstallError::Preflight(_))));
+        assert!(o.calls.is_empty(), "{:?}", o.calls);
+        assert!(o.report.cleanup_problems.is_none());
     }
 
     #[test]

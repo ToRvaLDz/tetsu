@@ -152,6 +152,46 @@ impl Action {
         }
     }
 
+    /// The external programs the action runs, directly or through
+    /// `tetsu-tx`. The executor checks them all before the first action.
+    pub fn programs(self) -> &'static [&'static str] {
+        match self {
+            Self::WipeSignatures => &["wipefs"],
+            Self::Partition => &["sh", "sfdisk"],
+            Self::SettleDevices => &["udevadm"],
+            Self::FormatEsp => &["mkfs.vfat"],
+            Self::MountEsp | Self::MountTop => &["mount"],
+            Self::LuksFormat | Self::LuksAddRecoveryKey | Self::LuksOpen => &["cryptsetup"],
+            Self::FormatRoot => &["mkfs.btrfs"],
+            Self::InitLayout | Self::SealSnapshot => &["btrfs"],
+            Self::ExtractPayload => &["tar"],
+            Self::HashPassword | Self::GenerateKey(_) => &["openssl"],
+            Self::WriteUser | Self::StageApiKey => &["chown"],
+            Self::BuildInitrd => &["systemd-nspawn"],
+            Self::BuildUki => &["ukify", "sbsign"],
+            Self::InstallBootloader => &["sbsign"],
+            Self::VerifySignatures => &["sbverify"],
+            Self::EnrollKeys => &[
+                "openssl",
+                "cert-to-efi-sig-list",
+                "sign-efi-sig-list",
+                "efi-updatevar",
+            ],
+            Self::CreateBootEntry | Self::SetBootOrder => &["efibootmgr"],
+            Self::Finish => &["sync", "umount", "cryptsetup"],
+            Self::LockRoot
+            | Self::WriteLocale
+            | Self::WriteHostname
+            | Self::WriteFstab
+            | Self::WriteCmdline
+            | Self::WriteAgentBackend
+            | Self::WriteUnlockLevel
+            | Self::WriteLoaderConf
+            | Self::WriteRecord
+            | Self::SecureBootOff => &[],
+        }
+    }
+
     /// One line for the progress display and the log. Never a secret.
     pub fn describe(self) -> String {
         match self {
@@ -222,6 +262,16 @@ impl InstallPlan {
 
     pub fn actions(&self) -> &[Action] {
         &self.actions
+    }
+
+    /// Every external program the plan runs, sorted and without repeats.
+    pub fn programs(&self) -> Vec<&'static str> {
+        let all: std::collections::BTreeSet<&'static str> = self
+            .actions
+            .iter()
+            .flat_map(|a| a.programs().iter().copied())
+            .collect();
+        all.into_iter().collect()
     }
 
     /// The actions of one stage, in order.

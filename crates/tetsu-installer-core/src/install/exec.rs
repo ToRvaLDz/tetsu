@@ -122,6 +122,9 @@ impl<'a> Executor<'a> {
     /// action not yet performed, so after `Cancelled` a second call carries
     /// on where the run stopped.
     pub fn run(&mut self, plan: &InstallPlan) -> Result<(), InstallError> {
+        if !self.touched {
+            self.check_programs(plan)?;
+        }
         for &action in plan.actions().iter().skip(self.done) {
             if (self.deps.cancelled)() {
                 self.say(action.stage(), "cancelled before the next action");
@@ -150,6 +153,22 @@ impl<'a> Executor<'a> {
         }
         self.say(Stage::Firmware, "installation complete");
         Ok(())
+    }
+
+    /// Every program of the plan must exist before anything is changed: a
+    /// tool missing halfway would leave a wiped disk and no install.
+    fn check_programs(&mut self, plan: &InstallPlan) -> Result<(), InstallError> {
+        let missing: Vec<&str> = plan
+            .programs()
+            .into_iter()
+            .filter(|p| self.deps.runner.check_tool(p).is_err())
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let msg = format!("missing tools on this system: {}", missing.join(", "));
+        self.log.record(&format!("[preflight] {msg}"));
+        Err(InstallError::Preflight(msg))
     }
 
     fn perform(&mut self, action: Action) -> Result<(), InstallError> {

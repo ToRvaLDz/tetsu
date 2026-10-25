@@ -336,6 +336,55 @@ fn an_ambiguous_boot_listing_creates_no_order_and_warns() {
 }
 
 #[test]
+fn the_plan_lists_every_program_the_run_calls() {
+    for level in UnlockLevel::ALL {
+        for sb in [SecureBoot::Off, SecureBoot::SetupMode] {
+            for api in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let mut a = answers(level);
+                let mut t = target(root.path(), sb);
+                if api {
+                    with_api_key(&mut a, &mut t);
+                }
+                let plan = InstallPlan::build(&a, &t);
+                let out = run_plan(&a, &t, &plan, NEVER);
+                out.result.as_ref().unwrap();
+                let listed = plan.programs();
+                for call in out.machine.calls.borrow().iter() {
+                    assert!(
+                        listed.contains(&call[0].as_str()),
+                        "{} is not listed ({level:?}, {sb:?}): {listed:?}",
+                        call[0]
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_missing_tool_stops_the_install_before_anything_is_touched() {
+    let root = tempfile::tempdir().unwrap();
+    let a = answers(UnlockLevel::Comfort);
+    let t = target(root.path(), SecureBoot::SetupMode);
+    let plan = InstallPlan::build(&a, &t);
+    let out = run_with(&a, &t, &plan, NEVER, |m| {
+        *m.missing.borrow_mut() = vec!["efibootmgr".into(), "sbverify".into()];
+    });
+    match &out.result {
+        Err(InstallError::Preflight(msg)) => {
+            assert!(
+                msg.contains("efibootmgr") && msg.contains("sbverify"),
+                "{msg}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(out.machine.calls.borrow().is_empty());
+    assert!(!out.touched);
+}
+
+#[test]
 fn a_failure_after_the_enrollment_is_reported_with_the_keys_marked_enrolled() {
     for failing in ["umount", "cryptsetup close", "sync"] {
         let run = full_run(
