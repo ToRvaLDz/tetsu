@@ -3,14 +3,27 @@
 //! and an exit code. The host (runner, Btrfs, space probe, `/proc/cmdline`,
 //! clock) is injected, so this runs against fakes.
 
+use std::ffi::OsString;
+use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::boot::space::SpaceProbe;
-use crate::boot::tool::Runner;
-use crate::cli::Invocation;
-use crate::store::btrfs::Btrfs;
+use crate::boot::BootError;
+use crate::boot::esp::Esp;
+use crate::boot::keys::SigningKeys;
+use crate::boot::space::{SpaceProbe, StatvfsProbe};
+use crate::boot::tool::{Runner, SystemRunner};
+use crate::cli::{
+    Command, EXIT_FAILED, EXIT_USAGE, Invocation, Options, USAGE, exit_code, list_rows, parse,
+    render_error, render_list, render_report,
+};
+use crate::store::btrfs::{Btrfs, CliBtrfs};
+use crate::store::layout::{Layout, booted_counter};
+use crate::store::record::Records;
 use crate::tx::TxError;
+use crate::tx::engine::{Engine, Paths, Report, Request};
 
 /// What the process prints and exits with.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,34 +47,156 @@ pub struct Host<'a> {
 /// Mount the top level (`subvolid=5`) of the filesystem `/` is on at `top`
 /// unless something is mounted there already. Returns whether it mounted.
 pub fn mount_top(runner: &dyn Runner, top: &Path) -> Result<bool, TxError> {
-    let _ = (runner, top);
-    todo!()
+    // `findmnt --mountpoint` exits 1 when `top` is not a mount point.
+    let probe = [
+        OsString::from("-n"),
+        "-o".into(),
+        "TARGET".into(),
+        "--mountpoint".into(),
+        top.into(),
+    ];
+    match runner.output("findmnt", &probe) {
+        Ok(_) => return Ok(false),
+        Err(BootError::Tool { .. }) => {}
+        Err(e) => return Err(e.into()),
+    }
+    let source = runner.output("findmnt", &["-n", "-o", "SOURCE", "/"].map(OsString::from))?;
+    // A subvolume mount reads `/dev/x[/@snapshots/3/root]`.
+    let device = source.trim().split('[').next().unwrap_or_default();
+    if device.is_empty() {
+        return Err(TxError::failed("cannot tell which device holds /"));
+    }
+    fs::create_dir_all(top).map_err(|e| BootError::io(top, e))?;
+    let mount = [
+        OsString::from("-o"),
+        "subvolid=5".into(),
+        device.into(),
+        top.into(),
+    ];
+    runner.run("mount", &mount)?;
+    Ok(true)
 }
 
 /// The booted snapshot: the override, else `rootflags=subvol=` of the
 /// kernel command line.
 pub fn resolve_booted(over: Option<u64>, proc_cmdline: &str) -> Option<u64> {
-    let _ = (over, proc_cmdline);
-    todo!()
+    over.or_else(|| booted_counter(proc_cmdline))
+}
+
+impl Outcome {
+    fn done(stdout: String) -> Self {
+        Self {
+            stdout,
+            stderr: String::new(),
+            code: 0,
+        }
+    }
+
+    fn failed(stderr: String, code: u8) -> Self {
+        Self {
+            stdout: String::new(),
+            stderr,
+            code,
+        }
+    }
 }
 
 /// Run one parsed command.
 pub fn execute(invocation: &Invocation, host: &Host<'_>) -> Outcome {
-    let _ = (invocation, host);
-    todo!()
+    let request = match &invocation.command {
+        Command::Help => return Outcome::done(USAGE.to_owned()),
+        Command::List { json } => return list(&invocation.options, host, *json),
+        Command::Update => Request::Update,
+        Command::Install(pkgs) => Request::Install(pkgs.clone()),
+        Command::Remove(pkgs) => Request::Remove(pkgs.clone()),
+        Command::Rollback(target) => Request::Rollback(*target),
+    };
+    match transact(&invocation.options, host, &request) {
+        Ok(report) => Outcome::done(render_report(&report)),
+        Err(e) => Outcome::failed(render_error(&e), exit_code(&e)),
+    }
+}
+
+fn list(options: &Options, host: &Host<'_>, json: bool) -> Outcome {
+    let read = || -> Result<_, String> {
+        let esp = Esp::open(&options.esp).scan().map_err(|e| e.to_string())?;
+        let records = Records::new(&options.records)
+            .load_or_reconstruct(&esp)
+            .map_err(|e| e.to_string())?;
+        Ok((esp, records))
+    };
+    match read() {
+        Ok((esp, records)) => {
+            let booted = resolve_booted(options.booted, host.proc_cmdline);
+            Outcome::done(render_list(&list_rows(&records, &esp, booted), json))
+        }
+        Err(msg) => Outcome::failed(format!("error: {msg}\n"), EXIT_FAILED),
+    }
+}
+
+fn transact(options: &Options, host: &Host<'_>, request: &Request) -> Result<Report, TxError> {
+    let Some(booted) = resolve_booted(options.booted, host.proc_cmdline) else {
+        return Err(TxError::failed(
+            "cannot tell which snapshot is booted: the kernel command line has no \
+             rootflags=subvol=@snapshots/<n>/root; pass --booted <n>",
+        ));
+    };
+    mount_top(host.runner, &options.top)?;
+    let with_pcr = options.keys.join("pcr.key").is_file();
+    let engine = Engine {
+        layout: Layout::new(&options.top),
+        records: Records::new(&options.records),
+        esp: Esp::open(&options.esp),
+        keys: SigningKeys::in_dir(&options.keys, with_pcr),
+        paths: Paths {
+            lock: options.lock.clone(),
+            cache: options.cache.clone(),
+            ..Paths::default()
+        },
+        booted,
+        default_cmdline: options.cmdline.clone(),
+        runner: host.runner,
+        btrfs: host.btrfs,
+        probe: host.probe,
+        clock: host.clock,
+    };
+    engine.run(request)
 }
 
 /// The program: parse, run, print, exit code.
 pub fn main(args: &[String]) -> ExitCode {
-    let _ = args;
-    todo!()
+    let invocation = match parse(args) {
+        Ok(invocation) => invocation,
+        Err(e) => {
+            eprintln!("tetsu-tx: {e}\n\n{USAGE}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+    // Unreadable: the booted snapshot then has to come from `--booted`.
+    let proc_cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    let clock = || {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    };
+    let host = Host {
+        runner: &SystemRunner,
+        btrfs: &CliBtrfs::new(SystemRunner),
+        probe: &StatvfsProbe,
+        proc_cmdline: &proc_cmdline,
+        clock: &clock,
+    };
+    let outcome = execute(&invocation, &host);
+    // A closed pipe leaves nobody to tell: the exit code still says it all.
+    let _ = std::io::stdout().write_all(outcome.stdout.as_bytes());
+    let _ = std::io::stderr().write_all(outcome.stderr.as_bytes());
+    ExitCode::from(outcome.code)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::boot::BootError;
-    use crate::cli::parse;
     use crate::store::btrfs::tests::FakeBtrfs;
     use crate::store::record::{BootVerdict, Record, Records, TxKind};
     use crate::tx::fake::{Reply, ScriptedRunner};
