@@ -8,13 +8,13 @@ parse_ctl_args() {
   CTL_STATE=$DEFAULT_STATE
   while [ $# -gt 0 ]; do
     case "$1" in
-      --state) [ $# -ge 2 ] || die "--state needs a value"; CTL_STATE=$2; shift 2 ;;
-      --timeout) [ $# -ge 2 ] || die "--timeout needs a value"; CTL_TIMEOUT=$2; shift 2 ;;
+      --state) [ $# -ge 2 ] || usage_die "--state needs a value"; CTL_STATE=$2; shift 2 ;;
+      --timeout) [ $# -ge 2 ] || usage_die "--timeout needs a value"; CTL_TIMEOUT=$2; shift 2 ;;
       -h | --help) printf 'Usage: tetsu-vm <power-cut|stop|status|console> [--state DIR] [--timeout SECS]\n'; exit 0 ;;
-      *) die "unknown option '$1'" ;;
+      *) usage_die "unknown option '$1'" ;;
     esac
   done
-  case "$CTL_TIMEOUT" in '' | *[!0-9]*) die "--timeout must be an integer" ;; esac
+  case "$CTL_TIMEOUT" in '' | *[!0-9]*) usage_die "--timeout must be an integer" ;; esac
   CTL_STATE=$(readlink -m "$CTL_STATE")
 }
 

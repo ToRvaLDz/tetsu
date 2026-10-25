@@ -40,8 +40,8 @@ main() {
       "cmd_${cmd//-/_}" "$@"
       ;;
     -h | --help | help) usage ;;
-    "") usage >&2; exit 1 ;;
-    *) die "unknown command '$cmd' (try --help)" ;;
+    "") usage >&2; exit 64 ;;
+    *) usage_die "unknown command '$cmd' (try --help)" ;;
   esac
 }
 

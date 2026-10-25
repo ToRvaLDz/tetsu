@@ -79,7 +79,7 @@ parse_start_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --disk | --iso | --state | --mem | --cpus | --vars | --cmdline-extra | --credential)
-        [ $# -ge 2 ] || die "$1 needs a value"
+        [ $# -ge 2 ] || usage_die "$1 needs a value"
         case "$1" in
           --disk) O_DISK=$2 ;;
           --iso) O_ISO=$2 ;;
@@ -98,13 +98,13 @@ parse_start_args() {
       --gui) O_GUI=1; shift ;;
       --dry-run) O_DRY=1; shift ;;
       -h | --help) start_usage; exit 0 ;;
-      *) die "start: unknown option '$1'" ;;
+      *) usage_die "start: unknown option '$1'" ;;
     esac
   done
-  [ -n "$O_DISK$O_ISO" ] || die "start: give at least one of --disk / --iso"
+  [ -n "$O_DISK$O_ISO" ] || usage_die "start: give at least one of --disk / --iso"
   [ -z "$O_DISK" ] || [ -r "$O_DISK" ] || die "disk image '$O_DISK' not found"
   [ -z "$O_ISO" ] || [ -r "$O_ISO" ] || die "ISO '$O_ISO' not found (try tools/vm/fetch-arch-iso)"
-  case "$O_MEM$O_CPUS" in *[!0-9]*) die "--mem and --cpus must be integers" ;; esac
+  case "$O_MEM$O_CPUS" in *[!0-9]*) usage_die "--mem and --cpus must be integers" ;; esac
   O_STATE=$(readlink -m "$O_STATE")
 }
 

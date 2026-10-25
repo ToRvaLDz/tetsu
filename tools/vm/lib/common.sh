@@ -5,6 +5,8 @@ REPO_ROOT=$(cd "$VM_DIR/../.." && pwd)
 DEFAULT_STATE="$REPO_ROOT/target/vm/default"
 
 die() { printf 'tetsu-vm: error: %s\n' "$*" >&2; exit 1; }
+# Usage errors (bad flags, missing arguments) exit 64, like EX_USAGE.
+usage_die() { printf 'tetsu-vm: usage error: %s\n' "$*" >&2; exit 64; }
 warn() { printf 'tetsu-vm: %s\n' "$*" >&2; }
 
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "'$1' not found in PATH (see tools/vm/README.md)"; }

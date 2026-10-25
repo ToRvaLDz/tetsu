@@ -10,6 +10,13 @@ clean_serial() {
     | tr -d '\r'
 }
 
+# Fail fast on an invalid extended regex (grep exits 2 on a bad pattern).
+validate_regex() {
+  local rc=0
+  LC_ALL=C grep -aEq -- "$1" </dev/null 2>/dev/null || rc=$?
+  [ "$rc" -lt 2 ] || usage_die "wait-for: invalid extended regex '$1'"
+}
+
 wait_usage() {
   cat <<'USAGE'
 Usage: tetsu-vm wait-for [--state DIR] [--timeout SECS] REGEX
@@ -22,26 +29,28 @@ cmd_wait_for() {
   local st=$DEFAULT_STATE timeout=120 regex=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --state) [ $# -ge 2 ] || die "--state needs a value"; st=$2; shift 2 ;;
-      --timeout) [ $# -ge 2 ] || die "--timeout needs a value"; timeout=$2; shift 2 ;;
+      --state) [ $# -ge 2 ] || usage_die "--state needs a value"; st=$2; shift 2 ;;
+      --timeout) [ $# -ge 2 ] || usage_die "--timeout needs a value"; timeout=$2; shift 2 ;;
       -h | --help) wait_usage; return 0 ;;
-      -*) die "wait-for: unknown option '$1'" ;;
-      *) [ -z "$regex" ] || die "wait-for: only one REGEX is accepted"; regex=$1; shift ;;
+      -*) usage_die "wait-for: unknown option '$1'" ;;
+      *) [ -z "$regex" ] || usage_die "wait-for: only one REGEX is accepted"; regex=$1; shift ;;
     esac
   done
-  [ -n "$regex" ] || die "wait-for: REGEX is required"
-  case "$timeout" in '' | *[!0-9]*) die "--timeout must be an integer" ;; esac
+  [ -n "$regex" ] || usage_die "wait-for: REGEX is required"
+  case "$timeout" in '' | *[!0-9]*) usage_die "--timeout must be an integer" ;; esac
   st=$(readlink -m "$st")
+  validate_regex "$regex"
 
-  local deadline=$((SECONDS + timeout)) log="$st/serial.log" running text
+  local deadline=$((SECONDS + timeout)) log="$st/serial.log" running text rc
   while :; do
     running=0
     qemu_pid "$st" >/dev/null && running=1
     # Capture first: grep -q exiting early would SIGPIPE the writer under pipefail.
     text=$([ -r "$log" ] && clean_serial "$log" || true)
-    if LC_ALL=C grep -aEq -- "$regex" <<<"$text"; then
-      return 0
-    fi
+    rc=0
+    LC_ALL=C grep -aEq -- "$regex" <<<"$text" || rc=$?
+    [ "$rc" -ne 0 ] || return 0
+    [ "$rc" -lt 2 ] || die "wait-for: grep failed (status $rc) on regex '$regex'"
     if [ "$running" -eq 0 ]; then
       warn "wait-for: VM is not running and '$regex' never appeared"
       return 2
