@@ -105,6 +105,10 @@ pub(crate) mod tests {
     }
 
     impl Runner for &Recorder {
+        fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+            self.run(program, args).map(|()| String::new())
+        }
+
         fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
             let mut line = vec![program.to_owned()];
             line.extend(args.iter().map(|a| a.to_string_lossy().into_owned()));

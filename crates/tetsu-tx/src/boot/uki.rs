@@ -213,6 +213,10 @@ mod tests {
     struct Recorder(RefCell<Vec<(String, Vec<String>)>>);
 
     impl Runner for Recorder {
+        fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+            self.run(program, args).map(|()| String::new())
+        }
+
         fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
             let args = args
                 .iter()

@@ -68,6 +68,10 @@ fn require_tools() {
 struct TestRunner;
 
 impl Runner for TestRunner {
+    fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+        self.run(program, args).map(|()| String::new())
+    }
+
     fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
         let out = Command::new(program)
             .args(args)

@@ -70,6 +70,10 @@ mod tests {
     /// Fake ukify: writes `--output` with fixed content.
     struct FakeUkify;
     impl Runner for FakeUkify {
+        fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+            self.run(program, args).map(|()| String::new())
+        }
+
         fn run(&self, _: &str, args: &[OsString]) -> Result<(), BootError> {
             let out = args
                 .iter()
@@ -179,6 +183,10 @@ mod tests {
     /// Fake ukify that always fails.
     struct FailingUkify;
     impl Runner for FailingUkify {
+        fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+            self.run(program, args).map(|()| String::new())
+        }
+
         fn run(&self, _: &str, _: &[OsString]) -> Result<(), BootError> {
             Err(BootError::Tool {
                 tool: "ukify".into(),
@@ -191,6 +199,10 @@ mod tests {
     /// Runner whose `ukify` is not installed.
     struct NoUkify;
     impl Runner for NoUkify {
+        fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+            self.run(program, args).map(|()| String::new())
+        }
+
         fn run(&self, _: &str, _: &[OsString]) -> Result<(), BootError> {
             panic!("must not run")
         }
@@ -307,6 +319,10 @@ mod tests {
     /// directory so the post-commit removal fails (for any uid).
     struct SabotagingUkify;
     impl Runner for SabotagingUkify {
+        fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
+            self.run(program, args).map(|()| String::new())
+        }
+
         fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
             FakeUkify.run(program, args)?;
             let out = args
