@@ -15,7 +15,7 @@ type Capability (
   # The layer that sets the state; null when `unset`.
   layer: ?(image, managed, user),
   # Whether the class holds a method tagged `@destructive`, which always
-  # asks whatever the state.
+  # asks whatever the state, except `off`, which refuses first.
   destructive: bool,
   # The fully qualified methods of the class.
   methods: []string,
