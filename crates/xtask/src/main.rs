@@ -34,6 +34,11 @@ fn bless_contract() -> ExitCode {
             }
             ExitCode::FAILURE
         }
+        Err(e @ BlessError::Io(_)) => {
+            // The message says what state the baseline was left in.
+            eprintln!("bless failed: {e}");
+            ExitCode::FAILURE
+        }
         Err(e) => {
             eprintln!("refusing to bless, the baseline is untouched: {e}");
             ExitCode::FAILURE
