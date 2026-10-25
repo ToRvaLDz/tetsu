@@ -42,3 +42,5 @@ impl BootError {
         }
     }
 }
+
+pub mod entry;
