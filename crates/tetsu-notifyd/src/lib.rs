@@ -2,5 +2,7 @@
 //! `org.freedesktop.Notifications` for applications (#23).
 
 pub mod core;
+pub mod daemon;
 pub mod lock;
 pub mod markup;
+pub mod varlink;

@@ -12,6 +12,8 @@ description = "Tetsu notification server: org.tetsu.notify.v1 and org.freedeskto
 workspace = true
 
 [dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.154"
 tetsu-bus = { path = "../tetsu-bus" }
 tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "time", "sync"] }
 
