@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Download the latest Arch Linux ISO into the tetsu VM cache and verify it.
+set -euo pipefail
+
+MIRROR=${TETSU_ARCH_MIRROR:-https://geo.mirror.pkgbuild.com/iso/latest}
+ISO_NAME=archlinux-x86_64.iso
+DEST=${TETSU_VM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/tetsu/vm}
+
+die() { printf 'fetch-arch-iso: error: %s\n' "$*" >&2; exit 1; }
+
+for tool in curl sha256sum; do
+  command -v "$tool" >/dev/null 2>&1 || die "'$tool' not found in PATH"
+done
+
+mkdir -p "$DEST"
+
+# verify: check the ISO against sha256sums.txt (the line for our file only).
+verify() {
+  [ -f "$DEST/$ISO_NAME" ] && [ -f "$DEST/sha256sums.txt" ] || return 1
+  (cd "$DEST" && grep -E "[[:space:]]\*?$ISO_NAME\$" sha256sums.txt | sha256sum --check --status -)
+}
+
+# Always refresh the checksum list: it tells whether the cached ISO is current.
+curl -fsSL --retry 3 -o "$DEST/sha256sums.txt.new" "$MIRROR/sha256sums.txt" \
+  || die "could not download $MIRROR/sha256sums.txt"
+mv "$DEST/sha256sums.txt.new" "$DEST/sha256sums.txt"
+
+if verify; then
+  echo "ISO already present and verified: $DEST/$ISO_NAME"
+  exit 0
+fi
+
+echo "Downloading $MIRROR/$ISO_NAME ..."
+curl -fL --retry 3 -C - -o "$DEST/$ISO_NAME" "$MIRROR/$ISO_NAME" \
+  || die "download failed"
+
+verify || { rm -f "$DEST/$ISO_NAME"; die "checksum mismatch, removed the download"; }
+echo "ISO downloaded and verified: $DEST/$ISO_NAME"
