@@ -98,8 +98,17 @@ pub fn seal(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Result<(), Stor
 /// place on the ESP and before the record: the evidence that survives a lost
 /// `/var/lib/tetsu` and a collected UKI.
 pub fn mark_committed(layout: &Layout, counter: u64) -> Result<(), StoreError> {
-    let _ = (layout, counter);
-    todo!()
+    let marker = layout.committed_marker(counter);
+    fs::write(&marker, b"").map_err(|e| StoreError::io(&marker, e))?;
+    sync_path(&marker)?;
+    sync_path(&layout.snapshot_dir(counter))
+}
+
+/// fsync a file or a directory.
+fn sync_path(path: &std::path::Path) -> Result<(), StoreError> {
+    fs::File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| StoreError::io(path, e))
 }
 
 /// Delete snapshot `counter`, sealed or partial (an interrupted create):
@@ -125,6 +134,12 @@ pub fn delete_snapshot(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Resu
     let base = layout.etc_base(counter);
     if btrfs.is_subvolume(&base)? {
         btrfs.delete(&base)?;
+    }
+    let marker = layout.committed_marker(counter);
+    match fs::remove_file(&marker) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(StoreError::io(&marker, e)),
     }
     fs::remove_dir(&dir).map_err(|e| StoreError::io(&dir, e))
 }

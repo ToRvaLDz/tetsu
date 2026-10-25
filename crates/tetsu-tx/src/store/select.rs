@@ -48,13 +48,14 @@ pub fn orphans(
     esp: &EspState,
     booted: Option<u64>,
 ) -> Vec<u64> {
-    let _ = committed;
-    let newest = esp.newest_counter();
+    let Some(newest) = esp.newest_counter() else {
+        return Vec::new();
+    };
     snapshots
         .iter()
         .copied()
-        .filter(|&n| Some(n) != booted && !records.contains_key(&n))
-        .filter(|&n| newest.is_none_or(|m| n > m))
+        .filter(|&n| n > newest && Some(n) != booted)
+        .filter(|n| !committed.contains(n) && !records.contains_key(n))
         .collect()
 }
 

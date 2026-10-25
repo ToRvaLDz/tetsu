@@ -78,10 +78,13 @@ impl<'a> Store<'a> {
     where
         F: FnOnce() -> Result<EspState, BootError>,
     {
-        let esp = read_esp()?;
         let lock = TxLock::acquire(lock_path)?;
-        self.gc_orphans(&lock, &esp, Some(booted))?;
-        let gc_failures = Vec::new();
+        let esp = read_esp()?;
+        let gc_failures = match self.gc_orphans(&lock, &esp, Some(booted)) {
+            Ok(_) => Vec::new(),
+            Err(StoreError::Cleanup { failures }) => failures,
+            Err(e) => return Err(e),
+        };
         let source = select::select_source(&esp, booted);
         let snapshots = self.layout.list_snapshots()?;
         let records = self.records.load()?;
@@ -130,13 +133,16 @@ impl<'a> Store<'a> {
     ) -> Result<Vec<u64>, StoreError> {
         let snapshots = self.layout.list_snapshots()?;
         let records = self.records.load_or_reconstruct(esp)?;
+        let on_esp = esp.entries.iter().map(|e| e.name.counter);
         let protected: Vec<u64> = [
             Some(booted),
             select::default_counter(esp),
             select::newest_good(&snapshots, &records),
+            select::last_good(&snapshots, &records, booted),
         ]
         .into_iter()
         .flatten()
+        .chain(on_esp)
         .collect();
         let doomed = select::plan_retention(&snapshots, &protected, select::KEEP_SNAPSHOTS);
         self.delete_all(doomed)
