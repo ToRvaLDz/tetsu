@@ -40,7 +40,11 @@ jobs:
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
+      # The contract suite validates the IDL with systemd's varlinkctl and
+      # fails instead of skipping when it is missing.
       - run: cargo test --workspace --locked
+        env:
+          TETSU_REQUIRE_VARLINKCTL: "1"
 
   # Unit tests of the VM harness: no ISO, no KVM, no QEMU needed.
   vm-harness:
