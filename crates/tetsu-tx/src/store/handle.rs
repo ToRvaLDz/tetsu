@@ -91,21 +91,6 @@ impl<'a> Store<'a> {
         })
     }
 
-    /// Like [`Store::begin`], from an explicit `source` (a rollback) instead
-    /// of the selected one. `NotFound` when `source` has no snapshot.
-    pub fn begin_from<F>(
-        &self,
-        lock_path: &Path,
-        read_esp: F,
-        booted: u64,
-        source: Source,
-    ) -> Result<Begun, StoreError>
-    where
-        F: FnOnce() -> Result<EspState, BootError>,
-    {
-        self.start(lock_path, read_esp, booted, |_| Ok(source))
-    }
-
     /// Like [`Store::begin`], with the source chosen by `pick` from the ESP
     /// read under the lock, so a rollback target is judged on state no other
     /// transaction can change. A failed `pick` leaves nothing behind.
@@ -343,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_from_a_pending_default_inherits_etc_base() {
+    fn begin_a_pending_default_inherits_etc_base() {
         let env = Env::new();
         env.committed(3, G);
         env.committed(4, None);
@@ -417,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_from_snapshots_the_explicit_source() {
+    fn begin_picking_snapshots_the_explicit_source() {
         let env = Env::new();
         env.committed(1, G);
         env.committed(2, B);
@@ -425,7 +410,7 @@ mod tests {
         let st = esp(&["tetsu-1.efi", "tetsu-3.efi"], &[]);
         let begun = env
             .store()
-            .begin_from(&env.lock_path, || Ok(st.clone()), 3, pick(1, false))
+            .begin_picking(&env.lock_path, || Ok(st.clone()), 3, |_| Ok(pick(1, false)))
             .unwrap();
         assert_eq!(begun.counter, 4);
         assert_eq!(begun.source, pick(1, false));
@@ -439,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_from_collects_orphans_and_reads_the_esp_under_the_lock() {
+    fn begin_picking_collects_orphans_and_reads_the_esp_under_the_lock() {
         let env = Env::new();
         env.committed(1, G);
         env.partial(2);
@@ -454,20 +439,20 @@ mod tests {
         };
         let begun = env
             .store()
-            .begin_from(&env.lock_path, read, 1, pick(1, false))
+            .begin_picking(&env.lock_path, read, 1, |_| Ok(pick(1, false)))
             .unwrap();
         assert_eq!(begun.counter, 3);
         assert_eq!(env.snapshots(), vec![1, 3]);
     }
 
     #[test]
-    fn begin_from_an_unknown_snapshot_is_not_found_and_leaves_nothing() {
+    fn begin_picking_an_unknown_snapshot_is_not_found_and_leaves_nothing() {
         let env = Env::new();
         env.committed(1, G);
         let st = esp(&["tetsu-1.efi"], &[]);
         assert!(matches!(
             env.store()
-                .begin_from(&env.lock_path, || Ok(st.clone()), 1, pick(9, false)),
+                .begin_picking(&env.lock_path, || Ok(st.clone()), 1, |_| Ok(pick(9, false))),
             Err(StoreError::NotFound(9))
         ));
         assert_eq!(env.snapshots(), vec![1]);
@@ -475,14 +460,14 @@ mod tests {
     }
 
     #[test]
-    fn begin_from_is_busy_while_another_transaction_runs() {
+    fn begin_picking_is_busy_while_another_transaction_runs() {
         let env = Env::new();
         env.committed(1, G);
         let st = esp(&["tetsu-1.efi"], &[]);
         let _held = TxLock::acquire(&env.lock_path).unwrap();
         assert!(matches!(
             env.store()
-                .begin_from(&env.lock_path, || Ok(st.clone()), 1, pick(1, false)),
+                .begin_picking(&env.lock_path, || Ok(st.clone()), 1, |_| Ok(pick(1, false))),
             Err(StoreError::Busy { .. })
         ));
     }
