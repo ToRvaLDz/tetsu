@@ -6,12 +6,14 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::boot::entry::canonical;
 use crate::boot::esp::EspState;
 use crate::boot::keys::DEFAULT_KEYS_DIR;
 use crate::store::record::{BootVerdict, RECORDS_DIR, Record, TxKind};
-use crate::tx::TxError;
+use crate::store::select;
 use crate::tx::engine::{DEFAULT_LOCK, Report};
 use crate::tx::nspawn::DEFAULT_CACHE;
+use crate::tx::{PackageChange, TxError};
 
 /// Exit code of a failed transaction.
 pub const EXIT_FAILED: u8 = 1;
@@ -106,26 +108,189 @@ pub struct UsageError(pub String);
 
 /// Parse the arguments after the program name.
 pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
-    let _ = args;
-    todo!()
+    let mut options = Options::default();
+    let mut positional: Vec<String> = Vec::new();
+    let (mut json, mut help) = (false, false);
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--" => {
+                positional.extend(iter.by_ref().cloned());
+                break;
+            }
+            "-h" | "--help" => help = true,
+            "--json" => json = true,
+            flag if flag.starts_with('-') && flag.len() > 1 => {
+                let (name, inline) = match flag.split_once('=') {
+                    Some((name, value)) => (name, Some(value.to_owned())),
+                    None => (flag, None),
+                };
+                if !VALUE_FLAGS.contains(&name) {
+                    return Err(UsageError(format!("unknown option {flag}")));
+                }
+                let value = match inline.or_else(|| iter.next().cloned()) {
+                    Some(value) => value,
+                    None => return Err(UsageError(format!("{name} needs a value"))),
+                };
+                set_option(&mut options, name, value)?;
+            }
+            _ => positional.push(arg.clone()),
+        }
+    }
+    let command = if help {
+        Command::Help
+    } else {
+        command_of(positional, json)?
+    };
+    Ok(Invocation { command, options })
+}
+
+/// The options that take a value.
+const VALUE_FLAGS: [&str; 8] = [
+    "--top",
+    "--esp",
+    "--records",
+    "--keys",
+    "--lock",
+    "--cache",
+    "--cmdline",
+    "--booted",
+];
+
+/// A snapshot counter: a canonical number, 1 or more.
+fn counter_of(text: &str) -> Option<u64> {
+    canonical(text).filter(|&n| n >= 1)
+}
+
+fn set_option(options: &mut Options, name: &str, value: String) -> Result<(), UsageError> {
+    match name {
+        "--top" => options.top = PathBuf::from(value),
+        "--esp" => options.esp = PathBuf::from(value),
+        "--records" => options.records = PathBuf::from(value),
+        "--keys" => options.keys = PathBuf::from(value),
+        "--lock" => options.lock = PathBuf::from(value),
+        "--cache" => options.cache = PathBuf::from(value),
+        "--cmdline" => options.cmdline = value,
+        _ => match counter_of(&value) {
+            Some(n) => options.booted = Some(n),
+            None => {
+                return Err(UsageError(format!(
+                    "{name}: {value} is not a snapshot counter"
+                )));
+            }
+        },
+    }
+    Ok(())
+}
+
+/// The command and its arguments from the non-option words.
+fn command_of(mut words: Vec<String>, json: bool) -> Result<Command, UsageError> {
+    if words.is_empty() {
+        return Err(UsageError("no command given".to_owned()));
+    }
+    let name = words.remove(0);
+    if json && name != "list" {
+        return Err(UsageError("--json only applies to list".to_owned()));
+    }
+    let no_arguments = |words: &[String]| match words.first() {
+        Some(extra) => Err(UsageError(format!(
+            "{name} takes no arguments, got {extra}"
+        ))),
+        None => Ok(()),
+    };
+    match name.as_str() {
+        "update" => no_arguments(&words).map(|()| Command::Update),
+        "list" => no_arguments(&words).map(|()| Command::List { json }),
+        "install" | "remove" if words.is_empty() => {
+            Err(UsageError(format!("{name} needs at least one package")))
+        }
+        "install" => Ok(Command::Install(words)),
+        "remove" => Ok(Command::Remove(words)),
+        "rollback" => rollback_of(&words),
+        _ => Err(UsageError(format!("unknown command {name}"))),
+    }
+}
+
+fn rollback_of(words: &[String]) -> Result<Command, UsageError> {
+    match words {
+        [] => Ok(Command::Rollback(None)),
+        [one] => match counter_of(one) {
+            Some(n) => Ok(Command::Rollback(Some(n))),
+            None => Err(UsageError(format!(
+                "rollback: {one} is not a snapshot counter"
+            ))),
+        },
+        [_, extra, ..] => Err(UsageError(format!(
+            "rollback takes at most one counter, got {extra}"
+        ))),
+    }
 }
 
 /// The exit code of a failed transaction.
 pub fn exit_code(error: &TxError) -> u8 {
-    let _ = error;
-    todo!()
+    match error {
+        TxError::InProgress => EXIT_BUSY,
+        _ => EXIT_FAILED,
+    }
 }
 
 /// A committed transaction, result first.
 pub fn render_report(report: &Report) -> String {
-    let _ = report;
-    todo!()
+    let what = match report.kind {
+        TxKind::Update => "update".to_owned(),
+        TxKind::Rollback => "rollback".to_owned(),
+        TxKind::Install => format!("install {}", report.packages.join(" ")),
+        TxKind::InstallAur => format!("install (AUR) {}", report.packages.join(" ")),
+        TxKind::Remove => format!("remove {}", report.packages.join(" ")),
+    };
+    let mut out = format!("{what} committed as snapshot {}\n", report.counter);
+    if !report.changes.is_empty() {
+        out.push_str(&format!("{} package change(s):\n", report.changes.len()));
+        for c in &report.changes {
+            out.push_str(&format!("  {}\n", render_change(c)));
+        }
+    }
+    if !report.log.is_empty() {
+        out.push_str("log:\n");
+        for line in &report.log {
+            out.push_str(&format!("  {line}\n"));
+        }
+    }
+    for warning in &report.warnings {
+        out.push_str(&format!("warning: {warning}\n"));
+    }
+    out
+}
+
+fn render_change(c: &PackageChange) -> String {
+    match (&c.from, &c.to) {
+        (None, Some(to)) => format!("+ {} {to}", c.name),
+        (Some(from), None) => format!("- {} {from}", c.name),
+        (Some(from), Some(to)) => format!("{} {from} -> {to}", c.name),
+        (None, None) => c.name.clone(),
+    }
 }
 
 /// A failed transaction, result first.
 pub fn render_error(error: &TxError) -> String {
-    let _ = error;
-    todo!()
+    let mut out = match error {
+        TxError::SnapshotNotFound(0) => {
+            "error: no good snapshot older than the booted one to roll back to\n".to_owned()
+        }
+        other => format!("error: {other}\n"),
+    };
+    if let TxError::Failed { proposal, log, .. } = error {
+        for line in log {
+            out.push_str(&format!("  {line}\n"));
+        }
+        if let Some(proposal) = proposal {
+            out.push_str(&format!("try: {proposal}\n"));
+        }
+    }
+    if !matches!(error, TxError::InProgress) {
+        out.push_str("The system was not changed.\n");
+    }
+    out
 }
 
 /// One line of `list`.
@@ -146,14 +311,70 @@ pub fn list_rows(
     esp: &EspState,
     booted: Option<u64>,
 ) -> Vec<ListRow> {
-    let _ = (records, esp, booted);
-    todo!()
+    let default = select::default_counter(esp);
+    records
+        .values()
+        .map(|r| ListRow {
+            counter: r.counter,
+            kind: r.kind,
+            source: r.source,
+            boot: r.boot,
+            booted: booted == Some(r.counter),
+            default: default == Some(r.counter),
+        })
+        .collect()
 }
 
 /// The rows as a table, or as a JSON array.
 pub fn render_list(rows: &[ListRow], json: bool) -> String {
-    let _ = (rows, json);
-    todo!()
+    if json {
+        let text = serde_json::to_string_pretty(rows).expect("rows always serialise");
+        return text + "\n";
+    }
+    if rows.is_empty() {
+        return "no transactions\n".to_owned();
+    }
+    let mut table = vec![["SNAPSHOT", "KIND", "SOURCE", "BOOT", "MARKS"].map(str::to_owned)];
+    table.extend(rows.iter().map(row_cells));
+    let widths: Vec<usize> = (0..4)
+        .map(|i| table.iter().map(|row| row[i].len()).max().unwrap_or(0))
+        .collect();
+    let mut out = String::new();
+    for row in &table {
+        let padded: Vec<String> = (0..4)
+            .map(|i| format!("{:<1$}", row[i], widths[i]))
+            .collect();
+        out.push_str(format!("{}  {}", padded.join("  "), row[4]).trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+fn row_cells(row: &ListRow) -> [String; 5] {
+    let or_dash = |text: Option<String>| text.unwrap_or_else(|| "-".to_owned());
+    let kind = row.kind.map(|k| match k {
+        TxKind::Update => "update",
+        TxKind::Install => "install",
+        TxKind::InstallAur => "install_aur",
+        TxKind::Remove => "remove",
+        TxKind::Rollback => "rollback",
+    });
+    let boot = match row.boot {
+        Some(BootVerdict::Good) => "good",
+        Some(BootVerdict::Bad) => "bad",
+        None => "pending",
+    };
+    let marks: Vec<&str> = [(row.booted, "booted"), (row.default, "default")]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect();
+    [
+        row.counter.to_string(),
+        or_dash(kind.map(str::to_owned)),
+        or_dash(row.source.map(|s| s.to_string())),
+        boot.to_owned(),
+        marks.join(","),
+    ]
 }
 
 #[cfg(test)]
