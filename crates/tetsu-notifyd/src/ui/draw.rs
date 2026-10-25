@@ -185,6 +185,15 @@ impl Painter {
                 s,
             );
         }
+        self.card_header(pixmap, card, s, framed);
+        self.card_text(pixmap, card, s);
+        self.card_buttons(pixmap, card, s, now);
+        draw_cross(pixmap, card.close, palette::MUTED, s);
+    }
+
+    /// The sender line: the Tetsu frame's credential-derived name, or the
+    /// application name with its category.
+    fn card_header(&mut self, pixmap: &mut Pixmap, card: &Card, s: f32, framed: bool) {
         let mut sender_x = card.body.x;
         if let Some(icon) = &card.note.icon {
             draw_icon(pixmap, icon, card.body.x, card.body.y, s);
@@ -219,6 +228,10 @@ impl Painter {
                 wrap: false,
             },
         );
+    }
+
+    /// Title and body.
+    fn card_text(&mut self, pixmap: &mut Pixmap, card: &Card, s: f32) {
         self.text(
             pixmap,
             s,
@@ -257,6 +270,10 @@ impl Painter {
                 },
             );
         }
+    }
+
+    /// The buttons, drawn disarmed until they accept clicks.
+    fn card_buttons(&mut self, pixmap: &mut Pixmap, card: &Card, s: f32, now: Instant) {
         let armed = now >= card.note.armed_at;
         for (rect, action) in &card.buttons {
             let (fill, ink) = if armed {
@@ -284,7 +301,6 @@ impl Painter {
                 },
             );
         }
-        draw_cross(pixmap, card.close, palette::MUTED, s);
     }
 
     fn history_row(

@@ -77,6 +77,9 @@ pub struct Ui {
     panel_wanted: bool,
     panel_scroll: f32,
     cards: Vec<Card>,
+    /// The cards on screen: presses are tested against these, never against
+    /// a layout whose buffer is not committed yet.
+    drawn_cards: Vec<Card>,
     panel_layout: Option<PanelLayout>,
     keyboard_focus: Option<ObjectId>,
     /// A redraw is scheduled for when the next buttons arm.
@@ -143,6 +146,7 @@ pub fn run(messages: UiChannel, commands: mpsc::UnboundedSender<Command>) -> io:
         panel_wanted: false,
         panel_scroll: 0.0,
         cards: Vec::new(),
+        drawn_cards: Vec::new(),
         panel_layout: None,
         keyboard_focus: None,
         arming_timer: None,
@@ -175,7 +179,9 @@ impl Ui {
             // Nothing is drawn under the lock; pending approvals pop again
             // on unlock.
             self.popup = None;
+            self.drawn_cards.clear();
             self.panel = None;
+            self.panel_layout = None;
             self.panel_wanted = false;
             return;
         }
@@ -183,6 +189,7 @@ impl Ui {
         self.cards = cards;
         if self.cards.is_empty() {
             self.popup = None;
+            self.drawn_cards.clear();
         } else {
             let size = (CARD_WIDTH as u32, height.ceil() as u32);
             if self.popup.is_none() {
@@ -299,6 +306,7 @@ impl Ui {
             .popups(&self.cards, w as f32, h as f32, scale, now);
         if let Some(pixmap) = pixmap {
             present(&mut self.pool, &popup.layer, &pixmap, popup.scale);
+            self.drawn_cards = self.cards.clone();
         }
         self.schedule_arming(qh, now);
     }
@@ -359,7 +367,7 @@ impl Ui {
 
     fn press(&mut self, surface: &wl_surface::WlSurface, x: f32, y: f32, qh: &QueueHandle<Self>) {
         let hit = if self.popup.as_ref().is_some_and(|s| s.is(surface)) {
-            self.cards.iter().find_map(|c| c.hit(x, y))
+            self.drawn_cards.iter().find_map(|c| c.hit(x, y))
         } else if self.panel.as_ref().is_some_and(|s| s.is(surface)) {
             self.panel_layout.as_ref().and_then(|l| l.hit(x, y))
         } else {
