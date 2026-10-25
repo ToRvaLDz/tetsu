@@ -39,7 +39,7 @@ impl Handler for FakeCompositor {
 #[test]
 fn watch_session_yields_initial_then_deltas() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("comp");
+    let path = dir.path().join("run").join("comp");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

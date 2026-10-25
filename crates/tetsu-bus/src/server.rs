@@ -8,9 +8,11 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, PermissionsExt};
-use std::path::Path;
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -23,9 +25,28 @@ use crate::peer::Peer;
 
 type Socket = zlink::tokio::unix::Stream;
 
-/// A bound server socket.
+/// Calls a client may pipeline while a reply streams; one more drops it.
+const MAX_QUEUED: usize = 16;
+/// Pause after a failed `accept`, so a full descriptor table is not a spin.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
+/// A bound server socket. Dropping it removes the socket file, only if it
+/// is still the one this listener bound.
 #[derive(Debug)]
-pub struct Listener(zlink::tokio::unix::Listener);
+pub struct Listener {
+    inner: zlink::tokio::unix::Listener,
+    path: PathBuf,
+    inode: u64,
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        let ours = fs::symlink_metadata(&self.path).is_ok_and(|m| m.ino() == self.inode);
+        if ours {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
 
 /// A method call as the handler sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -114,17 +135,24 @@ struct RawMethod {
     parameters: Value,
 }
 
-/// Binds a session socket: the parent directory is created 0700 when
-/// missing, a stale socket is replaced, the socket is 0600.
+/// Binds a session socket. The parent directory is created 0700 when
+/// missing and refused when it belongs to someone else or others may enter
+/// it. A socket nobody answers on is replaced; one still answering is not.
+/// The socket is 0600.
 pub fn bind(path: &Path) -> io::Result<Listener> {
     if let Some(dir) = path.parent() {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
+        private_dir(dir)?;
     }
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_socket() => fs::remove_file(path)?,
+        Ok(meta) if meta.file_type().is_socket() => {
+            if UnixStream::connect(path).is_ok() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!("{} is served by another process", path.display()),
+                ));
+            }
+            fs::remove_file(path)?;
+        }
         Ok(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -134,17 +162,46 @@ pub fn bind(path: &Path) -> io::Result<Listener> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let listener = zlink::tokio::unix::bind(path).map_err(into_io)?;
+    let inner = zlink::tokio::unix::bind(path).map_err(into_io)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    Ok(Listener(listener))
+    let inode = fs::symlink_metadata(path)?.ino();
+    Ok(Listener {
+        inner,
+        path: path.to_owned(),
+        inode,
+    })
+}
+
+/// Creates `dir` 0700, or checks that an existing one is ours and private.
+fn private_dir(dir: &Path) -> io::Result<()> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    let meta = fs::symlink_metadata(dir)?;
+    let ours = meta.is_dir() && meta.uid() == rustix::process::geteuid().as_raw();
+    if !ours || meta.mode() & 0o077 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} is not a private directory of this user", dir.display()),
+        ));
+    }
+    Ok(())
 }
 
 /// Accepts connections forever, one local task each. Must run inside a
 /// `tokio::task::LocalSet`.
 pub async fn serve<H: Handler>(mut listener: Listener, handler: Rc<H>) -> io::Result<()> {
     loop {
-        let Some(connection) = listener.0.accept().await.map_err(into_io)? else {
-            return Ok(());
+        let connection = match listener.inner.accept().await {
+            Ok(Some(connection)) => connection,
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                // EMFILE, ECONNABORTED and the like pass; keep serving.
+                eprintln!("tetsu-bus: accept failed: {e}");
+                tokio::time::sleep(ACCEPT_BACKOFF).await;
+                continue;
+            }
         };
         let handler = handler.clone();
         tokio::task::spawn_local(async move {
@@ -229,8 +286,9 @@ async fn relay(
                 None => return Ok(true),
             },
             call = receive(read) => match call {
-                Some(call) => queued.push_back(call),
-                None => return Ok(false),
+                Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
+                // Gone, or pipelining without end: drop the connection.
+                _ => return Ok(false),
             },
         }
     }

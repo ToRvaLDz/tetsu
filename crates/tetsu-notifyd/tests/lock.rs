@@ -80,7 +80,7 @@ impl Handler for Compositor {
 #[test]
 fn the_compositor_drives_the_state_and_a_lost_stream_fails_closed() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("comp");
+    let path = dir.path().join("run").join("comp");
     LocalSet::new().block_on(&runtime(), async {
         let listener = server::bind(&path).unwrap();
         tokio::task::spawn_local(server::serve(listener, Rc::new(Compositor)));

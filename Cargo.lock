@@ -930,6 +930,7 @@ version = "0.0.0"
 name = "tetsu-bus"
 version = "0.0.0"
 dependencies = [
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
