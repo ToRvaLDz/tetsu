@@ -45,5 +45,5 @@ impl StoreError {
     }
 }
 
-pub mod layout;
 pub mod btrfs;
+pub mod layout;

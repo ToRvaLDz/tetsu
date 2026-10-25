@@ -1,7 +1,7 @@
 //! Btrfs subvolume operations behind a trait, so the snapshot lifecycle is
 //! unit-tested with a fake and the argv with a recording runner.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
 use super::StoreError;
@@ -30,36 +30,45 @@ impl<R: Runner> CliBtrfs<R> {
         Self { runner }
     }
 
-    fn btrfs(&self, args: &[&std::ffi::OsStr]) -> Result<(), StoreError> {
-        let _ = args;
-        todo!()
+    fn btrfs(&self, args: &[&OsStr]) -> Result<(), StoreError> {
+        let args: Vec<OsString> = args.iter().map(|a| a.to_os_string()).collect();
+        self.runner.run("btrfs", &args)?;
+        Ok(())
     }
 }
 
 impl<R: Runner> Btrfs for CliBtrfs<R> {
     fn create(&self, path: &Path) -> Result<(), StoreError> {
-        let _ = path;
-        todo!()
+        self.btrfs(&["subvolume".as_ref(), "create".as_ref(), path.as_os_str()])
     }
 
     fn snapshot(&self, src: &Path, dst: &Path, readonly: bool) -> Result<(), StoreError> {
-        let _ = (src, dst, readonly);
-        todo!()
+        let mut args: Vec<&OsStr> = vec!["subvolume".as_ref(), "snapshot".as_ref()];
+        if readonly {
+            args.push("-r".as_ref());
+        }
+        args.extend([src.as_os_str(), dst.as_os_str()]);
+        self.btrfs(&args)
     }
 
     fn delete(&self, path: &Path) -> Result<(), StoreError> {
-        let _ = path;
-        todo!()
+        self.btrfs(&["subvolume".as_ref(), "delete".as_ref(), path.as_os_str()])
     }
 
     fn set_readonly(&self, path: &Path, readonly: bool) -> Result<(), StoreError> {
-        let _ = (path, readonly);
-        todo!()
+        let value = if readonly { "true" } else { "false" };
+        self.btrfs(&[
+            "property".as_ref(),
+            "set".as_ref(),
+            "-ts".as_ref(),
+            path.as_os_str(),
+            "ro".as_ref(),
+            value.as_ref(),
+        ])
     }
 
     fn sync(&self, path: &Path) -> Result<(), StoreError> {
-        let _ = path;
-        todo!()
+        self.btrfs(&["filesystem".as_ref(), "sync".as_ref(), path.as_os_str()])
     }
 }
 
@@ -141,6 +150,9 @@ pub(crate) mod tests {
             ..Recorder::default()
         };
         let err = CliBtrfs::new(&rec).create(Path::new("/x")).unwrap_err();
-        assert!(matches!(err, StoreError::Tool(BootError::Tool { .. })), "{err:?}");
+        assert!(
+            matches!(err, StoreError::Tool(BootError::Tool { .. })),
+            "{err:?}"
+        );
     }
 }
