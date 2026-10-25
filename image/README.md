@@ -99,7 +99,8 @@ boots. systemd-boot with the UKI mkosi builds; kernel command line
   login. The session (`/usr/libexec/tetsu-installer-session`) lets one console
   run the installer at a time (`flock`); the kernel's primary console (the
   serial line when the machine has one, else the screen) takes it first and
-  the other waits. A `ttyS0` without a UART does nothing. When the installer
+  the other waits and, once the first has ended, only offers the maintenance
+  shell (a second install would wipe the system just installed). A `ttyS0` without a UART does nothing. When the installer
   exits, the console drops into a maintenance shell (`reboot`, or
   `tetsu-installer --medium /usr/share/tetsu/medium` again).
 - `/usr/share/tetsu/secureboot/microsoft/{kek,db}/*.der`: Microsoft KEK CA

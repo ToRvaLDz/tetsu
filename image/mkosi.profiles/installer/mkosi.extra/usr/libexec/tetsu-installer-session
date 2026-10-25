@@ -23,15 +23,30 @@ primary=$(awk '{print $NF}' /sys/class/tty/console/active 2>/dev/null || true)
 [ "$primary" = tty0 ] && primary=tty1
 [ "$tty" = "$primary" ] || sleep 3
 
+status_file=/run/tetsu-installer.status
 exec 9>/run/tetsu-installer.lock
+waited=0
 if ! flock -n 9; then
   echo "The installer is running on another console ($primary); waiting for it."
   flock 9
+  waited=1
+fi
+
+if [ "$waited" = 1 ] && [ -s "$status_file" ]; then
+  # The other console ran the installer to its end: running it again here
+  # would wipe the system it just installed.
+  exec 9>&-
+  echo
+  echo "The installer ran on another console and ended (status $(cat "$status_file"))."
+  echo "This is a maintenance shell on the installation medium: 'reboot' restarts,"
+  echo "'tetsu-installer --medium $medium' runs the installer again."
+  exec /usr/bin/bash --login
 fi
 
 # fd 9 stays closed for the installer: the lock is the session's.
 /usr/bin/tetsu-installer --medium "$medium" 9>&-
 status=$?
+echo "$status" >"$status_file"
 exec 9>&-
 
 echo
