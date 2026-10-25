@@ -166,9 +166,10 @@ mod tests {
         t
     }
 
+    /// Value of an `--name=value` argument.
     fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-        let i = args.iter().position(|a| a == name)?;
-        args.get(i + 1).map(String::as_str)
+        args.iter()
+            .find_map(|a| a.strip_prefix(name)?.strip_prefix('='))
     }
 
     #[test]
@@ -286,7 +287,8 @@ mod tests {
         assert_eq!(flag(args, "--key"), Some("/k/db.key"));
         assert_eq!(flag(args, "--cert"), Some("/k/db.crt"));
         assert_eq!(flag(args, "--output"), Some("/out/boot.efi"));
-        assert_eq!(args.last().unwrap(), "/in/boot.efi");
+        let n = args.len();
+        assert_eq!(&args[n - 2..], ["--", "/in/boot.efi"]);
     }
 
     #[test]
@@ -296,6 +298,37 @@ mod tests {
         let calls = rec.0.borrow();
         let (prog, args) = &calls[0];
         assert_eq!(prog, "sbverify");
-        assert_eq!(args, &["--cert", "/k/db.crt", "/e/a.efi"]);
+        assert_eq!(args, &["--cert=/k/db.crt", "--", "/e/a.efi"]);
+    }
+
+    #[test]
+    fn leading_dash_values_stay_values() {
+        let snap = snapshot("NAME=T\n");
+        let mut s = spec(snap.path(), false);
+        s.keys.db_key = KeyRef::File("-db.key".into());
+        s.base_cmdline = "-x".into();
+        let rec = Recorder::default();
+        build_uki(&rec, &s, Path::new("-out.efi")).unwrap();
+        let calls = rec.0.borrow();
+        let args = &calls[0].1;
+        assert_eq!(flag(args, "--secureboot-private-key"), Some("-db.key"));
+        assert_eq!(flag(args, "--output"), Some("-out.efi"));
+        assert_eq!(
+            flag(args, "--cmdline"),
+            Some("-x rootflags=subvol=@snapshots/7/root")
+        );
+        // Every value is glued to its flag: no bare argument but the verb.
+        assert!(args[1..].iter().all(|a| a.starts_with("--")), "{args:?}");
+    }
+
+    #[test]
+    fn pcr_public_without_pcr_key_is_refused() {
+        let snap = snapshot("NAME=T\n");
+        let mut s = spec(snap.path(), false);
+        s.keys.pcr_public = Some("/k/pcr.pub".into());
+        let rec = Recorder::default();
+        let err = build_uki(&rec, &s, Path::new("/o")).unwrap_err();
+        assert!(matches!(err, BootError::InvalidKeys(_)), "{err:?}");
+        assert!(rec.0.borrow().is_empty());
     }
 }

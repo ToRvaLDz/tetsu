@@ -29,6 +29,9 @@ pub enum BootError {
     /// The signing key URI scheme is recognised but not implemented yet.
     #[error("unsupported key URI: {0}")]
     UnsupportedKeyUri(String),
+    /// The signing keys are inconsistent.
+    #[error("invalid signing keys: {0}")]
+    InvalidKeys(String),
     /// A new entry would not be newer than the existing ones.
     #[error("stale counter {counter}: newest existing entry is {newest}")]
     StaleCounter { counter: u64, newest: u64 },
