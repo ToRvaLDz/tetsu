@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Build the Tetsu images: target/image/tetsu-payload.tar (the system that is
+# installed) and target/image/tetsu-installer.raw (the USB installer medium).
+# See image/README.md. Re-running rebuilds both; downloads and the package
+# cache are kept.
+#
+# Environment:
+#   TETSU_IMAGE_FIRMWARE=1   add linux-firmware to the payload (large)
+#   TETSU_IMAGE_SUDO=auto|1|0  run mkosi through sudo (auto: only if the
+#                            unprivileged build is not possible)
+#   TETSU_IMAGE_OUT=DIR      output directory (default <repo>/target/image)
+set -euo pipefail
+
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+IMAGE="$REPO/image"
+OUT=${TETSU_IMAGE_OUT:-$REPO/target/image}
+OUT=$(mkdir -p "$OUT" && cd "$OUT" && pwd)
+STAGE="$OUT/stage"
+CERTS="$OUT/microsoft"
+PKGCACHE="$OUT/pkgcache"
+MKOSI_OUT="$OUT/mkosi"
+RUST=${TETSU_RUST_TOOLCHAIN:-+1.99.1}
+
+BINS_PAYLOAD=(tetsu-tx tetsu tetsu-unlock-seal tetsu-secrets)
+CRATES=(tetsu-tx tetsu-cli tetsu-installer tetsu-installer-core tetsu-secrets tetsu-installer)
+
+log() { printf '==> %s\n' "$*" >&2; }
+die() { printf 'image/build: %s\n' "$*" >&2; exit 1; }
+
+for tool in cargo mkosi curl sha256sum install; do
+  command -v "$tool" >/dev/null || die "missing tool: $tool"
+done
+
+# mkosi runs unprivileged (user namespaces) when it can; sudo is the fallback.
+mkosi_run() {
+  local use=${TETSU_IMAGE_SUDO:-auto}
+  if [ "$use" = auto ]; then
+    if unshare --user --map-root-user true 2>/dev/null; then use=0; else use=1; fi
+  fi
+  if [ "$use" = 1 ]; then
+    sudo mkosi "$@"
+  else
+    mkosi "$@"
+  fi
+}
+
+build_rust() {
+  log "building the Rust binaries (release)"
+  local args=() c
+  for c in "${CRATES[@]}"; do args+=(-p "$c"); done
+  cargo "$RUST" build --release --manifest-path "$REPO/Cargo.toml" "${args[@]}"
+}
+
+# Download the Microsoft certificates listed in microsoft-certs.sha256 and
+# check each against its pinned SHA-256. A mismatch aborts the build.
+fetch_certs() {
+  log "fetching the Microsoft Secure Boot certificates"
+  local sum dest url file
+  while read -r sum dest url; do
+    case "$sum" in '' | '#'*) continue ;; esac
+    file="$CERTS/$dest"
+    if [ -f "$file" ] && [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$sum" ]; then
+      continue
+    fi
+    mkdir -p "$(dirname "$file")"
+    curl -fsSL --retry 3 -o "$file.part" "$url" || die "cannot download $url"
+    if [ "$(sha256sum "$file.part" | cut -d' ' -f1)" != "$sum" ]; then
+      rm -f "$file.part"
+      die "SHA-256 mismatch for $dest ($url); expected $sum"
+    fi
+    mv "$file.part" "$file"
+  done <"$IMAGE/microsoft-certs.sha256"
+}
+
+# The locales the installer can propose, from its keyboard table.
+locale_gen() {
+  grep -ohE '"[a-z]{2,3}_[A-Z]{2}\.UTF-8"' \
+    "$REPO/crates/tetsu-installer-core/src/keyboard.rs" \
+    | tr -d '"' | sort -u | sed 's/$/ UTF-8/'
+  echo 'en_US.UTF-8 UTF-8'
+}
+
+stage_payload() {
+  local root="$STAGE/payload" initrd="$REPO/crates/tetsu-installer-core/initrd" b
+  rm -rf "$root"
+  mkdir -p "$root/usr/bin" "$root/usr/lib/systemd/system" \
+    "$root/usr/lib/initcpio/install" "$root/etc"
+  for b in "${BINS_PAYLOAD[@]}"; do
+    install -m 0755 "$REPO/target/release/$b" "$root/usr/bin/$b"
+  done
+  install -m 0644 "$initrd/tetsu-unlock-seal.service" "$root/usr/lib/systemd/system/"
+  install -m 0644 "$initrd/tetsu-seal.install" "$root/usr/lib/initcpio/install/tetsu-seal"
+  locale_gen | sort -u >"$root/etc/locale.gen"
+}
+
+stage_installer() {
+  local root="$STAGE/installer" c
+  rm -rf "$root"
+  mkdir -p "$root/usr/bin" "$root/usr/share/tetsu/medium" \
+    "$root/usr/share/tetsu/secureboot"
+  install -m 0755 "$REPO/target/release/tetsu-installer" "$root/usr/bin/tetsu-installer"
+  # The payload sits where the installer looks for it: <medium>/tetsu-payload.tar.
+  cp --reflink=auto "$OUT/tetsu-payload.tar" "$root/usr/share/tetsu/medium/tetsu-payload.tar"
+  cp -a "$CERTS" "$root/usr/share/tetsu/secureboot/microsoft"
+  for c in kek db; do
+    [ -d "$root/usr/share/tetsu/secureboot/microsoft/$c" ] || die "no certificates in $c/"
+  done
+}
+
+mkosi_image() {
+  local profile=$1 tree=$2
+  shift 2
+  log "mkosi: $profile"
+  mkdir -p "$MKOSI_OUT" "$PKGCACHE"
+  mkosi_run --directory "$IMAGE" --profile "$profile" \
+    --output-directory "$MKOSI_OUT" --package-cache-dir "$PKGCACHE" \
+    --extra-tree "$tree" "$@" --force build
+}
+
+# Publish a finished mkosi output as $OUT/<name>, owned by the caller.
+publish() {
+  local name=$1
+  [ -f "$MKOSI_OUT/$name" ] || die "mkosi did not produce $name"
+  if [ ! -O "$MKOSI_OUT/$name" ]; then
+    sudo chown "$(id -u):$(id -g)" "$MKOSI_OUT/$name"
+  fi
+  mv -f "$MKOSI_OUT/$name" "$OUT/$name"
+}
+
+main() {
+  build_rust
+  fetch_certs
+
+  stage_payload
+  local extra=()
+  if [ "${TETSU_IMAGE_FIRMWARE:-0}" = 1 ]; then extra+=(--package=linux-firmware); fi
+  mkosi_image payload "$STAGE/payload" "${extra[@]}"
+  publish tetsu-payload.tar
+
+  stage_installer
+  mkosi_image installer "$STAGE/installer"
+  publish tetsu-installer.raw
+
+  # Keep the outputs only: mkosi's side files and the staging copies of the
+  # payload are of no use.
+  rm -rf "$MKOSI_OUT" "$STAGE/installer/usr/share/tetsu/medium/tetsu-payload.tar"
+  log "done"
+  ls -lh "$OUT/tetsu-payload.tar" "$OUT/tetsu-installer.raw" >&2
+}
+
+main "$@"
