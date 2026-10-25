@@ -94,6 +94,14 @@ pub fn seal(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Result<(), Stor
     btrfs.sync(layout.top())
 }
 
+/// Mark snapshot `counter` committed, right after its UKI is renamed into
+/// place on the ESP and before the record: the evidence that survives a lost
+/// `/var/lib/tetsu` and a collected UKI.
+pub fn mark_committed(layout: &Layout, counter: u64) -> Result<(), StoreError> {
+    let _ = (layout, counter);
+    todo!()
+}
+
 /// Delete snapshot `counter`, sealed or partial (an interrupted create):
 /// unseal the root, delete the nested `etc`, the root and `etc-base`, then
 /// the directory.
@@ -290,6 +298,17 @@ mod tests {
         delete_snapshot(&l, &b, 9).unwrap();
         assert!(b.take_ops().is_empty());
         assert!(!l.snapshot_dir(9).exists());
+    }
+
+    #[test]
+    fn mark_committed_writes_the_marker_and_delete_removes_it() {
+        let (_t, l, b) = setup();
+        sealed(&l, &b, 3);
+        assert!(!l.is_committed(3));
+        mark_committed(&l, 3).unwrap();
+        assert!(l.is_committed(3));
+        delete_snapshot(&l, &b, 3).unwrap();
+        assert!(!l.snapshot_dir(3).exists());
     }
 
     #[test]

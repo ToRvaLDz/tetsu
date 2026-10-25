@@ -36,16 +36,19 @@ pub fn select_source(esp: &EspState, booted: u64) -> Source {
     }
 }
 
-/// Snapshots left by an interrupted transaction: no record and newer than
-/// every committed ESP entry, so never committed. An older snapshot whose
-/// UKI was collected keeps its record and is not an orphan; the booted one
-/// never is.
+/// Snapshots left by an interrupted transaction: no commit marker, no
+/// record and newer than every committed ESP entry, so never committed. An
+/// older snapshot whose UKI was collected is not an orphan; the booted one
+/// never is. With no ESP entry at all (an unmounted or wiped ESP) nothing is
+/// an orphan: there is no evidence to judge by.
 pub fn orphans(
     snapshots: &[u64],
+    committed: &[u64],
     records: &BTreeMap<u64, Record>,
     esp: &EspState,
     booted: Option<u64>,
 ) -> Vec<u64> {
+    let _ = committed;
     let newest = esp.newest_counter();
     snapshots
         .iter()
@@ -219,7 +222,10 @@ mod tests {
         let st = esp(&["tetsu-3.efi", "tetsu-5+3.efi"], &[]);
         // 1 lost its UKI but has a record; 6 and 7 never committed.
         let recs = records(&[(1, G), (3, G), (5, None)]);
-        assert_eq!(orphans(&[1, 3, 5, 6, 7], &recs, &st, Some(3)), vec![6, 7]);
+        assert_eq!(
+            orphans(&[1, 3, 5, 6, 7], &[], &recs, &st, Some(3)),
+            vec![6, 7]
+        );
     }
 
     #[test]
@@ -228,16 +234,33 @@ mod tests {
         // so it was committed once.
         let st = esp(&["tetsu-5.efi"], &[]);
         assert_eq!(
-            orphans(&[2, 5], &records(&[]), &st, Some(5)),
+            orphans(&[2, 5], &[], &records(&[]), &st, Some(5)),
             Vec::<u64>::new()
         );
     }
 
     #[test]
-    fn without_esp_entries_every_unrecorded_snapshot_but_booted_is_orphan() {
+    fn without_esp_entries_nothing_is_an_orphan() {
         let st = esp(&[], &[]);
-        assert_eq!(orphans(&[1, 2], &records(&[]), &st, Some(1)), vec![2]);
-        assert_eq!(orphans(&[1, 2], &records(&[]), &st, None), vec![1, 2]);
+        assert_eq!(
+            orphans(&[1, 2], &[], &records(&[]), &st, Some(1)),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            orphans(&[1, 2], &[], &records(&[]), &st, None),
+            Vec::<u64>::new()
+        );
+    }
+
+    #[test]
+    fn a_committed_snapshot_is_not_an_orphan_without_its_record() {
+        // 6 was committed, then its Bad entry left the ESP and the records
+        // were lost: only the marker says it was committed.
+        let st = esp(&["tetsu-5.efi"], &[]);
+        assert_eq!(
+            orphans(&[5, 6, 7], &[5, 6], &records(&[]), &st, Some(5)),
+            vec![7]
+        );
     }
 
     #[test]

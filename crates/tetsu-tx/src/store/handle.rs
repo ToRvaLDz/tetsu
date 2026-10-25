@@ -11,6 +11,7 @@ use super::lock::TxLock;
 use super::record::Records;
 use super::select::{self, Source};
 use super::snapshot;
+use crate::boot::BootError;
 use crate::boot::esp::EspState;
 
 /// A transaction that has its new, writable snapshot.
@@ -19,6 +20,11 @@ pub struct Begun {
     pub lock: TxLock,
     pub counter: u64,
     pub source: Source,
+    /// The ESP as read under the lock: the base of every later decision.
+    pub esp: EspState,
+    /// Orphans that could not be deleted; the transaction went on anyway,
+    /// since the next counter skips them.
+    pub gc_failures: Vec<StoreError>,
 }
 
 /// The snapshot store over one top-level mount.
@@ -54,26 +60,32 @@ impl<'a> Store<'a> {
         booted: Option<u64>,
     ) -> Result<Vec<u64>, StoreError> {
         let snapshots = self.layout.list_snapshots()?;
+        let committed: Vec<u64> = snapshots
+            .iter()
+            .copied()
+            .filter(|&n| self.layout.is_committed(n))
+            .collect();
         let records = self.records.load_or_reconstruct(esp)?;
-        let doomed = select::orphans(&snapshots, &records, esp, booted);
+        let doomed = select::orphans(&snapshots, &committed, &records, esp, booted);
         self.delete_all(doomed)
     }
 
-    /// Start a transaction: take the lock, collect orphans, pick the source,
-    /// allocate the next counter and create its writable snapshot. A failed
-    /// create leaves no partial snapshot behind.
-    pub fn begin(
-        &self,
-        lock_path: &Path,
-        esp: &EspState,
-        booted: u64,
-    ) -> Result<Begun, StoreError> {
+    /// Start a transaction: take the lock, read the ESP through `read_esp`
+    /// (only now, so no other transaction can change it underneath), collect
+    /// orphans, pick the source, allocate the next counter and create its
+    /// writable snapshot. A failed create leaves no partial snapshot behind.
+    pub fn begin<F>(&self, lock_path: &Path, read_esp: F, booted: u64) -> Result<Begun, StoreError>
+    where
+        F: FnOnce() -> Result<EspState, BootError>,
+    {
+        let esp = read_esp()?;
         let lock = TxLock::acquire(lock_path)?;
-        self.gc_orphans(&lock, esp, Some(booted))?;
-        let source = select::select_source(esp, booted);
+        self.gc_orphans(&lock, &esp, Some(booted))?;
+        let gc_failures = Vec::new();
+        let source = select::select_source(&esp, booted);
         let snapshots = self.layout.list_snapshots()?;
         let records = self.records.load()?;
-        let counter = select::next_counter(&snapshots, &records, esp);
+        let counter = select::next_counter(&snapshots, &records, &esp);
         let created = snapshot::create_snapshot(
             &self.layout,
             self.btrfs,
@@ -90,7 +102,15 @@ impl<'a> Store<'a> {
             lock,
             counter,
             source,
+            esp,
+            gc_failures,
         })
+    }
+
+    /// Mark the snapshot of a begun transaction committed: call it right
+    /// after the ESP rename, before writing the record.
+    pub fn mark_committed(&self, begun: &Begun) -> Result<(), StoreError> {
+        snapshot::mark_committed(&self.layout, begun.counter)
     }
 
     /// Seal the snapshot of a begun transaction.
@@ -99,7 +119,8 @@ impl<'a> Store<'a> {
     }
 
     /// Delete the snapshots retention lets go: outside the newest 10 and
-    /// neither booted, default nor newest good. Returns the deleted
+    /// neither booted, default, newest good, last good (the implicit
+    /// rollback target) nor still on the ESP. Returns the deleted
     /// counters; failures are collected and the rest still attempted.
     pub fn apply_retention(
         &self,
@@ -240,7 +261,10 @@ mod tests {
         env.committed(3, G);
         env.partial(4);
         let st = esp(&["tetsu-2.efi", "tetsu-3.efi"], &[4]);
-        let begun = env.store().begin(&env.lock_path, &st, 3).unwrap();
+        let begun = env
+            .store()
+            .begin(&env.lock_path, || Ok(st.clone()), 3)
+            .unwrap();
         assert_eq!(begun.counter, 5);
         assert_eq!(
             begun.source,
@@ -260,7 +284,10 @@ mod tests {
         env.committed(3, G);
         env.committed(4, None);
         let st = esp(&["tetsu-3.efi", "tetsu-4+3.efi"], &[]);
-        let begun = env.store().begin(&env.lock_path, &st, 3).unwrap();
+        let begun = env
+            .store()
+            .begin(&env.lock_path, || Ok(st.clone()), 3)
+            .unwrap();
         assert_eq!(
             begun.source,
             Source {
@@ -283,7 +310,9 @@ mod tests {
         env.committed(4, None);
         fs::remove_file(env.records.path(4)).unwrap();
         let st = esp(&["tetsu-3.efi", "tetsu-4+3.efi"], &[]);
-        env.store().begin(&env.lock_path, &st, 3).unwrap();
+        env.store()
+            .begin(&env.lock_path, || Ok(st.clone()), 3)
+            .unwrap();
         assert_eq!(env.snapshots(), vec![3, 4, 5]);
         assert!(env.records.load().unwrap()[&4].reconstructed);
     }
@@ -295,7 +324,7 @@ mod tests {
         let st = esp(&["tetsu-1.efi"], &[]);
         let _held = TxLock::acquire(&env.lock_path).unwrap();
         assert!(matches!(
-            env.store().begin(&env.lock_path, &st, 1),
+            env.store().begin(&env.lock_path, || Ok(st.clone()), 1),
             Err(StoreError::Busy { .. })
         ));
         assert_eq!(env.snapshots(), vec![1]);
@@ -307,7 +336,11 @@ mod tests {
         env.committed(1, G);
         let st = esp(&["tetsu-1.efi"], &[]);
         *env.btrfs.fail.borrow_mut() = Some("snapshot");
-        assert!(env.store().begin(&env.lock_path, &st, 1).is_err());
+        assert!(
+            env.store()
+                .begin(&env.lock_path, || Ok(st.clone()), 1)
+                .is_err()
+        );
         assert_eq!(env.snapshots(), vec![1]);
         TxLock::acquire(&env.lock_path).unwrap();
     }
@@ -318,7 +351,7 @@ mod tests {
         env.committed(1, G);
         let st = esp(&["tetsu-1.efi"], &[]);
         let store = env.store();
-        let begun = store.begin(&env.lock_path, &st, 1).unwrap();
+        let begun = store.begin(&env.lock_path, || Ok(st.clone()), 1).unwrap();
         store.seal(&begun).unwrap();
         assert_eq!(env.btrfs.readonly(&env.layout.root(2)), Some(true));
         assert_eq!(env.btrfs.readonly(&env.layout.etc(2)), Some(false));
@@ -355,5 +388,72 @@ mod tests {
             Err(StoreError::Cleanup { failures }) => assert_eq!(failures.len(), 2),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn begin_reads_the_esp_under_the_lock() {
+        let env = Env::new();
+        env.committed(1, G);
+        let st = esp(&["tetsu-1.efi"], &[]);
+        let lock_path = env.lock_path.clone();
+        let read = || {
+            assert!(
+                matches!(TxLock::acquire(&lock_path), Err(StoreError::Busy { .. })),
+                "the ESP must be read while the lock is held"
+            );
+            Ok(st.clone())
+        };
+        let begun = env.store().begin(&env.lock_path, read, 1).unwrap();
+        assert_eq!(begun.esp, st);
+    }
+
+    #[test]
+    fn an_undeletable_orphan_does_not_block_the_transaction() {
+        let env = Env::new();
+        env.committed(1, G);
+        env.partial(2);
+        // A stray file keeps the directory from going away.
+        fs::write(env.layout.snapshot_dir(2).join("stray"), b"x").unwrap();
+        let st = esp(&["tetsu-1.efi"], &[]);
+        let begun = env
+            .store()
+            .begin(&env.lock_path, || Ok(st.clone()), 1)
+            .unwrap();
+        assert_eq!(begun.gc_failures.len(), 1);
+        assert_eq!(begun.counter, 3);
+    }
+
+    #[test]
+    fn a_committed_snapshot_survives_lost_records_and_a_collected_uki() {
+        let env = Env::new();
+        env.committed(1, G);
+        env.committed(2, B);
+        snapshot::mark_committed(&env.layout, 2).unwrap();
+        fs::remove_file(env.records.path(2)).unwrap();
+        // The Bad entry 2 already left the ESP.
+        let st = esp(&["tetsu-1.efi"], &[]);
+        let begun = env
+            .store()
+            .begin(&env.lock_path, || Ok(st.clone()), 1)
+            .unwrap();
+        assert_eq!(begun.counter, 3);
+        assert_eq!(env.snapshots(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn retention_keeps_last_good_and_every_esp_entry() {
+        let env = Env::new();
+        env.committed(1, G);
+        env.committed(2, G);
+        for n in 3..=12 {
+            env.committed(n, B);
+        }
+        env.committed(13, G);
+        // Booted 13 is good, so newest good is 13; last good is 2. The ESP
+        // still holds 1 as a previous good entry.
+        let st = esp(&["tetsu-1.efi", "tetsu-2.efi", "tetsu-13.efi"], &[]);
+        let lock = TxLock::acquire(&env.lock_path).unwrap();
+        let deleted = env.store().apply_retention(&lock, &st, 13).unwrap();
+        assert_eq!(deleted, vec![3]);
     }
 }

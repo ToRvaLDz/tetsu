@@ -23,7 +23,9 @@ use tetsu_tx::store::btrfs::{Btrfs, CliBtrfs};
 use tetsu_tx::store::layout::Layout;
 use tetsu_tx::store::lock::TxLock;
 use tetsu_tx::store::record::{BootVerdict, Records};
-use tetsu_tx::store::snapshot::{capture_etc_base, delete_snapshot, init_layout, seal};
+use tetsu_tx::store::snapshot::{
+    capture_etc_base, delete_snapshot, init_layout, mark_committed, seal,
+};
 use tetsu_tx::store::{Store, StoreError};
 
 const IMAGE_BYTES: u64 = 256 * 1024 * 1024;
@@ -114,6 +116,7 @@ fn transaction_zero(layout: &Layout, btrfs: &dyn Btrfs) {
     fs::write(layout.etc(1).join("hostname"), b"gs66\n").unwrap();
     capture_etc_base(layout, btrfs, 1).unwrap();
     seal(layout, btrfs, 1).unwrap();
+    mark_committed(layout, 1).unwrap();
 }
 
 #[test]
@@ -142,9 +145,14 @@ fn layout_snapshot_seal_and_delete() {
     // A transaction from the booted snapshot carries the nested etc over.
     let records = Records::new(&fs_.work("records"));
     let store = Store::new(layout.clone(), records, &btrfs);
-    let esp = esp_with(&fs_.work("esp"), &["tetsu-1.efi"]);
+    let esp_dir = fs_.work("esp");
+    esp_with(&esp_dir, &["tetsu-1.efi"]);
     let begun = store
-        .begin(&fs_.work("run").join("tx.lock"), &esp, 1)
+        .begin(
+            &fs_.work("run").join("tx.lock"),
+            || Esp::open(&esp_dir).scan(),
+            1,
+        )
         .unwrap();
     assert_eq!(begun.counter, 2);
     assert!(btrfs.is_subvolume(&layout.etc(2)).unwrap());
@@ -179,14 +187,15 @@ fn orphans_records_and_retention() {
     let esp_dir = fs_.work("esp");
 
     // Twelve committed transactions, each booted and blessed in turn.
-    let mut names = vec!["tetsu-1.efi".to_owned()];
+    let scan = || Esp::open(&esp_dir).scan();
+    esp_with(&esp_dir, &["tetsu-1.efi"]);
     for booted in 1..=12u64 {
-        let esp = esp_with(&esp_dir, &[]);
-        let begun = store.begin(&lock_path, &esp, booted).unwrap();
+        let begun = store.begin(&lock_path, scan, booted).unwrap();
+        assert!(begun.gc_failures.is_empty());
         assert_eq!(begun.counter, booted + 1);
         store.seal(&begun).unwrap();
-        names.push(format!("tetsu-{}.efi", begun.counter));
-        let esp = esp_with(&esp_dir, &[names.last().unwrap()]);
+        let esp = esp_with(&esp_dir, &[&format!("tetsu-{}.efi", begun.counter)]);
+        store.mark_committed(&begun).unwrap();
         // Record lost on purpose for every third transaction: rebuilt from
         // the ESP, verdict from the blessed name.
         let all = records.load_or_reconstruct(&esp).unwrap();
@@ -206,21 +215,26 @@ fn orphans_records_and_retention() {
     );
 
     // An interrupted transaction: created, never committed.
-    let esp = esp_with(&esp_dir, &[]);
-    let begun = store.begin(&lock_path, &esp, 13).unwrap();
+    let begun = store.begin(&lock_path, scan, 13).unwrap();
     assert_eq!(begun.counter, 14);
     drop(begun);
 
     // Busy while held.
     let lock = TxLock::acquire(&lock_path).unwrap();
     assert!(matches!(
-        store.begin(&lock_path, &esp, 13),
+        store.begin(&lock_path, scan, 13),
         Err(StoreError::Busy { .. })
     ));
+    let esp = scan().unwrap();
     let deleted = store.gc_orphans(&lock, &esp, Some(13)).unwrap();
     assert_eq!(deleted, vec![14]);
 
-    // Retention: keep the newest ten.
+    // Retention: keep the newest ten. The ESP keeps only the last four
+    // entries, as boot GC would leave it.
+    for n in 1..=9 {
+        fs::remove_file(esp_dir.join("EFI/Linux").join(format!("tetsu-{n}.efi"))).unwrap();
+    }
+    let esp = scan().unwrap();
     let deleted = store.apply_retention(&lock, &esp, 13).unwrap();
     assert_eq!(deleted, vec![1, 2, 3]);
     assert_eq!(

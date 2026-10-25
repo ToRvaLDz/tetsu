@@ -3,6 +3,7 @@
 //! * `@snapshots/<n>/root`       root snapshot, sealed `ro`
 //! * `@snapshots/<n>/root/etc`   nested writable subvolume
 //! * `@snapshots/<n>/etc-base`   read-only base of the `/etc` merge
+//! * `@snapshots/<n>/committed`  marker: the UKI is committed on the ESP
 //! * `@var`, `@home`, `@root`, `@swap`   shared, outside every snapshot
 
 use std::fs;
@@ -14,6 +15,9 @@ use crate::boot::entry::canonical;
 
 /// Subvolume holding every snapshot directory.
 pub const SNAPSHOTS: &str = "@snapshots";
+
+/// File name of the commit marker in a snapshot directory.
+pub const COMMITTED: &str = "committed";
 
 /// Shared subvolumes, outside every snapshot.
 pub const SHARED: [&str; 4] = ["@var", "@home", "@root", "@swap"];
@@ -53,6 +57,15 @@ impl Layout {
 
     pub fn etc_base(&self, counter: u64) -> PathBuf {
         self.snapshot_dir(counter).join("etc-base")
+    }
+
+    /// Marker written once the snapshot's UKI is committed on the ESP.
+    pub fn committed_marker(&self, counter: u64) -> PathBuf {
+        self.snapshot_dir(counter).join(COMMITTED)
+    }
+
+    pub fn is_committed(&self, counter: u64) -> bool {
+        self.committed_marker(counter).is_file()
     }
 
     pub fn shared(&self, name: &str) -> PathBuf {
