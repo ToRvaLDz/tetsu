@@ -103,8 +103,8 @@ fn user_layer_after(request: &Request, before: &[String]) -> Vec<String> {
 }
 
 /// Run the package phase of `request` over `root`. The base closure is
-/// taken from the DB before and must survive; `Install` and `Remove` need
-/// `tetsu-base` installed.
+/// taken from the DB before and must survive an `Install`; `Install` and
+/// `Remove` need `tetsu-base` installed.
 pub(super) fn run(
     runner: &dyn Runner,
     ns: &Nspawn,
@@ -134,7 +134,10 @@ pub(super) fn run(
         }
     }
     let after = pkg::installed(runner, root)?;
-    if let Some(closure) = &closure {
+    // The user layer must never remove or replace a base package. An update
+    // is upstream's to change the base (a dropped dependency, a rename), and
+    // a remove was checked against the user layer before it ran.
+    if let (Request::Install(_), Some(closure)) = (request, &closure) {
         guard::check_base_kept(closure, &after)?;
     }
     Ok(Phase {

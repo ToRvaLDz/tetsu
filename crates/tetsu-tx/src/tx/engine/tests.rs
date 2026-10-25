@@ -459,6 +459,19 @@ fn a_package_that_would_replace_the_base_names_it() {
 }
 
 #[test]
+fn an_update_may_drop_a_former_base_package() {
+    // The new tetsu-base no longer needs bash: upstream changed the base.
+    let env = Env::with(QI, "tetsu-base 2-1\nvim 9.1-1\n");
+    let report = env.run(&Request::Update).unwrap();
+    assert_eq!(report.counter, 2);
+    assert!(
+        report
+            .changes
+            .contains(&change("bash", Some("5.2-1"), None))
+    );
+}
+
+#[test]
 fn install_and_remove_need_tetsu_base() {
     let qi = QI.replace("tetsu-base", "something-else");
     for request in [
