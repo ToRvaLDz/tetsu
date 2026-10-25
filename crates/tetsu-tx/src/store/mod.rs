@@ -48,3 +48,4 @@ impl StoreError {
 pub mod btrfs;
 pub mod layout;
 pub mod snapshot;
+pub mod lock;
