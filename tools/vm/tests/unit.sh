@@ -76,4 +76,40 @@ test_dry_run
 test_dry_run_smbios
 test_dry_run_errors
 
+# ---------------------------------------------------------------- wait-for
+# A fake state dir whose qemu.pid names a live dummy process.
+fake_state() {
+  local st=$1
+  mkdir -p "$st"
+  : >"$st/serial.log"
+  sleep 60 &
+  FAKE_PID=$!
+  echo "$FAKE_PID" >"$st/qemu.pid"
+}
+
+test_wait_for() {
+  local st="$SCRATCH/wf" code
+  export TETSU_VM_QEMU_COMM=sleep
+  fake_state "$st"
+  local pid=$FAKE_PID
+
+  (sleep 1; printf '\033[1;32mOK\033[0m Reached\r target\r\n' >>"$st/serial.log") &
+  code=0; "$VM" wait-for --state "$st" --timeout 10 'Reached target$' || code=$?
+  assert_eq "wait-for: match through ANSI and CR" 0 "$code"
+
+  code=0; "$VM" wait-for --state "$st" --timeout 2 'never appears' || code=$?
+  assert_eq "wait-for: timeout is 1" 1 "$code"
+
+  kill "$pid"; wait "$pid" 2>/dev/null
+  code=0; "$VM" wait-for --state "$st" --timeout 5 'never appears' || code=$?
+  assert_eq "wait-for: dead VM is 2" 2 "$code"
+
+  printf 'late line\n' >>"$st/serial.log"
+  code=0; "$VM" wait-for --state "$st" --timeout 5 'late line' || code=$?
+  assert_eq "wait-for: match wins over dead VM" 0 "$code"
+  unset TETSU_VM_QEMU_COMM
+}
+
+test_wait_for
+
 summary
