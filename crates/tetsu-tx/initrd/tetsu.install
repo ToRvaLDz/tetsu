@@ -1,0 +1,22 @@
+#!/bin/bash
+# mkinitcpio install hook "tetsu" (systemd-based initrd). Installed as
+# /usr/lib/initcpio/install/tetsu; add "tetsu" to HOOKS after "systemd" and
+# "sd-encrypt".
+
+build() {
+    add_binary /usr/bin/tetsu-etc-sync
+    add_binary mount
+    add_binary umount
+    add_module 'btrfs?'
+
+    add_systemd_unit tetsu-etc-sync.service
+    add_symlink /usr/lib/systemd/system/initrd.target.wants/tetsu-etc-sync.service \
+        ../tetsu-etc-sync.service
+}
+
+help() {
+    cat <<HELPEOF
+Carries the user's /etc changes into the first boot of a snapshot built by a
+transaction (three-way sync), before the switch to the real root.
+HELPEOF
+}

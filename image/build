@@ -22,7 +22,7 @@ MKOSI_OUT="$OUT/mkosi"
 PACKAGES="$OUT/packages"
 RUST=${TETSU_RUST_TOOLCHAIN:-+1.99.1}
 
-BINS_PAYLOAD=(tetsu-tx tetsu tetsu-unlock-seal tetsu-secrets)
+BINS_PAYLOAD=(tetsu-tx tetsu tetsu-unlock-seal tetsu-secrets tetsu-etc-sync)
 CRATES=(tetsu-tx tetsu-cli tetsu-installer tetsu-installer-core tetsu-secrets)
 
 log() { printf '==> %s\n' "$*" >&2; }
@@ -115,7 +115,8 @@ build_base_package() {
 }
 
 stage_payload() {
-  local root="$STAGE/payload" initrd="$REPO/crates/tetsu-installer-core/initrd" b
+  local root="$STAGE/payload" b
+  local initrd="$REPO/crates/tetsu-installer-core/initrd" txinitrd="$REPO/crates/tetsu-tx/initrd"
   rm -rf "$root"
   mkdir -p "$root/usr/bin" "$root/usr/lib/systemd/system" \
     "$root/usr/lib/initcpio/install" "$root/etc"
@@ -124,6 +125,8 @@ stage_payload() {
   done
   install -m 0644 "$initrd/tetsu-unlock-seal.service" "$root/usr/lib/systemd/system/"
   install -m 0644 "$initrd/tetsu-seal.install" "$root/usr/lib/initcpio/install/tetsu-seal"
+  install -m 0644 "$txinitrd/tetsu-etc-sync.service" "$root/usr/lib/systemd/system/"
+  install -m 0644 "$txinitrd/tetsu.install" "$root/usr/lib/initcpio/install/tetsu"
   locale_gen | sort -u >"$root/etc/locale.gen"
   stage_certs "$root"
 }

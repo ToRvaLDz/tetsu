@@ -1,0 +1,21 @@
+[Unit]
+Description=Sync the /etc changes into the first boot of a new snapshot
+DefaultDependencies=no
+ConditionPathExists=/etc/initrd-release
+Requires=sysroot.mount
+After=sysroot.mount
+# initrd.target first: the switch isolates initrd-switch-root.target once
+# initrd.target is reached, which stops a sync still running. The seal reads
+# /sysroot/etc, so it comes after the sync.
+Before=initrd.target initrd-switch-root.target tetsu-unlock-seal.service
+
+[Service]
+Type=oneshot
+# The binary exits 0 on every error: the sync never blocks the boot.
+ExecStart=/usr/bin/tetsu-etc-sync
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=initrd.target

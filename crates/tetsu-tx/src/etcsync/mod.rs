@@ -20,6 +20,8 @@
 //! ACLs and times are not compared.
 
 pub mod apply;
+#[cfg(test)]
+mod dist;
 pub mod firstboot;
 pub mod initrd;
 pub mod mountinfo;
