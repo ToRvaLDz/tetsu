@@ -215,6 +215,10 @@ while time.time() < deadline:
         blocked += 1
     except OSError:
         break
+    try:
+        conn.recv(4096)  # like QEMU, consume what the client types
+    except (BlockingIOError, OSError):
+        pass
     time.sleep(0.001)
 with open(sys.argv[2], "w") as f:
     f.write(str(blocked))

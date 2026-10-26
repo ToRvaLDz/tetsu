@@ -103,6 +103,9 @@ cmd_send() {
   need_cmd socat
   [ -S "$st/serial.sock" ] || die "no serial socket in $st (is the VM running?)"
   # The short sleep keeps the connection open until the bytes are delivered.
-  { printf '%b' "$text"; sleep 0.3; } | socat -u - "UNIX-CONNECT:$st/serial.sock" \
+  # The client must also read (and discard) the guest output: a client that
+  # never drains the socket makes QEMU's 1-byte serial writes hit EAGAIN, and
+  # its chardev logfile then records the retried byte twice.
+  { printf '%b' "$text"; sleep 0.3; } | socat - "UNIX-CONNECT:$st/serial.sock" >/dev/null \
     || die "could not write to the serial socket in $st"
 }
