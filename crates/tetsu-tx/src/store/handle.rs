@@ -13,6 +13,7 @@ use super::select::{self, Source};
 use super::snapshot;
 use crate::boot::BootError;
 use crate::boot::esp::EspState;
+use crate::fault::{self, Point};
 
 /// A transaction that has its new, writable snapshot.
 #[derive(Debug)]
@@ -128,6 +129,7 @@ impl<'a> Store<'a> {
             Err(StoreError::Cleanup { failures }) => failures,
             Err(e) => return Err(e),
         };
+        fault::reach(Point::GcDone);
         let source = pick(&esp)?;
         let snapshots = self.layout.list_snapshots()?;
         let records = self.records.load()?;

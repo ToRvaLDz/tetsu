@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::BootError;
 use super::entry::{BootState, EntryName, FileKind, parse_file_name, tmp_file_name};
+use crate::fault::{self, Point};
 
 /// Boot attempts granted to a freshly committed entry.
 pub const BOOT_TRIES: u32 = 3;
@@ -129,7 +130,9 @@ impl Esp {
             .dir
             .join(EntryName::untried(counter, BOOT_TRIES).file_name());
         fs::rename(&tmp, &dest).map_err(|e| BootError::io(&tmp, e))?;
+        fault::reach(Point::Renamed);
         sync(&self.dir)?;
+        fault::reach(Point::Committed);
         Ok(dest)
     }
 

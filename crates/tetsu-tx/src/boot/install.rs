@@ -9,6 +9,7 @@ use super::retention::split_gc;
 use super::space::{SpaceProbe, apply_gc, reserve_space};
 use super::tool::Runner;
 use super::uki::{UkiSpec, build_uki, preflight};
+use crate::fault::{self, Point};
 
 /// A UKI that is on the ESP under its final name.
 #[derive(Debug)]
@@ -51,6 +52,7 @@ pub fn write_uki(
     let split = split_gc(&state, booted);
     let remaining = reserve_space(probe, esp.dir(), &split, estimated_size)?;
     esp.stage(spec.counter, |tmp| build_uki(runner, spec, tmp))?;
+    fault::reach(Point::UkiStaged);
     let path = esp.commit(spec.counter)?;
     // The entry is committed: a failed cleanup must not look like a failed
     // write. It is reported and the next write retries the same GC.

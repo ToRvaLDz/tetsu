@@ -17,6 +17,7 @@ use crate::boot::keys::SigningKeys;
 use crate::boot::space::SpaceProbe;
 use crate::boot::tool::Runner;
 use crate::boot::uki::{UkiSpec, read_no_follow};
+use crate::fault::{self, Point};
 use crate::store::btrfs::Btrfs;
 use crate::store::layout::Layout;
 use crate::store::record::{Record, Records, TxKind};
@@ -252,6 +253,7 @@ impl Engine<'_> {
         let started = (self.clock)();
         let store = Store::new(self.layout.clone(), self.records.clone(), self.btrfs);
         let begun = self.begin(&store, request)?;
+        fault::reach(Point::Snapshot);
         (ctx.observer)(EngineEvent::Begun {
             counter: begun.counter,
         });
@@ -314,6 +316,7 @@ impl Engine<'_> {
             keys: self.keys.clone(),
         };
         store.seal(begun)?;
+        fault::reach(Point::Sealed);
         let estimate = estimated_size(&spec)?;
         let esp_cleanup = match write_uki(
             &self.esp,
@@ -383,6 +386,7 @@ impl Engine<'_> {
             return Ok((Vec::new(), Vec::new()));
         }
         let phase = packages::run(self.runner, ns, &ns.root, request)?;
+        fault::reach(Point::Installed);
         for path in varreport::var_report(scratch, &ns.root)? {
             log.push(format!(
                 "{path} is not covered by a tmpfiles.d entry and is lost with the scratch /var"
@@ -467,6 +471,7 @@ impl Engine<'_> {
                 "the record was not written ({e}); it is rebuilt from the ESP"
             ));
         }
+        fault::reach(Point::Recorded);
         warnings.extend(self.retention(store, begun));
         Report {
             counter: begun.counter,

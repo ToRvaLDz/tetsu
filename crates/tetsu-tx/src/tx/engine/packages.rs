@@ -6,6 +6,7 @@ use std::path::Path;
 
 use super::Request;
 use crate::boot::tool::Runner;
+use crate::fault::{self, Point};
 use crate::tx::nspawn::Nspawn;
 use crate::tx::pkg::{self, Packages};
 use crate::tx::{TxError, guard, steps};
@@ -79,6 +80,7 @@ fn update(runner: &dyn Runner, ns: &Nspawn, user_layer: &[String]) -> Result<(),
     steps::keyring_download(runner, ns)?;
     steps::keyring_install(runner, ns)?;
     steps::update_download(runner, ns).map_err(|e| blocked_by_user(e, user_layer))?;
+    fault::reach(Point::Downloaded);
     steps::update_install(runner, ns).map_err(|e| blocked_by_user(e, user_layer))?;
     let orphans = steps::orphans(runner, ns)?;
     steps::remove_orphans(runner, ns, &orphans)
@@ -126,6 +128,7 @@ pub(super) fn run(
         Request::Update => update(runner, ns, &user_before)?,
         Request::Install(pkgs) => {
             steps::install_download(runner, ns, pkgs)?;
+            fault::reach(Point::Downloaded);
             steps::install_apply(runner, ns, pkgs)?;
         }
         Request::Remove(pkgs) => steps::remove(runner, ns, pkgs, &user_before)?,
