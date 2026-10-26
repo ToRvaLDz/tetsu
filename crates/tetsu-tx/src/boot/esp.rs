@@ -365,17 +365,21 @@ mod tests {
     }
 
     #[test]
-    fn commit_syncs_the_directory() {
+    fn commit_syncs_the_committed_file_then_the_directory() {
+        // On FAT the size of a renamed file reaches its new directory entry
+        // only when the file itself is synced: the directory fsync alone can
+        // leave a committed entry of size 0.
         let (_r, esp) = esp_with(&[]);
         esp.stage(1, |p| fs::write(p, b"x").map_err(|e| BootError::io(p, e)))
             .unwrap();
         let mut calls: Vec<PathBuf> = Vec::new();
-        esp.commit_with(1, &mut |p| {
-            calls.push(p.to_path_buf());
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(calls, vec![esp.dir().to_path_buf()]);
+        let dest = esp
+            .commit_with(1, &mut |p| {
+                calls.push(p.to_path_buf());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(calls, vec![dest, esp.dir().to_path_buf()]);
     }
 
     #[test]
