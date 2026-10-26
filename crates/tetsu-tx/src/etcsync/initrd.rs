@@ -147,7 +147,20 @@ mod tests {
         fn runner(&self) -> ScriptedRunner {
             let runner = ScriptedRunner::new();
             runner.on_effect(&["mount"], |line| build(Path::new(line.last().unwrap())));
+            runner.on_effect(&["umount"], |line| unmount(Path::new(line.last().unwrap())));
             runner
+        }
+    }
+
+    /// What a real unmount leaves: the mount point, empty.
+    fn unmount(top: &Path) {
+        for entry in fs::read_dir(top).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                fs::remove_dir_all(&path).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+            }
         }
     }
 
@@ -243,11 +256,26 @@ mod tests {
             // A file where the output directory has to go.
             fs::write(top.join("@var/lib/tetsu/etc-sync"), "in the way").unwrap();
         });
+        runner.on_effect(&["umount"], |line| unmount(Path::new(line.last().unwrap())));
         assert!(run(&env.paths, &runner).is_err());
         let calls = runner.lines();
         assert_eq!(calls.len(), 2, "{calls:?}");
         assert!(calls[1].starts_with("umount "));
         assert!(!env.paths.work.exists());
+    }
+
+    #[test]
+    fn a_failed_unmount_leaves_the_mounted_top_level_alone() {
+        let env = Env::new(CMDLINE);
+        let runner = ScriptedRunner::new();
+        runner.on_effect(&["mount"], |line| build(Path::new(line.last().unwrap())));
+        runner.on(&["umount"], Reply::Fail("target is busy".into()));
+        let err = run(&env.paths, &runner).unwrap_err();
+        assert!(err.to_string().contains("still mounted"), "{err}");
+        // Still mounted: what is under it is the real filesystem.
+        let layout = Layout::new(&env.top());
+        assert!(layout.etc(1).join("mine.conf").is_file());
+        assert!(layout.etc_synced_marker(2).is_file());
     }
 
     #[test]
