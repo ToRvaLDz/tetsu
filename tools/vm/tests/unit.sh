@@ -344,4 +344,17 @@ test_install_usage() {
 
 test_install_usage
 
+# ----------------------------------------------------------- tx.sh usage
+test_tx_usage() {
+  local tx="$HERE/tx.sh"
+  assert_status "tx.sh: help" 0 "$tx" help
+  assert_contains "tx.sh: help lists the cases" "$OUT" "power-cut POINT|all"
+  assert_status "tx.sh: no case (usage 64)" 64 "$tx"
+  local got=0
+  "$tx" bogus >/dev/null 2>&1 || got=$?
+  case "$got" in 64 | 77) pass "tx.sh: unknown case" ;; *) fail "tx.sh: unknown case" "exit $got" ;; esac
+}
+
+test_tx_usage
+
 summary
