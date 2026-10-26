@@ -31,7 +31,7 @@ use crate::store::btrfs::{Btrfs, CliBtrfs};
 use crate::store::layout::{Layout, booted_counter};
 use crate::store::record::Records;
 use crate::tx::TxError;
-use crate::tx::engine::{Engine, EngineEvent, Paths, Report, Request, RunCtx};
+use crate::tx::engine::{Engine, Paths, Report, Request, RunCtx};
 
 /// What the process prints and exits with.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,15 +148,8 @@ fn list(options: &Options, host: &Host<'_>, json: bool) -> Outcome {
     }
 }
 
-/// The observer of a run nobody watches.
-fn ignore_event(_: EngineEvent) {}
-
 fn transact(options: &Options, host: &Host<'_>, request: &Request) -> Result<Report, TxError> {
-    let ctx = RunCtx {
-        id: None,
-        observer: &ignore_event,
-    };
-    transact_with(options, host, request, ctx)
+    transact_with(options, host, request, RunCtx::silent())
 }
 
 /// Run one transaction, telling `ctx.observer` where it is and writing

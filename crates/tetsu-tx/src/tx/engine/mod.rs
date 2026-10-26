@@ -135,6 +135,16 @@ pub struct RunCtx<'a> {
 
 fn ignore_event(_: EngineEvent) {}
 
+impl RunCtx<'_> {
+    /// A run nobody watches: no id, and the events are dropped.
+    pub fn silent() -> Self {
+        Self {
+            id: None,
+            observer: &ignore_event,
+        }
+    }
+}
+
 /// A committed transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
@@ -222,11 +232,7 @@ impl Engine<'_> {
     /// deletes the new snapshot and the scratch `/var`; after it nothing can
     /// fail the transaction any more, problems are warnings in the report.
     pub fn run(&self, request: &Request) -> Result<Report, TxError> {
-        let ctx = RunCtx {
-            id: None,
-            observer: &ignore_event,
-        };
-        self.run_with(request, ctx)
+        self.run_with(request, RunCtx::silent())
     }
 
     /// [`Engine::run`], telling `ctx.observer` where it is and writing
