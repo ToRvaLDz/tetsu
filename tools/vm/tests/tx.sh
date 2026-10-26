@@ -187,6 +187,10 @@ verify_boot() { # POINT
   say_info "booted snapshot $n after the cut at $point"
   gexec "sudo -n sh -c 'stat -c %n=%s $ESP_DIR/*' | paste -sd,"
   say_info "ESP after the cut: $GOUT"
+  # An orphan .tmp is allowed by the protocol, even a short one; a committed
+  # entry (.efi) of zero bytes is not: the rename follows the sync of the data.
+  check_not "no committed entry on the ESP is zero bytes" '\.efi=0(,|$)' \
+    "sudo -n sh -c 'stat -c %n=%s $ESP_DIR/*' | paste -sd,"
   [ -n "$n" ] || return 0
   check "the booted snapshot is read-only" 'ro=true' "sudo -n btrfs property get / ro"
   check "the booted entry is a committed one, not a leftover" "^tetsu-$n(\\.efi|\\+[0-9]+(-[0-9]+)?\\.efi)\$" \
