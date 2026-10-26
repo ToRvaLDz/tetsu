@@ -300,6 +300,8 @@ common_checks() { # LEVEL
   check "the kernel runs from the encrypted root" 'rd.luks.name=.* root=/dev/mapper/root' \
     "cat /proc/cmdline"
   check "the user is in wheel" 'wheel' "id -nG"
+  check "tetsu-base is explicitly installed" 'Install Reason +: Explicitly installed' \
+    "pacman -Qi tetsu-base"
   check "the primary group is named after the user" "$USER_NAME\$" "id -gn"
   check "the root account is locked" 'root +L' "sudo -n passwd -S root"
   case "$level" in
@@ -374,6 +376,9 @@ scenario_answers() {
   stop_after_install
   first_boot "$level"
   second_boot_checks "$level"
+  # Only the guard is asserted: a later keyring failure is another ticket's (#53).
+  check_not "tx install is not refused for a missing tetsu-base" 'tetsu-base is not installed' \
+    "sudo -n tetsu-tx install tree 2>&1" 600
   poweroff_guest
   stop_vm
 }
