@@ -376,8 +376,11 @@ scenario_answers() {
   stop_after_install
   first_boot "$level"
   second_boot_checks "$level"
-  # Only the guard is asserted: a later keyring failure is another ticket's (#53).
-  check_not "tx install is not refused for a missing tetsu-base" 'tetsu-base is not installed' \
+  # Only the guard is asserted. Past it, tx either commits or stops at the
+  # sync-database lookup that comes right after the guard; a refusal by the
+  # guard, a sudo failure or a crash matches neither.
+  check "tx install gets past the base guard" \
+    'install tree committed as snapshot|package not found: tree' \
     "sudo -n tetsu-tx install tree 2>&1" 600
   poweroff_guest
   stop_vm
