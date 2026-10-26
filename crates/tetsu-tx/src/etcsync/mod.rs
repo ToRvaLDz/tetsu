@@ -51,6 +51,13 @@ pub enum SyncError {
     /// `mount` or `umount` failed.
     #[error(transparent)]
     Tool(#[from] BootError),
+    /// `umount` of the top level failed: it is left mounted and untouched.
+    #[error("{} is still mounted: {source}", top.display())]
+    StillMounted {
+        top: PathBuf,
+        #[source]
+        source: BootError,
+    },
     /// The device behind the new root could not be found.
     #[error("{0}")]
     Mountinfo(String),

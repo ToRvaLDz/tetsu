@@ -94,14 +94,24 @@ pub fn run(paths: &Paths, runner: &dyn Runner) -> Result<Outcome, SyncError> {
         Ok(()) => {
             let outcome = sync_mounted(&top, booted);
             // Unmount whatever the sync did; its own failure comes first.
-            let unmounted = runner.run("umount", &[top.clone().into_os_string()]);
-            outcome.and_then(|o| unmounted.map(|()| o).map_err(SyncError::from))
+            if let Err(e) = runner.run("umount", &[top.clone().into_os_string()]) {
+                // The top level is still there: never clean up under it.
+                return outcome.and(Err(SyncError::StillMounted { top, source: e }));
+            }
+            outcome
         }
         Err(e) => Err(SyncError::from(e)),
     };
-    // Best effort: a mount point that stays only wastes a tmpfs entry.
-    let _ = fs::remove_dir_all(&paths.work);
+    remove_work(paths);
     synced
+}
+
+/// Remove the empty scratch directories, never recursively: a mount point
+/// that is not empty may still be a filesystem. Best effort, a leftover only
+/// wastes a tmpfs entry.
+fn remove_work(paths: &Paths) {
+    let _ = fs::remove_dir(paths.work.join("top"));
+    let _ = fs::remove_dir(&paths.work);
 }
 
 #[cfg(test)]
