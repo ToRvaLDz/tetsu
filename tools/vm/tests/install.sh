@@ -579,7 +579,7 @@ scenario_etc_sync() {
   check "the boot check is active on snapshot 2" '^active$' \
     "for i in \$(seq 1 60); do systemctl is-active tetsu-boot-check && break; sleep 1; done; systemctl is-active tetsu-boot-check" 120
   check "snapshot 2 is blessed (no boot counter in its name)" '^tetsu-2\.efi$' \
-    "for i in \$(seq 1 30); do sudo -n ls /efi/EFI/Linux | grep -qx tetsu-2.efi && break; sleep 2; done; sudo -n ls /efi/EFI/Linux" 120
+    "for i in \$(seq 1 30); do sudo -n ls -1 /efi/EFI/Linux | grep -qx tetsu-2.efi && break; sleep 2; done; sudo -n ls -1 /efi/EFI/Linux" 120
   check "snapshot 2 is recorded good" '"boot": "good"' \
     "sudo -n cat /var/lib/tetsu/transactions/2.json"
 
