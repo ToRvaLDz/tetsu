@@ -181,7 +181,7 @@ fn read(path: &Path) -> Result<Option<Node>, SyncError> {
 }
 
 /// Create `dir` and its parents, then make `dir` itself `0700`.
-fn private_dir(dir: &Path) -> Result<(), SyncError> {
+pub(super) fn private_dir(dir: &Path) -> Result<(), SyncError> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)

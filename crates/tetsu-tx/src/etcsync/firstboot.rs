@@ -2,14 +2,20 @@
 //! sync is due, run it and leave the evidence.
 
 use std::fmt;
+use std::fs::{self, File};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use super::SyncError;
-use super::apply::SyncReport;
+use super::apply::{SyncReport, private_dir, sync};
 use crate::store::layout::Layout;
-use crate::store::record::Records;
+use crate::store::record::{Records, TxKind};
+
+/// Where the reports and kept copies go, relative to the shared `@var`.
+pub const OUT_DIR: &str = "lib/tetsu/etc-sync";
+const KEPT: &str = "kept";
+const REPORT: &str = "report.json";
 
 /// Why the sync did not run.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,8 +73,62 @@ pub fn run(
     var_root: &Path,
     booted: u64,
 ) -> Result<Outcome, SyncError> {
-    let _ = (layout, records, var_root, booted);
-    Ok(Outcome::Skipped(Skip::NoRecord))
+    let Some(record) = records.load()?.remove(&booted) else {
+        return Ok(Outcome::Skipped(Skip::NoRecord));
+    };
+    if record.reconstructed {
+        return Ok(Outcome::Skipped(Skip::Reconstructed));
+    }
+    if record.kind == Some(TxKind::Rollback) {
+        return Ok(Outcome::Skipped(Skip::Rollback));
+    }
+    let Some(source) = record.source else {
+        return Ok(Outcome::Skipped(Skip::NoSource));
+    };
+    if layout.etc_synced_marker(booted).is_file() {
+        return Ok(Outcome::Skipped(Skip::AlreadySynced));
+    }
+    // Records written before `running` existed: the source is the best guess.
+    let from = record.running.unwrap_or(source);
+    let (base, old, new) = (
+        layout.etc_base(booted),
+        layout.etc(from),
+        layout.etc(booted),
+    );
+    if let Some(missing) = [&base, &old, &new].into_iter().find(|p| !p.is_dir()) {
+        let shown = missing.display().to_string();
+        return Ok(Outcome::Skipped(Skip::MissingTree(shown)));
+    }
+    let out = var_root.join(OUT_DIR).join(booted.to_string());
+    private_dir(&out)?;
+    let report = sync(&base, &old, &new, &out.join(KEPT))?;
+    let stored = StoredReport {
+        counter: booted,
+        from,
+        report,
+    };
+    let json = serde_json::to_vec_pretty(&stored).expect("a report always serialises");
+    write_durably(&out.join(REPORT), &json)?;
+    write_durably(&layout.etc_synced_marker(booted), b"")?;
+    Ok(Outcome::Synced(stored.report))
+}
+
+/// Write `path` through a temporary name, fsync it and its directory.
+fn write_durably(path: &Path, data: &[u8]) -> Result<(), SyncError> {
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, data).map_err(|e| SyncError::io(&tmp, e))?;
+    sync_path(&tmp)?;
+    fs::rename(&tmp, path).map_err(|e| SyncError::io(path, e))?;
+    match path.parent() {
+        Some(dir) => sync_path(dir),
+        None => Ok(()),
+    }
+}
+
+fn sync_path(path: &Path) -> Result<(), SyncError> {
+    File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| SyncError::io(path, e))
 }
 
 #[cfg(test)]
