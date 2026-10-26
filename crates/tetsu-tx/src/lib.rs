@@ -8,6 +8,7 @@ pub mod boot;
 pub mod bootcheck;
 pub mod cli;
 pub mod etcsync;
+pub mod fault;
 pub mod mountinfo;
 pub mod serve;
 pub mod store;

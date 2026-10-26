@@ -1,0 +1,146 @@
+//! Pause points: a test hook that stops a transaction at a named boundary
+//! until the harness removes the pause file. The VM suite cuts the power
+//! while the transaction waits, so every step of the commit protocol gets
+//! its own power-loss test. The hook only waits; it never changes what a
+//! transaction writes, and it does nothing unless `TETSU_TX_PAUSE_AT` names
+//! a point.
+
+use std::path::Path;
+
+/// Environment variable naming the point to pause at.
+pub const PAUSE_ENV: &str = "TETSU_TX_PAUSE_AT";
+/// Written with the point name while a transaction waits; removing it lets
+/// the transaction go on.
+pub const PAUSE_FILE: &str = "/run/tetsu/paused-at";
+
+/// A boundary of the commit protocol, in protocol order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Point {
+    /// After the collection of leftovers, before the snapshot.
+    GcDone,
+    /// The new snapshot exists.
+    Snapshot,
+    /// The packages are downloaded.
+    Downloaded,
+    /// The packages are installed, the snapshot is not sealed yet.
+    Installed,
+    /// The snapshot is sealed read-only.
+    Sealed,
+    /// `tetsu-<n>.efi.tmp` is written and synced.
+    UkiStaged,
+    /// Renamed into place, the directory is not synced yet.
+    Renamed,
+    /// The entry is committed and synced.
+    Committed,
+    /// The record is written, retention has not run.
+    Recorded,
+}
+
+impl Point {
+    /// Every point, in protocol order.
+    pub const ALL: [Point; 9] = [
+        Point::GcDone,
+        Point::Snapshot,
+        Point::Downloaded,
+        Point::Installed,
+        Point::Sealed,
+        Point::UkiStaged,
+        Point::Renamed,
+        Point::Committed,
+        Point::Recorded,
+    ];
+
+    /// The name used in the environment and in the log line.
+    pub fn name(self) -> &'static str {
+        todo!()
+    }
+
+    /// The point called `name`.
+    pub fn parse(name: &str) -> Result<Point, String> {
+        let _ = name;
+        todo!()
+    }
+}
+
+/// The point named by `value` of [`PAUSE_ENV`]; `None` when unset.
+pub fn armed_from(value: Option<&str>) -> Result<Option<Point>, String> {
+    let _ = value;
+    todo!()
+}
+
+/// Wait at `point` when it is the `armed` one: write `file` with the name,
+/// say so on stderr, and poll until the file is gone.
+pub fn pause_at(point: Point, armed: Option<Point>, file: &Path) {
+    let _ = (point, armed, file);
+    todo!()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::Duration;
+
+    #[test]
+    fn the_points_are_the_nine_names_in_protocol_order() {
+        let names: Vec<&str> = Point::ALL.iter().map(|p| p.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "gc-done",
+                "snapshot",
+                "downloaded",
+                "installed",
+                "sealed",
+                "uki-staged",
+                "renamed",
+                "committed",
+                "recorded"
+            ]
+        );
+        for p in Point::ALL {
+            assert_eq!(Point::parse(p.name()), Ok(p));
+        }
+    }
+
+    #[test]
+    fn an_unknown_name_is_rejected_and_names_the_valid_ones() {
+        let err = Point::parse("later").unwrap_err();
+        assert!(err.contains("later"), "{err}");
+        assert!(err.contains("uki-staged"), "{err}");
+        assert!(armed_from(Some("later")).is_err());
+        assert_eq!(armed_from(None), Ok(None));
+        assert_eq!(armed_from(Some("")), Ok(None));
+        assert_eq!(armed_from(Some("sealed")), Ok(Some(Point::Sealed)));
+    }
+
+    #[test]
+    fn another_point_returns_at_once_and_leaves_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("paused-at");
+        pause_at(Point::Sealed, Some(Point::Renamed), &file);
+        pause_at(Point::Sealed, None, &file);
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn the_armed_point_blocks_until_the_file_is_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("run").join("paused-at");
+        let waiter = {
+            let file = file.clone();
+            std::thread::spawn(move || pause_at(Point::Renamed, Some(Point::Renamed), &file))
+        };
+        for _ in 0..100 {
+            if file.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(fs::read_to_string(&file).unwrap().trim(), "renamed");
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(!waiter.is_finished());
+        fs::remove_file(&file).unwrap();
+        waiter.join().unwrap();
+    }
+}
