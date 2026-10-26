@@ -26,6 +26,10 @@ pub(super) struct BootEntry {
     pub label: String,
     /// The GUID of the `HD(n,GPT,<guid>,...)` partition it points at.
     pub partition: Option<String>,
+    /// Whether the entry is active (`Boot0002*`, not `Boot0002 `).
+    pub active: bool,
+    /// The `File(...)` loader path after the device node, as printed.
+    pub loader: Option<String>,
 }
 
 /// What `efibootmgr` printed: the boot order and the entries.
@@ -47,6 +51,32 @@ fn partition_guid(device_path: &str) -> Option<String> {
     (!guid.is_empty()).then(|| guid.to_ascii_lowercase())
 }
 
+/// The loader of a device path: the inside of its `File(...)` node.
+fn loader_path(device_path: &str) -> Option<String> {
+    let path = device_path.split_once("File(")?.1.split(')').next()?.trim();
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
+/// A loader path in the form it is compared in: backslashes, lower case.
+fn normal_loader(path: &str) -> String {
+    path.trim().replace('/', "\\").to_ascii_lowercase()
+}
+
+impl BootEntry {
+    fn is_tetsu_on(&self, guid: &str) -> bool {
+        self.label == BOOT_LABEL && self.partition.as_deref() == Some(guid)
+    }
+
+    /// Active and booting our loader: the entry can be kept as it is.
+    fn is_usable(&self) -> bool {
+        self.active
+            && self
+                .loader
+                .as_deref()
+                .is_some_and(|l| normal_loader(l) == normal_loader(LOADER))
+    }
+}
+
 impl BootEntries {
     pub(super) fn parse(output: &str) -> Self {
         let mut found = Self::default();
@@ -60,12 +90,15 @@ impl BootEntries {
             } else if let Some(rest) = line.strip_prefix("Boot") {
                 let Some(num) = rest.get(..4) else { continue };
                 if num.chars().all(|c| c.is_ascii_hexdigit()) {
+                    let active = rest[4..].starts_with('*');
                     let label = rest[4..].trim_start_matches('*').trim_start();
                     let (label, path) = label.split_once('\t').unwrap_or((label, ""));
                     found.entries.push(BootEntry {
                         num: num.to_owned(),
                         label: label.trim().to_owned(),
                         partition: partition_guid(path),
+                        active,
+                        loader: loader_path(path),
                     });
                 }
             }
@@ -81,12 +114,23 @@ impl BootEntries {
             .collect()
     }
 
-    /// The `Tetsu` entry that points at the partition `guid`, if any.
+    /// The `Tetsu` entry on the partition `guid` that is active and boots
+    /// our loader, if any.
     fn tetsu_on(&self, guid: &str) -> Option<&str> {
         self.entries
             .iter()
-            .find(|e| e.label == BOOT_LABEL && e.partition.as_deref() == Some(guid))
+            .find(|e| e.is_tetsu_on(guid) && e.is_usable())
             .map(|e| e.num.as_str())
+    }
+
+    /// The `Tetsu` entries on the partition `guid` that cannot be kept:
+    /// inactive, or booting another loader.
+    fn unusable_tetsu_on(&self, guid: &str) -> Vec<&str> {
+        self.entries
+            .iter()
+            .filter(|e| e.is_tetsu_on(guid) && !e.is_usable())
+            .map(|e| e.num.as_str())
+            .collect()
     }
 
     /// The `Tetsu` entries whose partition is not in `present`: dead ones.
@@ -224,18 +268,18 @@ impl Executor<'_> {
         (!ids.is_empty()).then_some(ids)
     }
 
-    /// Delete the `Tetsu` entries of partitions that are gone; a failure only
-    /// warns. Returns the numbers actually removed.
-    fn remove_dead_entries(&mut self, listing: &BootEntries, esp: &str) -> Vec<String> {
-        let Some(present) = self.partuuids("lsblk", &[&"-rno", &"PARTUUID"]) else {
-            return Vec::new();
-        };
-        // The new ESP must be in the list, or the list is not to be trusted.
-        if !present.iter().any(|p| p == esp) {
-            return Vec::new();
+    /// Delete the `Tetsu` entries that are dead (their partition is gone) or
+    /// unusable (on the new ESP, inactive or booting another loader); a
+    /// failure only warns. Returns the numbers actually removed.
+    fn remove_stale_entries(&mut self, listing: &BootEntries, esp: &str) -> Vec<String> {
+        let mut stale = self.dead_entries(listing, esp);
+        for num in listing.unusable_tetsu_on(esp) {
+            if !stale.contains(&num) {
+                stale.push(num);
+            }
         }
         let mut removed = Vec::new();
-        for num in listing.dead_tetsu(&present) {
+        for num in stale {
             match self.tool("efibootmgr", &[&"-B", &"-b", &num]) {
                 Ok(()) => removed.push(num.to_owned()),
                 Err(e) => self.warn(&format!(
@@ -244,6 +288,18 @@ impl Executor<'_> {
             }
         }
         removed
+    }
+
+    /// The `Tetsu` entries of partitions that are gone.
+    fn dead_entries<'a>(&self, listing: &'a BootEntries, esp: &str) -> Vec<&'a str> {
+        let Some(present) = self.partuuids("lsblk", &[&"-rno", &"PARTUUID"]) else {
+            return Vec::new();
+        };
+        // The new ESP must be in the list, or the list is not to be trusted.
+        if !present.iter().any(|p| p == esp) {
+            return Vec::new();
+        }
+        listing.dead_tetsu(&present)
     }
 
     fn create_boot_entry(&mut self) -> Result<(), InstallError> {
@@ -265,7 +321,7 @@ impl Executor<'_> {
             .and_then(|g| listing.tetsu_on(g))
             .map(str::to_owned);
         let removed = match &esp {
-            Some(esp) => self.remove_dead_entries(&listing, esp),
+            Some(esp) => self.remove_stale_entries(&listing, esp),
             None => Vec::new(),
         };
         let removed: Vec<&str> = removed.iter().map(String::as_str).collect();
@@ -337,12 +393,16 @@ mod tests {
                 BootEntry {
                     num: "0000".into(),
                     label: "Windows Boot Manager".into(),
-                    partition: Some("x".into())
+                    partition: Some("x".into()),
+                    active: true,
+                    loader: Some("\\EFI\\Microsoft\\bootmgfw.efi".into())
                 },
                 BootEntry {
                     num: "0001".into(),
                     label: "Fedora".into(),
-                    partition: None
+                    partition: None,
+                    active: false,
+                    loader: None
                 }
             ]
         );
@@ -379,12 +439,15 @@ mod tests {
     fn dead_entries_are_the_tetsu_ones_on_a_missing_partition() {
         let e = parse(
             "BootOrder: 0001\nBoot0001* Tetsu\tHD(1,GPT,AA-1,0x800,0x400000)/File(\\EFI)\n\
-             Boot0002* Tetsu\tHD(1,GPT,bb-2,0x800,0x400000)/File(\\EFI)\n\
+             Boot0002* Tetsu\tHD(1,GPT,bb-2,0x800,0x400000)/File(\\EFI\\systemd\\systemd-bootx64.efi)\n\
              Boot0003* Tetsu\tPciRoot(0x0)\n\
              Boot0004* Fedora\tHD(1,GPT,cc-3,0x800,0x400000)\n",
         );
         assert_eq!(e.dead_tetsu(&["aa-1".to_owned()]), ["0002"]);
         assert_eq!(e.tetsu_on("bb-2"), Some("0002"));
+        // Right partition, wrong loader: not reusable.
+        assert_eq!(e.tetsu_on("aa-1"), None);
+        assert_eq!(e.unusable_tetsu_on("aa-1"), ["0001"]);
     }
 
     #[test]
