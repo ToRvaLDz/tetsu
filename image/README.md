@@ -45,9 +45,9 @@ on an up-to-date Arch host.
 
 The base set is the `depends` of the `tetsu-base` meta-package, in
 `image/tetsu-base/PKGBUILD` (the list lives there only), plus
-`/usr/bin/{tetsu-tx,tetsu,tetsu-unlock-seal,tetsu-secrets}`. The payload's
-`Packages=` names only `tetsu-base`, so the set is defined in one place;
-`image/tests/tetsu-base.sh` pins that shape.
+`/usr/bin/{tetsu-tx,tetsu,tetsu-unlock-seal,tetsu-secrets,tetsu-etc-sync,
+tetsu-boot-check}`. The payload's `Packages=` names only `tetsu-base`, so the
+set is defined in one place; `image/tests/tetsu-base.sh` pins that shape.
 
 - `image/build` builds `tetsu-base` with `makepkg` (from a staged copy under
   `target/image/stage`, the package lands in `target/image/packages`) and gives
@@ -62,12 +62,28 @@ The base set is the `depends` of the `tetsu-base` meta-package, in
   wants `TETSU_IMAGE_FIRMWARE=1`, or the package installed after the first boot.
 - `/etc/mkinitcpio.conf.d/10-tetsu.conf` sets
   `HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole
-  block sd-encrypt filesystems fsck tetsu-seal)`. The seal unit and the
-  `tetsu-seal` hook are installed as the initrd README says. Checked by
+  block sd-encrypt filesystems fsck tetsu-seal tetsu)`. The seal unit and the
+  `tetsu-seal` hook are installed as the initrd README says; the `tetsu` hook
+  and its unit are described below. Checked by
   running `mkinitcpio -k VER -g /usr/lib/tetsu/initrd.img` in
   `systemd-nspawn` over the extracted payload (what `tetsu-tx` does): all hooks
   run and the initrd holds `tetsu-unlock-seal`, `systemd-cryptenroll` and the
   `libtss2` libraries.
+- The `tetsu` hook (`crates/tetsu-tx/initrd/`) puts `tetsu-etc-sync` and its
+  unit in the initrd. At the first boot of a snapshot a transaction built, the
+  unit mounts the Btrfs top level, carries the user's `/etc` changes into the
+  new snapshot's `/etc` (three-way: base `etc-base`, the running snapshot's
+  `/etc`, the new one), records what it did in
+  `/var/lib/tetsu/etc-sync/<n>/report.json` (the user's copy of a conflicting
+  file is kept under `kept/`) and leaves `@snapshots/<n>/etc-synced`. It never
+  blocks the boot.
+- `tetsu-boot-check.service` (`crates/tetsu-tx/systemd/`, enabled by the
+  preset) runs after `multi-user.target` and before `boot-complete.target`:
+  `/` and `/var` mounted, no failed `tetsu-*` unit, `greetd.service` active
+  when installed. A healthy boot is recorded `good` in
+  `/var/lib/tetsu/transactions/<n>.json` and `systemd-bless-boot` then renames
+  the ESP entry; an unhealthy one fails `boot-complete.target`, the entry stays
+  on trial, and an entry out of tries is recorded `bad`.
 - `/usr/lib/tetsu/` exists (mkinitcpio does not create the directory of `-g`).
   The kernel is `/usr/lib/modules/VER/vmlinuz`; `/etc/os-release` and
   `/usr/lib/os-release` come from the `filesystem` package. `/boot` is empty:
