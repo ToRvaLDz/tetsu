@@ -414,6 +414,19 @@ mod tests {
     }
 
     #[test]
+    fn a_blessed_entry_with_no_verdict_is_caught_up_as_good() {
+        // Its boot check found the lock busy: blessed on the ESP, no verdict.
+        let (_d, r) = records();
+        r.write(&rec(2, None)).unwrap();
+        r.write(&rec(3, None)).unwrap();
+        let st = esp(&["tetsu-2.efi", "tetsu-3+2-1.efi"]);
+        let written = record(&r, &st, 3, false).unwrap();
+        assert_eq!(written, [(2, BootVerdict::Good)]);
+        assert_eq!(verdict(&r, 2), Some(BootVerdict::Good));
+        assert_eq!(verdict(&r, 3), None);
+    }
+
+    #[test]
     fn every_run_catches_up_on_exhausted_entries() {
         let (_d, r) = records();
         r.write(&rec(2, None)).unwrap();
