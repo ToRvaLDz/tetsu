@@ -19,6 +19,7 @@ STAGE="$OUT/stage"
 CERTS="$OUT/microsoft"
 PKGCACHE="$OUT/pkgcache"
 MKOSI_OUT="$OUT/mkosi"
+PACKAGES="$OUT/packages"
 RUST=${TETSU_RUST_TOOLCHAIN:-+1.99.1}
 
 BINS_PAYLOAD=(tetsu-tx tetsu tetsu-unlock-seal tetsu-secrets)
@@ -27,7 +28,7 @@ CRATES=(tetsu-tx tetsu-cli tetsu-installer tetsu-installer-core tetsu-secrets)
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'image/build: %s\n' "$*" >&2; exit 1; }
 
-for tool in cargo mkosi curl sha256sum install; do
+for tool in cargo mkosi makepkg curl sha256sum install; do
   command -v "$tool" >/dev/null || die "missing tool: $tool"
 done
 
@@ -98,6 +99,21 @@ locale_gen() {
   echo 'en_US.UTF-8 UTF-8'
 }
 
+# Build the tetsu-base meta-package from a staged copy (makepkg writes next
+# to the PKGBUILD, never in the repo tree). Only one version is kept in
+# $PACKAGES, so mkosi's local repository offers exactly that one.
+build_base_package() {
+  log "building the tetsu-base package"
+  local src="$STAGE/tetsu-base"
+  rm -rf "$src"
+  mkdir -p "$src" "$PACKAGES"
+  rm -f "$PACKAGES"/tetsu-base-*.pkg.tar*
+  cp "$IMAGE/tetsu-base/PKGBUILD" "$src/PKGBUILD"
+  (cd "$src" && PKGDEST="$PACKAGES" makepkg --nodeps --force --clean)
+  compgen -G "$PACKAGES/tetsu-base-*.pkg.tar*" >/dev/null \
+    || die "makepkg did not produce tetsu-base"
+}
+
 stage_payload() {
   local root="$STAGE/payload" initrd="$REPO/crates/tetsu-installer-core/initrd" b
   rm -rf "$root"
@@ -146,10 +162,12 @@ main() {
   build_rust
   fetch_certs
 
+  build_base_package
   stage_payload
   local extra=()
   if [ "${TETSU_IMAGE_FIRMWARE:-0}" = 1 ]; then extra+=(--package=linux-firmware); fi
-  mkosi_image payload "$STAGE/payload" "${extra[@]}"
+  # The local repository of $PACKAGES is for the payload only.
+  mkosi_image payload "$STAGE/payload" --package-directory "$PACKAGES" "${extra[@]}"
   publish tetsu-payload.tar
 
   stage_installer
