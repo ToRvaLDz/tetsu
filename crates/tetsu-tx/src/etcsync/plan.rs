@@ -37,6 +37,15 @@ pub enum Action {
     Skip,
 }
 
+/// Whether a side's directory tree differs from the base tree below its own
+/// node. A directory node holds no content, so the caller walks the trees
+/// when only one side is still a directory.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Inside {
+    pub old: bool,
+    pub new: bool,
+}
+
 /// Decide for one path. `account` is true for the four account files in the
 /// top of `/etc`.
 pub fn decide(
@@ -44,6 +53,7 @@ pub fn decide(
     old: Option<&Node>,
     new: Option<&Node>,
     account: bool,
+    inside: Inside,
 ) -> Action {
     if [base, old, new].into_iter().flatten().any(Node::is_special) {
         return Action::Skip;
@@ -56,7 +66,10 @@ pub fn decide(
             base.is_some_and(|b| b.is_dir() && !same(Some(o), Some(b)) && same(Some(n), Some(b)));
         return Action::Recurse { take_old_attrs };
     }
-    let (user, tx) = (!same(old, base), !same(new, base));
+    let (user, tx) = (
+        !same(old, base) || inside.old,
+        !same(new, base) || inside.new,
+    );
     match (user, tx) {
         (false, _) => Action::Keep,
         (true, false) => match old {
@@ -93,7 +106,7 @@ mod tests {
     const KEEP: Action = Action::Keep;
 
     fn d(b: Option<Node>, o: Option<Node>, n: Option<Node>) -> Action {
-        decide(b.as_ref(), o.as_ref(), n.as_ref(), false)
+        decide(b.as_ref(), o.as_ref(), n.as_ref(), false, Inside::default())
     }
 
     fn conflict(kind: super::ConflictKind, keep_old: bool) -> Action {
@@ -258,7 +271,7 @@ mod tests {
 
     #[test]
     fn the_account_files_merge_when_both_sides_changed_them() {
-        let acc = |b, o, n| decide(Some(&b), Some(&o), Some(&n), true);
+        let acc = |b, o, n| decide(Some(&b), Some(&o), Some(&n), true, Inside::default());
         let (b, o, n) = (file("a\n", 0o644), file("b\n", 0o644), file("c\n", 0o644));
         assert_eq!(acc(b.clone(), o.clone(), n.clone()), Action::MergeAccounts);
         // Only the user changed it.
@@ -273,11 +286,23 @@ mod tests {
     fn an_account_file_that_is_not_a_regular_file_follows_the_plain_rules() {
         let b = file("a\n", 0o644);
         assert_eq!(
-            decide(Some(&b), Some(&link("x")), Some(&file("n\n", 0o644)), true),
+            decide(
+                Some(&b),
+                Some(&link("x")),
+                Some(&file("n\n", 0o644)),
+                true,
+                Inside::default()
+            ),
             conflict(BothChanged, true)
         );
         assert_eq!(
-            decide(Some(&b), None, Some(&file("n\n", 0o644)), true),
+            decide(
+                Some(&b),
+                None,
+                Some(&file("n\n", 0o644)),
+                true,
+                Inside::default()
+            ),
             conflict(UserDeleted, false)
         );
     }
@@ -289,5 +314,25 @@ mod tests {
         assert_eq!(d(None, None, Some(special())), Action::Skip);
         assert_eq!(d(Some(f.clone()), Some(f), Some(special())), Action::Skip);
         assert_eq!(d(Some(special()), None, None), Action::Skip);
+    }
+
+    #[test]
+    fn a_change_inside_a_directory_counts_as_a_change() {
+        let dir = super::super::node::fixtures::dir(0o755);
+        let inside = |old, new| Inside { old, new };
+        let di = |b: &Node, o: Option<&Node>, n: Option<&Node>, i| decide(Some(b), o, n, false, i);
+        // The transaction removed it, the user edited inside it.
+        assert_eq!(
+            di(&dir, Some(&dir), None, inside(true, false)),
+            conflict(TxDeleted, true)
+        );
+        // The user replaced it, the transaction edited inside it.
+        let f = file("x", 0o644);
+        assert_eq!(
+            di(&dir, Some(&f), Some(&dir), inside(false, true)),
+            conflict(BothChanged, true)
+        );
+        // Nothing inside changed: as before.
+        assert_eq!(di(&dir, Some(&dir), None, Inside::default()), KEEP);
     }
 }

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::SyncError;
 use super::node::{Kind, Node};
-use super::plan::{Action, ConflictKind, decide};
+use super::plan::{Action, ConflictKind, Inside, decide};
 use crate::tx::accounts::{ACCOUNT_FILES, merge};
 
 /// Prefix of the temporary name a file is written under before the rename.
@@ -98,14 +98,15 @@ impl Run<'_> {
             read(&self.old.join(rel))?,
             read(&self.new.join(rel))?,
         );
-        let action = decide(base.as_ref(), old.as_ref(), new.as_ref(), account);
-        let name = rel.to_string_lossy().into_owned();
         let (old_path, new_path) = (self.old.join(rel), self.new.join(rel));
+        let inside = self.inside(rel, base.as_ref(), old.as_ref(), new.as_ref())?;
+        let action = decide(base.as_ref(), old.as_ref(), new.as_ref(), account, inside);
+        let name = rel.to_string_lossy().into_owned();
         match action {
             Action::Keep => {}
             Action::Skip => self.report.skipped.push(name),
             Action::TakeOld => {
-                copy_tree(&old_path, &new_path)?;
+                copy_tree(&old_path, &new_path, rel, &mut self.report.skipped)?;
                 self.report.taken.push(name);
             }
             Action::DeleteNew => {
@@ -147,16 +148,61 @@ impl Run<'_> {
         Ok(())
     }
 
+    /// Which side's directory differs from the base tree below its node,
+    /// looked at only where the other side is no directory any more: when
+    /// both are, the walk sees every child anyway, and when the user removed
+    /// it, the delete walks the transaction's tree.
+    fn inside(
+        &self,
+        rel: &Path,
+        base: Option<&Node>,
+        old: Option<&Node>,
+        new: Option<&Node>,
+    ) -> Result<Inside, SyncError> {
+        let is_dir = |n: Option<&Node>| n.is_some_and(Node::is_dir);
+        if !is_dir(base) {
+            return Ok(Inside::default());
+        }
+        let base_path = self.base.join(rel);
+        let differs = |side: &Path| same_tree(&base_path, side).map(|same| !same);
+        Ok(Inside {
+            old: is_dir(old) && !is_dir(new) && differs(&self.old.join(rel))?,
+            new: is_dir(new) && old.is_some() && !is_dir(old) && differs(&self.new.join(rel))?,
+        })
+    }
+
     /// Copy the user's version of `rel` under the kept directory.
-    fn keep_aside(&self, rel: &Path) -> Result<(), SyncError> {
+    fn keep_aside(&mut self, rel: &Path) -> Result<(), SyncError> {
         let dest = self.kept.join(rel);
         private_dir(self.kept)?;
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| SyncError::io(parent, e))?;
         }
         remove_any(&dest)?;
-        copy_tree(&self.old.join(rel), &dest)
+        copy_tree(&self.old.join(rel), &dest, rel, &mut self.report.skipped)
     }
+}
+
+/// Two trees hold the same nodes at the same names, all the way down.
+fn same_tree(a: &Path, b: &Path) -> Result<bool, SyncError> {
+    let node = read(a)?;
+    if node != read(b)? {
+        return Ok(false);
+    }
+    if !node.as_ref().is_some_and(Node::is_dir) {
+        return Ok(true);
+    }
+    let names = |dir: &Path| child_names(dir).map(|n| n.into_iter().collect::<BTreeSet<_>>());
+    let children = names(a)?;
+    if children != names(b)? {
+        return Ok(false);
+    }
+    for name in children {
+        if !same_tree(&a.join(&name), &b.join(&name))? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// The names in the directory `dir`; nothing when it is not a directory.
@@ -222,8 +268,15 @@ fn tmp_path(dest: &Path) -> PathBuf {
 
 /// Copy `src` (a file, symlink or directory tree) to `dest`, replacing what
 /// is there. Owner, mode and, for files, the modification time are kept.
-/// Files and links are written under a temporary name and renamed.
-fn copy_tree(src: &Path, dest: &Path) -> Result<(), SyncError> {
+/// Files and links are written under a temporary name and renamed. A socket,
+/// FIFO or device is left out and its path, `rel` below the trees, noted in
+/// `skipped`.
+fn copy_tree(
+    src: &Path,
+    dest: &Path,
+    rel: &Path,
+    skipped: &mut Vec<String>,
+) -> Result<(), SyncError> {
     let node = read(src)?
         .ok_or_else(|| SyncError::io(src, std::io::Error::new(ErrorKind::NotFound, "vanished")))?;
     // A rename cannot replace a directory, or be replaced by one.
@@ -232,12 +285,20 @@ fn copy_tree(src: &Path, dest: &Path) -> Result<(), SyncError> {
         _ => {}
     }
     match &node.kind {
-        Kind::Special => Ok(()),
+        Kind::Special => {
+            skipped.push(rel.to_string_lossy().into_owned());
+            Ok(())
+        }
         Kind::Dir => {
             fs::create_dir(dest).map_err(|e| SyncError::io(dest, e))?;
             lchown(dest, Some(node.uid), Some(node.gid)).map_err(|e| SyncError::io(dest, e))?;
             for name in child_names(src)? {
-                copy_tree(&src.join(&name), &dest.join(&name))?;
+                copy_tree(
+                    &src.join(&name),
+                    &dest.join(&name),
+                    &rel.join(&name),
+                    skipped,
+                )?;
             }
             // Last, so a read-only mode does not stop the copy.
             set_attrs(dest, &node)
