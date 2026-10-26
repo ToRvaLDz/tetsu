@@ -49,6 +49,7 @@ impl Nspawn {
                 "--link-journal=no",
                 "--timezone=off",
                 "--setenv=LC_ALL=C",
+                "--console=pipe",
             ]
             .map(OsString::from),
         );
