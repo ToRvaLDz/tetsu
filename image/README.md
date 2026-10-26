@@ -43,11 +43,22 @@ on an up-to-date Arch host.
 
 ## Payload
 
-`base linux intel-ucode amd-ucode systemd systemd-ukify mkinitcpio btrfs-progs
-cryptsetup tpm2-tss sbsigntools efitools efibootmgr util-linux sudo
-archlinux-keyring pacman dosfstools`, plus `/usr/bin/{tetsu-tx,tetsu,
-tetsu-unlock-seal,tetsu-secrets}`.
+The base set is the `depends` of the `tetsu-base` meta-package, in
+`image/tetsu-base/PKGBUILD` (`base linux intel-ucode amd-ucode systemd
+systemd-ukify mkinitcpio btrfs-progs cryptsetup tpm2-tss sbsigntools efitools
+efibootmgr util-linux sudo archlinux-keyring pacman dosfstools`), plus
+`/usr/bin/{tetsu-tx,tetsu,tetsu-unlock-seal,tetsu-secrets}`. The payload's
+`Packages=` names only `tetsu-base`, so the set is defined in one place;
+`image/tests/tetsu-base.sh` pins that shape.
 
+- `image/build` builds `tetsu-base` with `makepkg` (from a staged copy under
+  `target/image/stage`, the package lands in `target/image/packages`) and gives
+  it to mkosi with `--package-directory` for the payload only. pacman installs
+  it as explicitly installed (`pacman -Qe tetsu-base`) and the base packages as
+  its dependencies; `mkosi.postinst` fails the build otherwise. mkosi's local
+  repository is not left in the payload's `pacman.conf`.
+- `tx update` leaves `tetsu-base` at the version the image shipped, until the
+  package repository is settled: nothing publishes a newer one yet.
 - `linux-firmware` is left out to keep the medium small (it is several
   hundred MB with all vendors): hardware that needs firmware (Wi-Fi, some GPUs)
   wants `TETSU_IMAGE_FIRMWARE=1`, or the package installed after the first boot.
