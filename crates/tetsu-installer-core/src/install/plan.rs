@@ -185,7 +185,8 @@ impl Action {
                 "sign-efi-sig-list",
                 "efi-updatevar",
             ],
-            Self::CreateBootEntry | Self::SetBootOrder => &["efibootmgr"],
+            Self::CreateBootEntry => &["efibootmgr", "blkid", "lsblk"],
+            Self::SetBootOrder => &["efibootmgr"],
             Self::Finish => &["sync", "umount", "cryptsetup"],
             Self::LockRoot
             | Self::WriteLocale

@@ -207,7 +207,7 @@ fn the_boot_entry_is_created_and_put_first_preserving_the_others() {
     assert_eq!(
         efi,
         [
-            "efibootmgr",
+            "efibootmgr -v",
             r"efibootmgr --create --disk /dev/sda --part 1 --label Tetsu --loader \EFI\systemd\systemd-bootx64.efi",
             "efibootmgr --bootorder 0002,0001,0000",
         ]

@@ -17,12 +17,30 @@ pub const BOOT_LABEL: &str = "Tetsu";
 /// The loader, as firmware paths spell it.
 const LOADER: &str = r"\EFI\systemd\systemd-bootx64.efi";
 
+/// One `Boot####` line of `efibootmgr -v`.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct BootEntry {
+    /// For example `0002`.
+    pub num: String,
+    /// For example `Tetsu`.
+    pub label: String,
+    /// The GUID of the `HD(n,GPT,<guid>,...)` partition it points at.
+    pub partition: Option<String>,
+}
+
 /// What `efibootmgr` printed: the boot order and the entries.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct BootEntries {
     pub order: Vec<String>,
-    /// `(number, label)`, for example `("0002", "Tetsu")`.
-    pub entries: Vec<(String, String)>,
+    pub entries: Vec<BootEntry>,
+}
+
+/// The partition GUID of the first `HD(n,GPT,<guid>,...)` node of a device path.
+fn partition_guid(device_path: &str) -> Option<String> {
+    let node = device_path.split_once("HD(")?.1.split(')').next()?;
+    let mut fields = node.split(',');
+    let guid = fields.nth(2)?.trim();
+    (!guid.is_empty()).then(|| guid.to_ascii_lowercase())
 }
 
 impl BootEntries {
@@ -39,8 +57,12 @@ impl BootEntries {
                 let Some(num) = rest.get(..4) else { continue };
                 if num.chars().all(|c| c.is_ascii_hexdigit()) {
                     let label = rest[4..].trim_start_matches('*').trim_start();
-                    let label = label.split('\t').next().unwrap_or("").trim();
-                    found.entries.push((num.to_owned(), label.to_owned()));
+                    let (label, path) = label.split_once('\t').unwrap_or((label, ""));
+                    found.entries.push(BootEntry {
+                        num: num.to_owned(),
+                        label: label.trim().to_owned(),
+                        partition: partition_guid(path),
+                    });
                 }
             }
         }
@@ -50,9 +72,44 @@ impl BootEntries {
     fn tetsu(&self) -> Vec<&str> {
         self.entries
             .iter()
-            .filter(|(_, label)| label == BOOT_LABEL)
-            .map(|(num, _)| num.as_str())
+            .filter(|e| e.label == BOOT_LABEL)
+            .map(|e| e.num.as_str())
             .collect()
+    }
+
+    /// The `Tetsu` entry that points at the partition `guid`, if any.
+    fn tetsu_on(&self, guid: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|e| e.label == BOOT_LABEL && e.partition.as_deref() == Some(guid))
+            .map(|e| e.num.as_str())
+    }
+
+    /// The `Tetsu` entries whose partition is not in `present`: dead ones.
+    /// An entry whose path names no GPT partition is not judged.
+    fn dead_tetsu(&self, present: &[String]) -> Vec<&str> {
+        self.entries
+            .iter()
+            .filter(|e| e.label == BOOT_LABEL)
+            .filter(|e| e.partition.as_ref().is_some_and(|g| !present.contains(g)))
+            .map(|e| e.num.as_str())
+            .collect()
+    }
+
+    /// The listing as it is once the entries `gone` are deleted.
+    fn without(self, gone: &[&str]) -> Self {
+        Self {
+            order: self
+                .order
+                .into_iter()
+                .filter(|n| !gone.contains(&n.as_str()))
+                .collect(),
+            entries: self
+                .entries
+                .into_iter()
+                .filter(|e| !gone.contains(&e.num.as_str()))
+                .collect(),
+        }
     }
 }
 
@@ -72,9 +129,14 @@ pub(super) fn new_boot_order(before: &BootEntries, after: &BootEntries) -> Resul
             new.len()
         ));
     };
-    let mut order = vec![(*entry).to_owned()];
-    order.extend(after.order.iter().filter(|n| n.as_str() != *entry).cloned());
-    Ok(order.join(","))
+    Ok(order_with_first(entry, &after.order))
+}
+
+/// `entry` first, the others of `order` after it in their place.
+fn order_with_first(entry: &str, order: &[String]) -> String {
+    let mut out = vec![entry.to_owned()];
+    out.extend(order.iter().filter(|n| n.as_str() != entry).cloned());
+    out.join(",")
 }
 
 impl Executor<'_> {
@@ -142,8 +204,72 @@ impl Executor<'_> {
         result
     }
 
+    /// Lines of a listing tool's output, lowercased; `None` when it failed or
+    /// printed nothing, so that nothing is judged on a missing answer.
+    fn partuuids(
+        &self,
+        program: &str,
+        args: &[&dyn AsRef<std::ffi::OsStr>],
+    ) -> Option<Vec<String>> {
+        let out = self.tool_output(program, args).ok()?;
+        let ids: Vec<String> = out
+            .lines()
+            .map(|l| l.trim().to_ascii_lowercase())
+            .filter(|l| !l.is_empty())
+            .collect();
+        (!ids.is_empty()).then_some(ids)
+    }
+
+    /// Delete the `Tetsu` entries of partitions that are gone; a failure only
+    /// warns. Returns the numbers actually removed.
+    fn remove_dead_entries(&mut self, listing: &BootEntries, esp: &str) -> Vec<String> {
+        let Some(present) = self.partuuids("lsblk", &[&"-rno", &"PARTUUID"]) else {
+            return Vec::new();
+        };
+        // The new ESP must be in the list, or the list is not to be trusted.
+        if !present.iter().any(|p| p == esp) {
+            return Vec::new();
+        }
+        let mut removed = Vec::new();
+        for num in listing.dead_tetsu(&present) {
+            match self.tool("efibootmgr", &[&"-B", &"-b", &num]) {
+                Ok(()) => removed.push(num.to_owned()),
+                Err(e) => self.warn(&format!(
+                    "could not remove the stale {BOOT_LABEL} boot entry Boot{num}: {e}"
+                )),
+            }
+        }
+        removed
+    }
+
     fn create_boot_entry(&mut self) -> Result<(), InstallError> {
-        let before = BootEntries::parse(&self.tool_output("efibootmgr", &[])?);
+        let listing = BootEntries::parse(&self.tool_output("efibootmgr", &[&"-v"])?);
+        let esp = self
+            .partuuids(
+                "blkid",
+                &[
+                    &"-s",
+                    &"PARTUUID",
+                    &"-o",
+                    &"value",
+                    &self.target.esp_partition(),
+                ],
+            )
+            .and_then(|ids| ids.into_iter().next());
+        let reused = esp
+            .as_deref()
+            .and_then(|g| listing.tetsu_on(g))
+            .map(str::to_owned);
+        let removed = match &esp {
+            Some(esp) => self.remove_dead_entries(&listing, esp),
+            None => Vec::new(),
+        };
+        let removed: Vec<&str> = removed.iter().map(String::as_str).collect();
+        let before = listing.without(&removed);
+        if let Some(num) = reused {
+            self.state.boot_order = Some(order_with_first(&num, &before.order));
+            return Ok(());
+        }
         let created = self.tool_output(
             "efibootmgr",
             &[
@@ -204,8 +330,16 @@ mod tests {
         assert_eq!(
             e.entries,
             [
-                ("0000".to_owned(), "Windows Boot Manager".to_owned()),
-                ("0001".to_owned(), "Fedora".to_owned())
+                BootEntry {
+                    num: "0000".into(),
+                    label: "Windows Boot Manager".into(),
+                    partition: Some("x".into())
+                },
+                BootEntry {
+                    num: "0001".into(),
+                    label: "Fedora".into(),
+                    partition: None
+                }
             ]
         );
     }
@@ -224,11 +358,29 @@ mod tests {
 
     #[test]
     fn an_old_tetsu_entry_is_not_taken_for_the_new_one() {
+        // An old entry that stays (a live partition on another disk).
         let before = parse("BootOrder: 0002,0000\nBoot0000* Windows\nBoot0002* Tetsu\n");
         let after = parse(
             "BootOrder: 0003,0002,0000\nBoot0000* Windows\nBoot0002* Tetsu\nBoot0003* Tetsu\n",
         );
         assert_eq!(new_boot_order(&before, &after).unwrap(), "0003,0002,0000");
+        // An old entry that was deleted: the firmware may hand out its number
+        // again, and that one is the new entry.
+        let before = before.without(&["0002"]);
+        let after = parse("BootOrder: 0002,0000\nBoot0000* Windows\nBoot0002* Tetsu\n");
+        assert_eq!(new_boot_order(&before, &after).unwrap(), "0002,0000");
+    }
+
+    #[test]
+    fn dead_entries_are_the_tetsu_ones_on_a_missing_partition() {
+        let e = parse(
+            "BootOrder: 0001\nBoot0001* Tetsu\tHD(1,GPT,AA-1,0x800,0x400000)/File(\\EFI)\n\
+             Boot0002* Tetsu\tHD(1,GPT,bb-2,0x800,0x400000)/File(\\EFI)\n\
+             Boot0003* Tetsu\tPciRoot(0x0)\n\
+             Boot0004* Fedora\tHD(1,GPT,cc-3,0x800,0x400000)\n",
+        );
+        assert_eq!(e.dead_tetsu(&["aa-1".to_owned()]), ["0002"]);
+        assert_eq!(e.tetsu_on("bb-2"), Some("0002"));
     }
 
     #[test]
