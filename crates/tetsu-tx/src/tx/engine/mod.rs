@@ -105,6 +105,36 @@ impl Default for Paths {
     }
 }
 
+/// A phase of a transaction the observer is told about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnginePhase {
+    /// The package phase in the container (not for a rollback).
+    Packages,
+    /// Kernel, DKMS, initrd, seal and the UKI write.
+    BootEntry,
+    /// The boot entry is in place; marker, record and retention follow.
+    Commit,
+}
+
+/// What the engine tells its observer, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineEvent {
+    /// The lock is held and snapshot `counter` exists.
+    Begun { counter: u64 },
+    /// The next phase starts.
+    Phase(EnginePhase),
+}
+
+/// Per-run extras: the id to write into the record and the observer.
+pub struct RunCtx<'a> {
+    /// The id the bus gave the transaction; `None` for the CLI.
+    pub id: Option<String>,
+    /// Called from the thread that runs the engine.
+    pub observer: &'a (dyn Fn(EngineEvent) + Sync),
+}
+
+fn ignore_event(_: EngineEvent) {}
+
 /// A committed transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
@@ -192,17 +222,34 @@ impl Engine<'_> {
     /// deletes the new snapshot and the scratch `/var`; after it nothing can
     /// fail the transaction any more, problems are warnings in the report.
     pub fn run(&self, request: &Request) -> Result<Report, TxError> {
+        let ctx = RunCtx {
+            id: None,
+            observer: &ignore_event,
+        };
+        self.run_with(request, ctx)
+    }
+
+    /// [`Engine::run`], telling `ctx.observer` where it is and writing
+    /// `ctx.id` into the record.
+    pub fn run_with(&self, request: &Request, ctx: RunCtx<'_>) -> Result<Report, TxError> {
         request.check()?;
         let started = (self.clock)();
         let store = Store::new(self.layout.clone(), self.records.clone(), self.btrfs);
         let begun = self.begin(&store, request)?;
+        (ctx.observer)(EngineEvent::Begun {
+            counter: begun.counter,
+        });
         let scratch = scratch_dir(&self.paths.run_dir, begun.counter);
-        let built = self.build(&store, &begun, request, &scratch);
+        let built = self.build(&store, &begun, request, &scratch, &ctx);
         let leftover = fs::remove_dir_all(&scratch)
             .err()
             .filter(|e| e.kind() != ErrorKind::NotFound);
         match built {
-            Ok(built) => Ok(self.finish(&store, &begun, request, built, started, leftover)),
+            Ok(built) => {
+                (ctx.observer)(EngineEvent::Phase(EnginePhase::Commit));
+                let id = ctx.id.as_deref();
+                Ok(self.finish(&store, &begun, request, built, (started, id), leftover))
+            }
             Err(a) if a.keep_snapshot => Err(a.error),
             Err(a) => Err(self.discard(&begun, a.error)),
         }
@@ -227,6 +274,7 @@ impl Engine<'_> {
         begun: &Begun,
         request: &Request,
         scratch: &Path,
+        ctx: &RunCtx<'_>,
     ) -> Result<Built, Aborted> {
         let root = self.layout.root(begun.counter);
         let mut log: Vec<String> = begun
@@ -236,7 +284,11 @@ impl Engine<'_> {
             .collect();
         self.prepare_scratch(scratch, &mut log)?;
         let ns = Nspawn::new(&root, scratch, &self.paths.cache);
+        if !matches!(request, Request::Rollback(_)) {
+            (ctx.observer)(EngineEvent::Phase(EnginePhase::Packages));
+        }
         let (changes, user_layer) = self.prepare(request, &ns, begun, scratch, &mut log)?;
+        (ctx.observer)(EngineEvent::Phase(EnginePhase::BootEntry));
         let ver = self.kernel_and_initrd(request, &ns, &user_layer, &mut log)?;
         let spec = UkiSpec {
             counter: begun.counter,
@@ -365,7 +417,7 @@ impl Engine<'_> {
         begun: &Begun,
         request: &Request,
         built: Built,
-        started: u64,
+        (started, id): (u64, Option<&str>),
         leftover: Option<std::io::Error>,
     ) -> Report {
         let mut warnings = Vec::new();
@@ -382,6 +434,7 @@ impl Engine<'_> {
         }
         let record = Record {
             counter: begun.counter,
+            id: id.map(str::to_owned),
             kind: Some(request.kind()),
             source: Some(begun.source.counter),
             packages: request.packages().to_vec(),
