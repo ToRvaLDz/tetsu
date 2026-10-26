@@ -20,6 +20,7 @@
 //! ACLs and times are not compared.
 
 pub mod apply;
+pub mod firstboot;
 pub mod node;
 pub mod plan;
 
@@ -31,6 +32,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::store::StoreError;
+
 /// Why a sync could not finish.
 #[derive(Debug, Error)]
 pub enum SyncError {
@@ -40,6 +43,9 @@ pub enum SyncError {
         #[source]
         source: io::Error,
     },
+    /// The records could not be read.
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }
 
 impl SyncError {
