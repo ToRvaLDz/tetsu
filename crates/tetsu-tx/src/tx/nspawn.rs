@@ -55,7 +55,7 @@ impl Nspawn {
         args.push(bind(&self.cache, "/var/cache/pacman/pkg"));
         args.push(
             match network {
-                Network::Online => "--resolv-conf=copy-host",
+                Network::Online => "--resolv-conf=bind-host",
                 Network::Offline => "--private-network",
             }
             .into(),
@@ -103,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn online_copies_the_host_resolver() {
+    fn online_binds_the_host_resolver() {
         let args = container().args(Network::Online, &["pacman", "-Syw"]);
         assert_eq!(
             strs(&args),
@@ -117,7 +117,7 @@ mod tests {
                 "--setenv=LC_ALL=C",
                 "--bind=/run/tetsu/tx-var-5:/var",
                 "--bind=/var/cache/pacman/pkg:/var/cache/pacman/pkg",
-                "--resolv-conf=copy-host",
+                "--resolv-conf=bind-host",
                 "pacman",
                 "-Syw",
             ]
