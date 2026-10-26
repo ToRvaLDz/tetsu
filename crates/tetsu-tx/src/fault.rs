@@ -123,8 +123,22 @@ pub fn arm(point: Point) {
     let _ = ARMED.set(point);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The points reached on this thread, for engine tests.
+    static SEEN: std::cell::RefCell<Vec<Point>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The points reached on this thread so far; clears the list.
+#[cfg(test)]
+pub(crate) fn take_seen() -> Vec<Point> {
+    SEEN.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
 /// The transaction is at `point`: wait here when it is the armed one.
 pub fn reach(point: Point) {
+    #[cfg(test)]
+    SEEN.with(|s| s.borrow_mut().push(point));
     pause_at(point, ARMED.get().copied(), Path::new(PAUSE_FILE));
 }
 
