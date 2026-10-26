@@ -453,6 +453,7 @@ impl Engine<'_> {
             id: id.map(str::to_owned),
             kind: Some(request.kind()),
             source: Some(begun.source.counter),
+            running: Some(self.booted),
             packages: request.packages().to_vec(),
             changes: built.changes.clone(),
             started_at: Some(started),

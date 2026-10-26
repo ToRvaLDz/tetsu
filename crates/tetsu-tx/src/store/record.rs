@@ -52,6 +52,11 @@ pub struct Record {
     /// Snapshot the transaction started from; `None` for transaction zero
     /// and for rebuilt records.
     pub source: Option<u64>,
+    /// The snapshot that was booted when the transaction started: the `/etc`
+    /// the user has been editing. It differs from `source` on a pending
+    /// default chain. `None` for records written before it was kept.
+    #[serde(default)]
+    pub running: Option<u64>,
     /// `None` until the boot is blessed or marked bad.
     pub boot: Option<BootVerdict>,
     /// Rebuilt from the ESP rather than written by the transaction.
