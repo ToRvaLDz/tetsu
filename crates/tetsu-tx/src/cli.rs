@@ -53,6 +53,12 @@ options:
   --socket <file>   bus socket of serve   (default /run/tetsu/org.tetsu.tx.v1)
   -h, --help        this text
 
+environment:
+  TETSU_TX_PAUSE_AT=<point>  test hook: hold a transaction at a boundary of the
+                    commit protocol until /run/tetsu/paused-at is removed
+                    (gc-done, snapshot, downloaded, installed, sealed,
+                    uki-staged, renamed, committed, recorded)
+
 exit status: 0 done, 1 the transaction failed, 2 usage, 3 another transaction runs
 ";
 
@@ -467,6 +473,14 @@ mod tests {
         assert!(usage(&["serve", "extra"]).contains("extra"));
         assert!(usage(&["update", "--socket", "/x"]).contains("--socket"));
         assert!(usage(&["serve", "--socket"]).contains("--socket"));
+    }
+
+    #[test]
+    fn the_usage_names_every_pause_point() {
+        assert!(USAGE.contains(crate::fault::PAUSE_ENV));
+        for point in crate::fault::Point::ALL {
+            assert!(USAGE.contains(point.name()), "{}", point.name());
+        }
     }
 
     #[test]

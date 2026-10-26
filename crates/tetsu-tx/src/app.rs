@@ -25,6 +25,7 @@ use crate::cli::{
     Command, EXIT_FAILED, EXIT_USAGE, Invocation, Options, USAGE, exit_code, list_rows, parse,
     render_error, render_list, render_report,
 };
+use crate::fault;
 use crate::serve::backend::HostBackend;
 use crate::serve::policy::LocalRoot;
 use crate::store::btrfs::{Btrfs, CliBtrfs};
@@ -208,6 +209,14 @@ pub fn main(args: &[String]) -> ExitCode {
     let proc_cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
     if let Command::Serve { socket } = &invocation.command {
         return serve_main(&invocation.options, proc_cmdline, socket);
+    }
+    match fault::armed_from(std::env::var(fault::PAUSE_ENV).ok().as_deref()) {
+        Ok(Some(point)) => fault::arm(point),
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("tetsu-tx: {e}\n\n{USAGE}");
+            return ExitCode::from(EXIT_USAGE);
+        }
     }
     let clock = now_secs;
     let host = Host {
