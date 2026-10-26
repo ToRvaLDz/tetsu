@@ -76,8 +76,9 @@ pub fn evaluate(facts: &Facts) -> Result<(), Vec<Failure>> {
 
 /// Write the verdicts this boot calls for; the counters and verdicts
 /// written, in order. A record missing for an ESP entry is rebuilt first.
-/// When it passed, the booted snapshot is `Good`. Either way, an ESP entry
-/// that ran out of tries and has no verdict gets `Bad`.
+/// When it passed, the booted snapshot is `Good`. Either way, another ESP
+/// entry with no verdict gets `Bad` when it ran out of tries and `Good` when
+/// it was blessed.
 pub fn record(
     records: &Records,
     esp: &EspState,
@@ -88,12 +89,19 @@ pub fn record(
     let mut written = Vec::new();
     for entry in &esp.entries {
         let counter = entry.name.counter;
-        let exhausted = entry.state() == BootState::Bad;
-        // A boot that passes on its last try is good, not bad.
-        let this_boot = passed && counter == booted;
-        if exhausted && !this_boot && all.get(&counter).is_some_and(|r| r.boot.is_none()) {
-            records.set_boot(counter, BootVerdict::Bad)?;
-            written.push((counter, BootVerdict::Bad));
+        let unjudged = all.get(&counter).is_some_and(|r| r.boot.is_none());
+        let this_boot = counter == booted;
+        let verdict = match entry.state() {
+            // A boot that passes on its last try is good, not bad.
+            BootState::Bad if !(this_boot && passed) => Some(BootVerdict::Bad),
+            // Blessed while its own check could not write the record. This
+            // boot's own pass is recorded below, and a failure is no `Good`.
+            BootState::Good if !this_boot => Some(BootVerdict::Good),
+            _ => None,
+        };
+        if let Some(v) = verdict.filter(|_| unjudged) {
+            records.set_boot(counter, v)?;
+            written.push((counter, v));
         }
     }
     if passed
