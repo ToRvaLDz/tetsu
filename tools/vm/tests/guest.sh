@@ -290,3 +290,65 @@ reprime_sudo() {
   gexec "echo '$USER_PW' | sudo -S -p '' -v 2>&1; echo sudo-primed"
   assert_contains "$SCENARIO: sudo is primed again" "$GOUT" "sudo-primed"
 }
+
+# ---------------------------------------------------------------- checks
+common_checks() { # LEVEL
+  local level=$1
+  check "Secure Boot is enabled (SecureBoot efivar)" '(^| )6 +0 +0 +0 +1$' \
+    "od -An -tu1 /sys/firmware/efi/efivars/SecureBoot-$GLOBAL_GUID"
+  check "bootctl reports Secure Boot enabled (user)" 'Secure Boot: enabled \(user\)' \
+    "bootctl status 2>/dev/null | grep -i 'secure boot'"
+  check "the booted entry is Tetsu's UKI" 'tetsu-[0-9]+' \
+    "bootctl status 2>/dev/null | grep -iE 'Current Entry|Selected Entry|id: ' | head -n 3"
+  check "the kernel runs from the encrypted root" 'rd.luks.name=.* root=/dev/mapper/root' \
+    "cat /proc/cmdline"
+  check "the user is in wheel" 'wheel' "id -nG"
+  check "tetsu-base is explicitly installed" 'Install Reason +: Explicitly installed' \
+    "pacman -Qi tetsu-base"
+  check "the primary group is named after the user" "$USER_NAME\$" "id -gn"
+  check "the root account is locked" 'root +L' "sudo -n passwd -S root"
+  case "$level" in
+    paranoid)
+      check "the level file says paranoid" 'level = "paranoid"' "cat /etc/tetsu/unlock-level.toml"
+      check_not "no TPM2 token in the LUKS header" 'tpm2' \
+        "sudo -n systemd-cryptenroll /dev/disk/by-partlabel/TETSU-ROOT"
+      ;;
+    comfort | balanced)
+      check "the level file says sealed" 'state = "sealed"' "cat /etc/tetsu/unlock-level.toml"
+      check "the LUKS header has a tpm2 token" 'tpm2' \
+        "sudo -n systemd-cryptenroll /dev/disk/by-partlabel/TETSU-ROOT"
+      ;;
+  esac
+}
+
+# After the first boot: reboot and check how the disk unlocks.
+second_boot_checks() { # LEVEL
+  local level=$1
+  reboot_guest
+  boot_to_login
+  case "$level" in
+    paranoid)
+      assert_eq "$SCENARIO: paranoid asks the passphrase once" "1" "$SEEN_PASS"
+      ;;
+    comfort)
+      assert_eq "$SCENARIO: comfort unlocks through the TPM with no passphrase prompt" "0" "$SEEN_PASS"
+      assert_eq "$SCENARIO: comfort asks no PIN" "0" "$SEEN_PIN"
+      ;;
+    balanced)
+      assert_eq "$SCENARIO: balanced asks no passphrase" "0" "$SEEN_PASS"
+      assert_eq "$SCENARIO: balanced asks the PIN once" "1" "$SEEN_PIN"
+      ;;
+  esac
+  login
+  check "still booted under Secure Boot after the reboot" '(^| )6 +0 +0 +0 +1$' \
+    "od -An -tu1 /sys/firmware/efi/efivars/SecureBoot-$GLOBAL_GUID"
+}
+
+# First boot of an installed system, by level.
+first_boot() { # LEVEL
+  boot_installed
+  boot_to_login
+  say_info "first boot: $SEEN_PASS passphrase prompt(s), $SEEN_PIN PIN prompt(s)"
+  login
+  common_checks "$1"
+}
