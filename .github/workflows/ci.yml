@@ -33,9 +33,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  # Arch Linux, like the target: the end-to-end boot tests need the real
+  # ukify, sbsign, sbverify and the systemd EFI stubs, and fail when missing.
   test:
     runs-on: ubuntu-latest
+    container: archlinux:latest
     steps:
+      - run: pacman -Syu --noconfirm --needed systemd systemd-ukify sbsigntools openssl binutils rustup gcc git
       - uses: actions/checkout@v4
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -43,10 +47,6 @@ jobs:
       # The contract suite validates the IDL with systemd's varlinkctl and
       # fails instead of skipping when it is missing.
       - run: cargo test --workspace --locked
-        env:
-          # The runner's systemd 255 varlinkctl rejects doc comments on
-          # fields; the varlinkctl job below validates the IDL instead.
-          TETSU_SKIP_VARLINKCTL: "1"
 
   # IDL validation with a current varlinkctl (Arch Linux systemd).
   varlinkctl:
