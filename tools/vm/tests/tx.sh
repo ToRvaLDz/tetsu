@@ -75,7 +75,8 @@ boot_login() {
 # POINT; returns once it waits there. A failed run or a pause file that cannot
 # be written ends the wait at once.
 start_paused() {
-  local point=$1 log=/tmp/tx-$point.log
+  local point=$1 log
+  log=/tmp/tx-$point.log
   shift
   reprime_sudo
   gexec "(sudo -n env TETSU_TX_PAUSE_AT=$point tetsu-tx $* >$log 2>&1 &); echo started"
