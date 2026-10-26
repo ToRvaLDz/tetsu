@@ -43,6 +43,10 @@ pub enum BootVerdict {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     pub counter: u64,
+    /// The id the bus gave the transaction; `None` for records of the CLI,
+    /// of the installer and for old ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// `None` when rebuilt from the ESP.
     pub kind: Option<TxKind>,
     /// Snapshot the transaction started from; `None` for transaction zero
