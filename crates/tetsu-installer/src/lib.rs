@@ -7,7 +7,6 @@ pub mod cleanup;
 pub mod cli;
 pub mod collect;
 pub mod install;
-pub mod isolated;
 pub mod locate;
 pub mod probe;
 pub mod system;

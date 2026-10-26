@@ -25,7 +25,6 @@ use crate::answer_file::AnswerFile;
 use crate::cli::{self, Command, Options, USAGE};
 use crate::collect::{Collected, collect};
 use crate::install::{Machine, Report, install};
-use crate::isolated::IsolatedRunner;
 use crate::locate::{self, Source};
 use crate::probe::MountProbe;
 use crate::system;
@@ -104,7 +103,7 @@ fn run(opts: &Options) -> Result<(), String> {
     let report = install(
         &fe,
         &Machine {
-            runner: &IsolatedRunner,
+            runner: &SystemRunner::own_group(),
             space: &StatvfsProbe,
             entropy: &SystemEntropy,
             cancel: &cancel,
