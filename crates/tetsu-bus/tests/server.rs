@@ -309,3 +309,88 @@ fn bind_refuses_a_directory_others_can_enter() {
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     });
 }
+
+fn current_thread() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+fn mode_of(path: &Path) -> u32 {
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[test]
+fn bind_system_creates_a_public_socket_in_a_world_readable_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = socket_path(&dir);
+    current_thread().block_on(async {
+        let _listener = server::bind_system(&path).unwrap();
+        assert_eq!(mode_of(path.parent().unwrap()), 0o755);
+        assert_eq!(mode_of(&path), 0o666);
+    });
+}
+
+#[test]
+fn bind_system_refuses_a_directory_others_can_write() {
+    for mode in [0o775, 0o757, 0o777] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = socket_path(&dir);
+        std::fs::create_dir(path.parent().unwrap()).unwrap();
+        std::fs::set_permissions(
+            path.parent().unwrap(),
+            std::fs::Permissions::from_mode(mode),
+        )
+        .unwrap();
+        current_thread().block_on(async {
+            let error = server::bind_system(&path).expect_err("a writable directory is refused");
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "{mode:o}"
+            );
+        });
+        assert!(!path.exists());
+    }
+}
+
+#[test]
+fn bind_system_accepts_an_existing_directory_of_this_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = socket_path(&dir);
+    std::fs::create_dir(path.parent().unwrap()).unwrap();
+    std::fs::set_permissions(
+        path.parent().unwrap(),
+        std::fs::Permissions::from_mode(0o750),
+    )
+    .unwrap();
+    current_thread().block_on(async {
+        server::bind_system(&path).expect("a directory of ours that nobody can write is fine");
+    });
+}
+
+#[test]
+fn bind_system_replaces_a_stale_socket_and_keeps_a_live_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = socket_path(&dir);
+    current_thread().block_on(async {
+        drop(server::bind_system(&path).unwrap());
+        let live = server::bind_system(&path).expect("a stale socket is replaced");
+        let error = server::bind_system(&path).expect_err("a live socket is kept");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        drop(live);
+    });
+}
+
+#[test]
+fn a_system_socket_file_goes_with_its_listener() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = socket_path(&dir);
+    current_thread().block_on(async {
+        let listener = server::bind_system(&path).unwrap();
+        assert!(path.exists());
+        drop(listener);
+        assert!(!path.exists());
+    });
+}
