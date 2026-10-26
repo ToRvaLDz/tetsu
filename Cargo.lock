@@ -1072,7 +1072,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tetsu-bus",
+ "tetsu-bus-contract",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

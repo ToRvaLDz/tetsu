@@ -11,10 +11,14 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-rustix = { version = "1.1.5", features = ["fs"] }
+rustix = { version = "1.1.5", features = ["fs", "rand"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.154"
+tetsu-bus = { path = "../tetsu-bus" }
 thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt", "net", "macros", "sync", "time", "signal"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tetsu-bus-contract = { path = "../tetsu-bus-contract" }
+tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "sync", "time"] }
