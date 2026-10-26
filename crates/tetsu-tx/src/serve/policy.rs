@@ -16,8 +16,9 @@ pub struct LocalRoot;
 
 impl Policy for LocalRoot {
     async fn allows(&self, peer: &Peer, class: &str) -> bool {
-        let _ = (peer, class);
-        todo!()
+        // Every write class gets the same answer for now.
+        let _ = class;
+        peer.uid == 0 && !peer.agent
     }
 }
 
