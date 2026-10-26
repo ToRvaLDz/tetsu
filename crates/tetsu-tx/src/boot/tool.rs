@@ -317,6 +317,15 @@ mod tests {
     }
 
     #[test]
+    fn a_megabyte_on_stdin_round_trips_without_deadlock() {
+        // `cat` echoes while it reads: a writer on the calling thread would
+        // block on a full stdout pipe the caller never drains.
+        let big = vec![b'x'; 1 << 20];
+        let out = SystemRunner::new().output_stdin("cat", &[], &big).unwrap();
+        assert_eq!(out.len(), 1 << 20);
+    }
+
+    #[test]
     fn env_vars_reach_the_tool() {
         let args = ["-c".into(), "printf %s \"$X\"".into()];
         let out = SystemRunner::new()
