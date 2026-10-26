@@ -15,28 +15,32 @@ use crate::boot::tool::Runner;
 /// The initrd a snapshot boots with, inside the snapshot.
 pub(crate) const INITRD: &str = "/usr/lib/tetsu/initrd.img";
 
-/// Lines of a tool's stderr, for the transaction log.
+/// Start of the deprecation note systemd-nspawn prints on every run; it says
+/// nothing about the command that failed.
+const NSPAWN_NOTE: &str = "Note: in a future version of systemd-nspawn";
+
+/// Lines of a tool's stderr, for the transaction log, without nspawn's note.
 fn stderr_lines(stderr: &str) -> Vec<String> {
     stderr
         .lines()
         .map(str::trim_end)
-        .filter(|l| !l.is_empty())
+        .filter(|l| !l.is_empty() && !l.starts_with(NSPAWN_NOTE))
         .map(str::to_owned)
         .collect()
 }
 
 /// The reason and log lines of a failed tool: the reason quotes the tool's
-/// stderr, the log keeps it line by line.
+/// stderr, the log keeps it line by line (both without nspawn's note).
 pub(super) fn failure_parts(what: &str, e: &BootError) -> (String, Vec<String>) {
     match e {
         BootError::Tool { status, stderr, .. } => {
-            let stderr = stderr.trim();
-            let reason = if stderr.is_empty() {
+            let lines = stderr_lines(stderr);
+            let reason = if lines.is_empty() {
                 format!("{what} failed ({status})")
             } else {
-                format!("{what} failed: {stderr}")
+                format!("{what} failed: {}", lines.join("\n"))
             };
-            (reason, stderr_lines(stderr))
+            (reason, lines)
         }
         other => (format!("{what} failed: {other}"), Vec::new()),
     }
