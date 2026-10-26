@@ -7,6 +7,7 @@ pub mod notify;
 pub mod peer;
 pub mod server;
 pub mod session;
+pub mod tx;
 
 fn into_io(e: zlink::Error) -> std::io::Error {
     match e {
