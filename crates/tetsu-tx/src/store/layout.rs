@@ -1,6 +1,7 @@
 //! Paths of the Btrfs layout, relative to the top-level (subvolid=5) mount.
 //!
 //! * `@snapshots/<n>/root`       root snapshot, sealed `ro`
+//! * `@snapshots/<n>/.#root.lck` lock `systemd-nspawn -D` takes beside the root
 //! * `@snapshots/<n>/root/etc`   nested writable subvolume
 //! * `@snapshots/<n>/etc-base`   read-only base of the `/etc` merge
 //! * `@snapshots/<n>/committed`  marker: the UKI is committed on the ESP
@@ -16,6 +17,9 @@ use crate::boot::entry::canonical;
 
 /// Subvolume holding every snapshot directory.
 pub const SNAPSHOTS: &str = "@snapshots";
+
+/// Directory name of the root snapshot in a snapshot directory.
+const ROOT: &str = "root";
 
 /// File name of the commit marker in a snapshot directory.
 pub const COMMITTED: &str = "committed";
@@ -53,7 +57,7 @@ impl Layout {
     }
 
     pub fn root(&self, counter: u64) -> PathBuf {
-        self.snapshot_dir(counter).join("root")
+        self.snapshot_dir(counter).join(ROOT)
     }
 
     pub fn etc(&self, counter: u64) -> PathBuf {
@@ -73,6 +77,13 @@ impl Layout {
     /// complete.
     pub fn etc_synced_marker(&self, counter: u64) -> PathBuf {
         self.snapshot_dir(counter).join(ETC_SYNCED)
+    }
+
+    /// Lock file `systemd-nspawn -D <root>` creates beside the root and
+    /// unlinks on exit; systemd names it `.#<basename of the -D path>.lck`. A
+    /// power cut can keep the creation and lose the unlink.
+    pub fn nspawn_lock(&self, counter: u64) -> PathBuf {
+        self.snapshot_dir(counter).join(format!(".#{ROOT}.lck"))
     }
 
     pub fn is_committed(&self, counter: u64) -> bool {
@@ -145,6 +156,10 @@ mod tests {
         assert_eq!(
             l.etc_synced_marker(7),
             Path::new("/mnt/top/@snapshots/7/etc-synced")
+        );
+        assert_eq!(
+            l.nspawn_lock(7),
+            Path::new("/mnt/top/@snapshots/7/.#root.lck")
         );
         assert_eq!(l.shared("@var"), Path::new("/mnt/top/@var"));
     }
