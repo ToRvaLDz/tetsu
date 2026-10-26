@@ -367,3 +367,79 @@ fn the_owner_is_carried_over() {
     );
     assert_eq!((old.uid(), old.gid()), (new.uid(), new.gid()));
 }
+
+#[test]
+fn a_file_the_user_edited_in_a_directory_the_transaction_removed_is_kept_aside() {
+    let t = T::new();
+    t.put(Base, "foo/x.conf", "a\n");
+    t.put(Old, "foo/x.conf", "user\n");
+    t.put(Old, "foo/added.conf", "mine\n");
+    let report = t.sync();
+    assert!(!t.exists(New, "foo"));
+    assert_eq!(t.kept_text("foo/x.conf").as_deref(), Some("user\n"));
+    assert_eq!(t.kept_text("foo/added.conf").as_deref(), Some("mine\n"));
+    assert_eq!(
+        names(
+            &report
+                .conflicts
+                .iter()
+                .map(|c| c.path.clone())
+                .collect::<Vec<_>>()
+        ),
+        ["foo"]
+    );
+    assert_eq!(report.conflicts[0].kind, ConflictKind::TxDeleted);
+}
+
+#[test]
+fn a_directory_the_transaction_removed_and_the_user_left_alone_stays_removed() {
+    let t = T::new();
+    for tree in [Base, Old] {
+        t.put(tree, "foo/x.conf", "a\n");
+    }
+    assert!(t.sync().is_empty());
+    assert!(!t.exists(New, "foo"));
+}
+
+#[test]
+fn a_directory_the_user_replaced_while_the_transaction_changed_inside_is_a_conflict() {
+    let t = T::new();
+    t.put(Base, "foo/x.conf", "a\n");
+    t.put(New, "foo/x.conf", "tx\n");
+    t.put(Old, "foo", "now a file\n");
+    let report = t.sync();
+    assert_eq!(t.read(New, "foo/x.conf").as_deref(), Some("tx\n"));
+    assert_eq!(t.kept_text("foo").as_deref(), Some("now a file\n"));
+    assert_eq!(report.conflicts[0].kind, ConflictKind::BothChanged);
+    assert!(report.taken.is_empty());
+}
+
+#[test]
+fn a_directory_the_user_replaced_and_the_transaction_left_alone_is_replaced() {
+    let t = T::new();
+    for tree in [Base, New] {
+        t.put(tree, "foo/x.conf", "a\n");
+    }
+    t.put(Old, "foo", "now a file\n");
+    let report = t.sync();
+    assert_eq!(t.read(New, "foo").as_deref(), Some("now a file\n"));
+    assert_eq!(names(&report.taken), ["foo"]);
+}
+
+#[test]
+fn a_fifo_inside_a_copied_directory_is_noted() {
+    let t = T::new();
+    t.put(Old, "mine/a.conf", "A\n");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        t.root(Old).join("mine/pipe"),
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::from_raw_mode(0o600),
+        0,
+    )
+    .unwrap();
+    let report = t.sync();
+    assert_eq!(names(&report.taken), ["mine"]);
+    assert_eq!(names(&report.skipped), ["mine/pipe"]);
+    assert!(!t.exists(New, "mine/pipe"));
+}
