@@ -22,7 +22,9 @@ use crate::boot::tool::Runner;
 use crate::cli::DEFAULT_ESP;
 use crate::store::StoreError;
 use crate::store::layout::booted_counter;
+use crate::store::lock::TxLock;
 use crate::store::record::{BootVerdict, RECORDS_DIR, Records};
+use crate::tx::engine::DEFAULT_LOCK;
 use facts::{Facts, Greetd};
 
 /// A check that failed.
@@ -114,6 +116,8 @@ pub struct Paths {
     pub esp: PathBuf,
     /// The transaction records.
     pub records: PathBuf,
+    /// The transaction lock, held while the records are written.
+    pub lock: PathBuf,
 }
 
 impl Paths {
@@ -122,6 +126,7 @@ impl Paths {
             proc: PathBuf::from("/proc"),
             esp: PathBuf::from(DEFAULT_ESP),
             records: PathBuf::from(RECORDS_DIR),
+            lock: PathBuf::from(DEFAULT_LOCK),
         }
     }
 }
@@ -165,6 +170,23 @@ pub fn run(paths: &Paths, runner: &dyn Runner) -> Report {
             .warnings
             .push("not booted from a Tetsu snapshot, no verdict recorded".to_owned());
         return report;
+    };
+    // Records are written under the transaction lock, never waited for: a
+    // running transaction may be writing one, and the next boot catches up.
+    let _lock = match TxLock::acquire(&paths.lock) {
+        Ok(lock) => lock,
+        Err(StoreError::Busy { .. }) => {
+            report
+                .warnings
+                .push("a transaction is running, no verdict recorded this time".to_owned());
+            return report;
+        }
+        Err(e) => {
+            report
+                .warnings
+                .push(format!("the verdict was not recorded: {e}"));
+            return report;
+        }
     };
     match record(&Records::new(&paths.records), &esp, booted, passed) {
         Ok(written) => report.written = written,
