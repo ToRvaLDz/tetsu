@@ -48,6 +48,11 @@ test_dry_run() {
   out=$(TETSU_OVMF_CODE="$SCRATCH/CODE.secboot.fd" "$VM" start --dry-run --state "$st" --iso "$SCRATCH/boot.iso" 2>&1)
   assert_contains "dry-run: secboot CODE gets a secure pflash" "$out" "driver=cfi.pflash01,property=secure,value=on"
 
+  out=$(TETSU_OVMF_CODE="$SCRATCH/CODE.fd" "$VM" start --dry-run --state "$st" --iso "$SCRATCH/boot.iso" 2>&1)
+  assert_contains "dry-run: non-secboot CODE gets a note" "$out" "secure pflash is off for this firmware"
+  assert_not_contains "dry-run: non-secboot CODE gets no secure pflash" "$out" "property=secure"
+  assert_not_contains "dry-run: secboot CODE gets no note" "$(TETSU_OVMF_CODE="$SCRATCH/CODE.secboot.fd" "$VM" start --dry-run --state "$st" --iso "$SCRATCH/boot.iso" 2>&1)" "secure pflash is off"
+
   out=$("$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" --iso "$SCRATCH/boot.iso" --snapshot 2>&1)
   assert_contains "dry-run: --snapshot on the disk drive" "$out" "file=$SCRATCH/disk.img,if=virtio,snapshot=on"
   assert_not_contains "dry-run: no global -snapshot (would hit VARS)" "$out" " -snapshot"

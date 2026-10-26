@@ -130,7 +130,10 @@ build_argv() {
   # A secure pflash is for the SMM (secboot) build only: with a plain build
   # every variable write would be dropped and no boot entry would persist.
   local secure=()
-  case "${code##*/}" in *secboot*) secure=(-global driver=cfi.pflash01,property=secure,value=on) ;; esac
+  case "${code##*/}" in
+    *secboot*) secure=(-global driver=cfi.pflash01,property=secure,value=on) ;;
+    *) [ -z "${TETSU_OVMF_CODE:-}" ] || warn "note: ${code##*/} has no 'secboot' in its name: the secure pflash is off for this firmware" ;;
+  esac
 
   ARGV=(qemu-system-x86_64
     -machine "q35,smm=on,accel=$accel" -cpu "$cpu" -m "$O_MEM" -smp "$O_CPUS"

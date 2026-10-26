@@ -19,7 +19,10 @@ from the serial log. It is plain Bash; nothing besides the tools below is needed
 - Debian/Ubuntu: `/usr/share/OVMF/OVMF_CODE_4M.secboot.fd` + `OVMF_VARS_4M.fd`
 - Fedora: `/usr/share/edk2/ovmf/OVMF_CODE.secboot.fd` + `OVMF_VARS.fd`
 
-Override with `TETSU_OVMF_CODE` and `TETSU_OVMF_VARS`. The default VARS is the
+Override with `TETSU_OVMF_CODE` and `TETSU_OVMF_VARS`. The secure pflash (needed
+for NVRAM writes to persist on the SMM build) is switched on by the file name:
+a `TETSU_OVMF_CODE` whose name contains `secboot` gets it; any other name does
+not, and `start` prints a note to stderr. The default VARS is the
 distro's empty template, so the VM starts in Secure Boot setup mode.
 `socat` is only needed by `stop` and `console`.
 
