@@ -23,7 +23,7 @@ use crate::store::btrfs::{Btrfs, CliBtrfs};
 use crate::store::layout::{Layout, booted_counter};
 use crate::store::record::Records;
 use crate::tx::TxError;
-use crate::tx::engine::{Engine, Paths, Report, Request};
+use crate::tx::engine::{Engine, EngineEvent, Paths, Report, Request, RunCtx};
 
 /// What the process prints and exits with.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,7 +134,25 @@ fn list(options: &Options, host: &Host<'_>, json: bool) -> Outcome {
     }
 }
 
+/// The observer of a run nobody watches.
+fn ignore_event(_: EngineEvent) {}
+
 fn transact(options: &Options, host: &Host<'_>, request: &Request) -> Result<Report, TxError> {
+    let ctx = RunCtx {
+        id: None,
+        observer: &ignore_event,
+    };
+    transact_with(options, host, request, ctx)
+}
+
+/// Run one transaction, telling `ctx.observer` where it is and writing
+/// `ctx.id` into its record.
+pub fn transact_with(
+    options: &Options,
+    host: &Host<'_>,
+    request: &Request,
+    ctx: RunCtx<'_>,
+) -> Result<Report, TxError> {
     let Some(booted) = resolve_booted(options.booted, host.proc_cmdline) else {
         return Err(TxError::failed(
             "cannot tell which snapshot is booted: the kernel command line has no \
@@ -160,7 +178,14 @@ fn transact(options: &Options, host: &Host<'_>, request: &Request) -> Result<Rep
         probe: host.probe,
         clock: host.clock,
     };
-    engine.run(request)
+    engine.run_with(request, ctx)
+}
+
+/// Unix seconds now; 0 before the epoch.
+pub fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// The program: parse, run, print, exit code.
@@ -174,11 +199,7 @@ pub fn main(args: &[String]) -> ExitCode {
     };
     // Unreadable: the booted snapshot then has to come from `--booted`.
     let proc_cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
-    let clock = || {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
-    };
+    let clock = now_secs;
     let host = Host {
         runner: &SystemRunner,
         btrfs: &CliBtrfs::new(SystemRunner),

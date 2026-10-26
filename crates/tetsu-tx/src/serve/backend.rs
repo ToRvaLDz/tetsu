@@ -2,10 +2,18 @@
 //! the user layer and the status. A trait, so the service is tested with
 //! the engine behind a fake.
 
+use crate::app::{Host, mount_top, now_secs, resolve_booted, transact_with};
 use crate::boot::entry::BootState;
-use crate::boot::tool::Runner;
+use crate::boot::esp::{Esp, EspState};
+use crate::boot::space::StatvfsProbe;
+use crate::boot::tool::{Runner, SystemRunner};
 use crate::cli::Options;
-use crate::store::record::Record;
+use crate::store::btrfs::CliBtrfs;
+use crate::store::layout::Layout;
+use crate::store::record::{Record, Records};
+use crate::store::select;
+use crate::tx::engine::{EngineEvent, Report, Request, RunCtx};
+use crate::tx::{TxError, pkg};
 
 /// Which snapshot is booted, which one the next boot uses and how that one
 /// stands.
@@ -16,25 +24,119 @@ pub struct StatusView {
     pub default_boot: BootState,
 }
 
+/// The host as the service sees it. Calls block: the service runs them on
+/// a blocking thread.
+pub trait Backend: Send + Sync + 'static {
+    /// Runs one transaction under `id`, telling `observer` where it is.
+    fn run(
+        &self,
+        id: &str,
+        request: &Request,
+        observer: &(dyn Fn(EngineEvent) + Sync),
+    ) -> Result<Report, TxError>;
+
+    /// The committed transactions, newest first.
+    fn transactions(&self) -> Result<Vec<Record>, String>;
+
+    /// The names of the user layer packages.
+    fn user_packages(&self) -> Result<Vec<String>, String>;
+
+    /// The booted and the default snapshot.
+    fn status(&self) -> Result<StatusView, String>;
+}
+
+/// The real host: Btrfs, pacman and systemd-nspawn through their commands.
+/// It keeps no handle: everything is built inside each call.
+#[derive(Clone, Debug)]
+pub struct HostBackend {
+    pub options: Options,
+    /// The text of `/proc/cmdline`.
+    pub proc_cmdline: String,
+}
+
+impl Backend for HostBackend {
+    fn run(
+        &self,
+        id: &str,
+        request: &Request,
+        observer: &(dyn Fn(EngineEvent) + Sync),
+    ) -> Result<Report, TxError> {
+        let btrfs = CliBtrfs::new(SystemRunner);
+        let host = Host {
+            runner: &SystemRunner,
+            btrfs: &btrfs,
+            probe: &StatvfsProbe,
+            proc_cmdline: &self.proc_cmdline,
+            clock: &now_secs,
+        };
+        let ctx = RunCtx {
+            id: Some(id.to_owned()),
+            observer,
+        };
+        transact_with(&self.options, &host, request, ctx)
+    }
+
+    fn transactions(&self) -> Result<Vec<Record>, String> {
+        read_transactions(&self.options)
+    }
+
+    fn user_packages(&self) -> Result<Vec<String>, String> {
+        read_user_packages(&self.options, &SystemRunner)
+    }
+
+    fn status(&self) -> Result<StatusView, String> {
+        read_status(&self.options, &self.proc_cmdline)
+    }
+}
+
+fn scan(options: &Options) -> Result<EspState, String> {
+    Esp::open(&options.esp).scan().map_err(|e| e.to_string())
+}
+
 /// The committed transactions, newest first. Reads the ESP and the records;
 /// writes nothing.
 pub fn read_transactions(options: &Options) -> Result<Vec<Record>, String> {
-    let _ = options;
-    todo!()
+    let esp = scan(options)?;
+    let records = Records::new(&options.records)
+        .load_derived(&esp)
+        .map_err(|e| e.to_string())?;
+    Ok(records.into_values().rev().collect())
 }
 
 /// The booted and the default snapshot. The booted one is `--booted`, else
 /// the kernel command line's; it must have an entry on the ESP.
 pub fn read_status(options: &Options, proc_cmdline: &str) -> Result<StatusView, String> {
-    let _ = (options, proc_cmdline);
-    todo!()
+    let esp = scan(options)?;
+    let booted = resolve_booted(options.booted, proc_cmdline).ok_or(
+        "cannot tell which snapshot is booted: the kernel command line has no \
+         rootflags=subvol=@snapshots/<n>/root; pass --booted <n>",
+    )?;
+    if !esp.entries.iter().any(|e| e.name.counter == booted) {
+        return Err(format!("the booted snapshot {booted} has no boot entry"));
+    }
+    let default = esp.default_entry().ok_or("there is no boot entry")?;
+    Ok(StatusView {
+        booted,
+        default: default.name.counter,
+        default_boot: default.state(),
+    })
 }
 
 /// The user layer of the default snapshot: its explicitly installed
 /// packages outside the base closure.
 pub fn read_user_packages(options: &Options, runner: &dyn Runner) -> Result<Vec<String>, String> {
-    let _ = (options, runner);
-    todo!()
+    let default = select::default_counter(&scan(options)?).ok_or("there is no boot entry")?;
+    mount_top(runner, &options.top).map_err(|e| e.to_string())?;
+    let root = Layout::new(&options.top).root(default);
+    let infos = pkg::infos(runner, &root).map_err(|e| e.to_string())?;
+    let explicit = pkg::explicit(runner, &root).map_err(|e| e.to_string())?;
+    let closure = pkg::base_closure(&infos, pkg::BASE_PACKAGE).ok_or_else(|| {
+        format!(
+            "{} is not installed in snapshot {default}",
+            pkg::BASE_PACKAGE
+        )
+    })?;
+    Ok(pkg::user_layer(&explicit, &closure))
 }
 
 #[cfg(test)]
