@@ -1,13 +1,15 @@
 //! The sync as the initrd runs it: find the device behind `/sysroot`, mount
 //! the Btrfs top level next to it, sync, unmount.
 
-use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::SyncError;
-use super::firstboot::{Outcome, Skip};
+use super::firstboot::{Outcome, Skip, run as run_firstboot};
+use super::mountinfo::source_of;
 use crate::boot::tool::Runner;
+use crate::store::layout::{Layout, booted_counter};
+use crate::store::record::{RECORDS_DIR, Records};
 
 /// Where the initrd keeps what the sync reads.
 #[derive(Clone, Debug)]
@@ -30,11 +32,76 @@ impl Paths {
     }
 }
 
+/// What to print for a result: one summary line, then one per conflict. The
+/// sync never blocks the boot, so a failure is a line too.
+pub fn lines(result: &Result<Outcome, SyncError>) -> Vec<String> {
+    const NAME: &str = "tetsu-etc-sync";
+    match result {
+        Ok(Outcome::Skipped(why)) => vec![format!("{NAME}: skipped: {why}")],
+        Ok(Outcome::Synced(r)) => {
+            let mut out = vec![format!(
+                "{NAME}: synced: {} taken, {} deleted, {} merged, {} conflicts, {} skipped",
+                r.taken.len(),
+                r.deleted.len(),
+                r.merged.len(),
+                r.conflicts.len(),
+                r.skipped.len()
+            )];
+            for c in &r.conflicts {
+                let kept = if c.kept { ", your copy was kept" } else { "" };
+                out.push(format!("{NAME}: conflict: {} ({:?}{kept})", c.path, c.kind));
+            }
+            out
+        }
+        Err(e) => vec![format!(
+            "{NAME}: failed: {e}; it runs again at the next boot"
+        )],
+    }
+}
+
+/// The sync against the mounted top level.
+fn sync_mounted(top: &Path, booted: u64) -> Result<Outcome, SyncError> {
+    let layout = Layout::new(top);
+    let var = layout.shared("@var");
+    let records = Records::new(&var.join(RECORDS_DIR.trim_start_matches("/var/")));
+    run_firstboot(&layout, &records, &var, booted)
+}
+
 /// Sync the booted snapshot's `/etc` when it is due. The top level is
 /// unmounted again whatever the sync did.
 pub fn run(paths: &Paths, runner: &dyn Runner) -> Result<Outcome, SyncError> {
-    let _ = (paths, runner, OsString::new(), fs::read_dir("/"));
-    Ok(Outcome::Skipped(Skip::NotTetsu))
+    let read = |path: PathBuf| fs::read_to_string(&path).map_err(|e| SyncError::io(&path, e));
+    let cmdline = read(paths.proc.join("cmdline"))?;
+    let Some(booted) = booted_counter(&cmdline) else {
+        return Ok(Outcome::Skipped(Skip::NotTetsu));
+    };
+    let mountinfo = read(paths.proc.join("self/mountinfo"))?;
+    let device = source_of(&mountinfo, &paths.sysroot.to_string_lossy())?;
+    let top = paths.work.join("top");
+    fs::create_dir_all(&top).map_err(|e| SyncError::io(&top, e))?;
+    let mounted = runner.run(
+        "mount",
+        &[
+            "-t".into(),
+            "btrfs".into(),
+            "-o".into(),
+            "subvolid=5,noatime".into(),
+            device.into(),
+            top.clone().into_os_string(),
+        ],
+    );
+    let synced = match mounted {
+        Ok(()) => {
+            let outcome = sync_mounted(&top, booted);
+            // Unmount whatever the sync did; its own failure comes first.
+            let unmounted = runner.run("umount", &[top.clone().into_os_string()]);
+            outcome.and_then(|o| unmounted.map(|()| o).map_err(SyncError::from))
+        }
+        Err(e) => Err(SyncError::from(e)),
+    };
+    // Best effort: a mount point that stays only wastes a tmpfs entry.
+    let _ = fs::remove_dir_all(&paths.work);
+    synced
 }
 
 #[cfg(test)]
@@ -52,7 +119,7 @@ mod tests {
     const CMDLINE: &str = "root=/dev/mapper/root rw rootflags=subvol=@snapshots/2/root quiet\n";
 
     struct Env {
-        dir: tempfile::TempDir,
+        _dir: tempfile::TempDir,
         paths: Paths,
     }
 
@@ -68,7 +135,7 @@ mod tests {
                 sysroot: PathBuf::from("/sysroot"),
                 work: dir.path().join("run/tetsu-etc-sync"),
             };
-            Self { dir, paths }
+            Self { _dir: dir, paths }
         }
 
         fn top(&self) -> PathBuf {
@@ -122,6 +189,39 @@ mod tests {
     }
 
     #[test]
+    fn the_lines_say_what_happened() {
+        use crate::etcsync::apply::{Conflict, SyncReport};
+        use crate::etcsync::plan::ConflictKind;
+        let skipped = Ok(Outcome::Skipped(Skip::AlreadySynced));
+        assert_eq!(
+            lines(&skipped),
+            ["tetsu-etc-sync: skipped: the marker is present"]
+        );
+        let report = SyncReport {
+            taken: vec!["a".into()],
+            conflicts: vec![Conflict {
+                path: "pacman.conf".into(),
+                kind: ConflictKind::BothChanged,
+                kept: true,
+            }],
+            ..SyncReport::default()
+        };
+        let got = lines(&Ok(Outcome::Synced(report)));
+        assert_eq!(
+            got,
+            [
+                "tetsu-etc-sync: synced: 1 taken, 0 deleted, 0 merged, 1 conflicts, 0 skipped",
+                "tetsu-etc-sync: conflict: pacman.conf (BothChanged, your copy was kept)",
+            ]
+        );
+        let failed = lines(&Err(SyncError::Mountinfo("boom".into())));
+        assert_eq!(
+            failed,
+            ["tetsu-etc-sync: failed: boom; it runs again at the next boot"]
+        );
+    }
+
+    #[test]
     fn a_command_line_without_a_tetsu_snapshot_mounts_nothing() {
         let env = Env::new("root=/dev/sda1 rw quiet\n");
         let runner = env.runner();
@@ -162,7 +262,6 @@ mod tests {
         );
         assert_eq!(runner.lines().len(), 1);
         assert!(!env.paths.work.exists());
-        let _ = &env.dir;
     }
 
     #[test]
