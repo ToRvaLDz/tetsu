@@ -415,6 +415,43 @@ mod tests {
     }
 
     #[test]
+    fn serve_parses_with_the_default_socket_or_one_given() {
+        assert_eq!(
+            command(&["serve"]),
+            Command::Serve {
+                socket: PathBuf::from(DEFAULT_SOCKET)
+            }
+        );
+        assert_eq!(
+            command(&["serve", "--socket", "/x"]),
+            Command::Serve {
+                socket: PathBuf::from("/x")
+            }
+        );
+        assert_eq!(
+            command(&["--socket=/y", "serve"]),
+            Command::Serve {
+                socket: PathBuf::from("/y")
+            }
+        );
+        // The paths of the other commands still apply to the daemon.
+        assert_eq!(options(&["serve", "--top", "/t"]).top, PathBuf::from("/t"));
+    }
+
+    #[test]
+    fn serve_takes_no_words_and_only_serve_takes_a_socket() {
+        assert!(usage(&["serve", "extra"]).contains("extra"));
+        assert!(usage(&["update", "--socket", "/x"]).contains("--socket"));
+        assert!(usage(&["serve", "--socket"]).contains("--socket"));
+    }
+
+    #[test]
+    fn the_usage_mentions_serve() {
+        assert!(USAGE.contains("serve"));
+        assert!(USAGE.contains("--socket"));
+    }
+
+    #[test]
     fn help_is_a_request_not_an_error() {
         assert_eq!(command(&["--help"]), Command::Help);
         assert_eq!(command(&["update", "-h"]), Command::Help);
