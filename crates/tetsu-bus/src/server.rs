@@ -140,8 +140,32 @@ struct RawMethod {
 /// it. A socket nobody answers on is replaced; one still answering is not.
 /// The socket is 0600.
 pub fn bind(path: &Path) -> io::Result<Listener> {
+    bind_with(path, DirPolicy::Private, 0o600)
+}
+
+/// Binds a system socket. The parent directory is created 0755 when
+/// missing and refused when it belongs to someone else or group or others
+/// may write to it. A socket nobody answers on is replaced; one still
+/// answering is not. The socket is 0666: who may call is decided per call.
+pub fn bind_system(path: &Path) -> io::Result<Listener> {
+    bind_with(path, DirPolicy::System, 0o666)
+}
+
+/// How the directory of a socket is created and checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirPolicy {
+    /// 0700, nobody else may enter.
+    Private,
+    /// 0755, nobody else may write.
+    System,
+}
+
+fn bind_with(path: &Path, dirs: DirPolicy, socket_mode: u32) -> io::Result<Listener> {
     if let Some(dir) = path.parent() {
-        private_dir(dir)?;
+        match dirs {
+            DirPolicy::Private => private_dir(dir)?,
+            DirPolicy::System => system_dir(dir)?,
+        }
     }
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_socket() => {
@@ -163,7 +187,7 @@ pub fn bind(path: &Path) -> io::Result<Listener> {
         Err(e) => return Err(e),
     }
     let inner = zlink::tokio::unix::bind(path).map_err(into_io)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(socket_mode))?;
     let inode = fs::symlink_metadata(path)?.ino();
     Ok(Listener {
         inner,
@@ -184,6 +208,32 @@ fn private_dir(dir: &Path) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("{} is not a private directory of this user", dir.display()),
+        ));
+    }
+    Ok(())
+}
+
+/// Creates `dir` 0755, or checks that an existing one is ours and that
+/// nobody else can write to it.
+fn system_dir(dir: &Path) -> io::Result<()> {
+    let existed = dir.exists();
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(dir)?;
+    if !existed {
+        // The umask must not narrow the directory the clients walk through.
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755))?;
+    }
+    let meta = fs::symlink_metadata(dir)?;
+    let ours = meta.is_dir() && meta.uid() == rustix::process::geteuid().as_raw();
+    if !ours || meta.mode() & 0o022 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{} is not a directory only this user can write",
+                dir.display()
+            ),
         ));
     }
     Ok(())
