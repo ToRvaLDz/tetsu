@@ -69,7 +69,7 @@ pub struct StoredReport {
 /// Run the sync for the booted snapshot `booted` when it is due. `layout`
 /// is the Btrfs top level, `var_root` the shared `@var` (the kept copies and
 /// the report go to `<var_root>/lib/tetsu/etc-sync/<booted>`). Writes the
-/// report and the kept copies, then the marker last.
+/// kept copies, flushes the filesystem, then the report and the marker last.
 pub fn run(
     layout: &Layout,
     records: &Records,
@@ -105,6 +105,9 @@ pub fn run(
     let out = var_root.join(OUT_DIR).join(booted.to_string());
     private_dir(&out)?;
     let report = sync(&base, &old, &new, &out.join(KEPT))?;
+    // The sync's unlinks, renames and directory changes are not fsynced one
+    // by one: flush the whole filesystem, so the marker never outlives them.
+    flush_fs(layout.top())?;
     let stored = StoredReport {
         counter: booted,
         from,
@@ -126,6 +129,13 @@ fn write_durably(path: &Path, data: &[u8]) -> Result<(), SyncError> {
         Some(dir) => sync_path(dir),
         None => Ok(()),
     }
+}
+
+/// `syncfs` on the filesystem holding `path`.
+fn flush_fs(path: &Path) -> Result<(), SyncError> {
+    File::open(path)
+        .and_then(|f| rustix::fs::syncfs(&f).map_err(Into::into))
+        .map_err(|e| SyncError::io(path, e))
 }
 
 fn sync_path(path: &Path) -> Result<(), SyncError> {
