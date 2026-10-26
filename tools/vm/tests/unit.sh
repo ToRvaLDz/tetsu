@@ -185,8 +185,52 @@ test_send() {
   assert_status "send: no VM is an error" 1 "$VM" send --state "$SCRATCH/none" 'x'
 }
 
+# ---------------------------------------------------------------- send drain
+# QEMU writes the guest's serial output one byte at a time; a client that
+# never reads makes those writes fail with EAGAIN, and QEMU's chardev logfile
+# then records the retried byte twice. A fake server emits 1-byte writes
+# while `send` holds the connection and counts the EAGAINs.
+test_send_drains() {
+  if ! command -v socat >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    echo "skip send drain test: socat or python3 not installed"
+    return 0
+  fi
+  local st="$SCRATCH/drain" lpid tries=50 blocked
+  mkdir -p "$st"
+  python3 -I - "$st/serial.sock" "$st/blocked" <<'PY' &
+import socket, sys, time
+
+srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+srv.bind(sys.argv[1])
+srv.listen(1)
+conn, _ = srv.accept()
+conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+conn.setblocking(False)
+blocked = 0
+deadline = time.time() + 0.25
+while time.time() < deadline:
+    try:
+        conn.send(b"x")
+    except BlockingIOError:
+        blocked += 1
+    except OSError:
+        break
+    time.sleep(0.001)
+with open(sys.argv[2], "w") as f:
+    f.write(str(blocked))
+PY
+  lpid=$!
+  while [ ! -S "$st/serial.sock" ] && [ "$tries" -gt 0 ]; do sleep 0.1; tries=$((tries - 1)); done
+  assert_status "send drain: succeeds" 0 "$VM" send --state "$st" 'echo hi\n'
+  wait "$lpid" 2>/dev/null
+  blocked=$(cat "$st/blocked" 2>/dev/null || echo missing)
+  assert_eq "send drain: guest output never blocked on the socket" 0 "$blocked"
+}
+
+
 test_dry_run
 test_send
+test_send_drains
 test_stale_swtpm
 test_usage_errors
 test_dry_run_smbios
