@@ -39,7 +39,11 @@ pub(super) struct BootEntries {
 fn partition_guid(device_path: &str) -> Option<String> {
     let node = device_path.split_once("HD(")?.1.split(')').next()?;
     let mut fields = node.split(',');
-    let guid = fields.nth(2)?.trim();
+    // Only a GPT node carries a partition GUID; an MBR one a disk signature.
+    if !fields.nth(1)?.trim().eq_ignore_ascii_case("GPT") {
+        return None;
+    }
+    let guid = fields.next()?.trim();
     (!guid.is_empty()).then(|| guid.to_ascii_lowercase())
 }
 
