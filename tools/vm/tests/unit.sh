@@ -25,7 +25,7 @@ test_dry_run() {
     --iso "$SCRATCH/boot.iso" 2>&1)
   assert_contains "dry-run: q35 + smm" "$out" "q35,smm=on,accel=kvm"
   assert_contains "dry-run: kvm cpu host" "$out" "-cpu host"
-  assert_contains "dry-run: secure pflash" "$out" "driver=cfi.pflash01,property=secure,value=on"
+  assert_not_contains "dry-run: plain CODE gets no secure pflash" "$out" "property=secure"
   assert_contains "dry-run: readonly CODE" "$out" "if=pflash,format=raw,unit=0,readonly=on,file=$SCRATCH/CODE.fd"
   assert_contains "dry-run: per-VM VARS" "$out" "if=pflash,format=raw,unit=1,file=$st/vars.fd"
   assert_contains "dry-run: tpm-crb" "$out" "tpm-crb,tpmdev=tpm0"
@@ -43,6 +43,10 @@ test_dry_run() {
   out=$(TETSU_VM_KVM=0 "$VM" start --dry-run --state "$st" --iso "$SCRATCH/boot.iso" 2>&1)
   assert_contains "dry-run: tcg without kvm" "$out" "q35,smm=on,accel=tcg"
   assert_contains "dry-run: cpu max without kvm" "$out" "-cpu max"
+
+  : >"$SCRATCH/CODE.secboot.fd"
+  out=$(TETSU_OVMF_CODE="$SCRATCH/CODE.secboot.fd" "$VM" start --dry-run --state "$st" --iso "$SCRATCH/boot.iso" 2>&1)
+  assert_contains "dry-run: secboot CODE gets a secure pflash" "$out" "driver=cfi.pflash01,property=secure,value=on"
 
   out=$("$VM" start --dry-run --state "$st" --disk "$SCRATCH/disk.img" --iso "$SCRATCH/boot.iso" --snapshot 2>&1)
   assert_contains "dry-run: --snapshot on the disk drive" "$out" "file=$SCRATCH/disk.img,if=virtio,snapshot=on"
