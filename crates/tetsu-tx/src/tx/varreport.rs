@@ -14,6 +14,10 @@ use super::TxError;
 /// The bound package cache inside the scratch `/var`, relative to it.
 const CACHE_REL: &str = "cache/pacman/pkg";
 
+/// The pacman DB link seeded into the scratch, relative to it; not state
+/// the transaction loses.
+pub(super) const PACMAN_LINK_REL: &str = "lib/pacman";
+
 fn io_failure(path: &Path, e: &std::io::Error) -> TxError {
     TxError::failed(format!("{}: {e}", path.display()))
 }
@@ -112,6 +116,9 @@ fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), TxError> {
         } else {
             format!("{rel}/{}", item.file_name().to_string_lossy())
         };
+        if child == PACMAN_LINK_REL {
+            continue;
+        }
         let kind = item.file_type().map_err(|e| io_failure(&item.path(), &e))?;
         if kind.is_dir() {
             if child != CACHE_REL {

@@ -41,6 +41,16 @@ fn scratch_dir(run_dir: &Path, counter: u64) -> PathBuf {
     run_dir.join(format!("{SCRATCH_NAME}{counter}"))
 }
 
+/// Re-create the `/var/lib/pacman` link the empty scratch hides: the payload
+/// keeps the pacman DB in `/usr/lib/pacman` and links it from `@var`.
+fn seed_pacman_db(scratch: &Path) -> Result<(), TxError> {
+    let link = scratch.join(varreport::PACMAN_LINK_REL);
+    let parent = scratch.join("lib");
+    fs::create_dir_all(&parent).map_err(|e| BootError::io(&parent, e))?;
+    std::os::unix::fs::symlink(snapshot::PACMAN_DB, &link).map_err(|e| BootError::io(&link, e))?;
+    Ok(())
+}
+
 /// Default directory of the per-transaction runtime state.
 pub const DEFAULT_RUN_DIR: &str = "/run/tetsu";
 /// Default transaction lock.
@@ -354,7 +364,7 @@ impl Engine<'_> {
         for dir in [scratch, &self.paths.cache] {
             fs::create_dir_all(dir).map_err(|e| BootError::io(dir, e))?;
         }
-        Ok(())
+        seed_pacman_db(scratch)
     }
 
     /// The package phase, or for a rollback the account merge. Returns the
