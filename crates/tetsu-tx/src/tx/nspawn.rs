@@ -13,7 +13,8 @@ pub const DEFAULT_CACHE: &str = "/var/cache/pacman/pkg";
 /// Whether the container can reach the network.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Network {
-    /// Downloads: the host resolver is copied in.
+    /// Downloads: the host resolver is bind-mounted over the snapshot's
+    /// `/etc/resolv.conf` (copying fails on its symlink).
     Online,
     /// Installs: no network at all.
     Offline,
