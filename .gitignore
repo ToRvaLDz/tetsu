@@ -5,3 +5,4 @@
 /target
 .trailhead/uat-backfill
 .trailhead/isolation-answer.json
+.trailhead/auto-run.json
