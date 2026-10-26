@@ -187,11 +187,20 @@ verify_boot() { # POINT
   esac
   say_info "booted snapshot $n after the cut at $point"
   gexec "sudo -n sh -c 'stat -c %n=%s $ESP_DIR/*' | paste -sd,"
-  say_info "ESP after the cut: $GOUT"
+  local esp=$GOUT
+  say_info "ESP after the cut: $esp"
   # An orphan .tmp is allowed by the protocol, even a short one; a committed
   # entry (.efi) of zero bytes is not: the rename follows the sync of the data.
-  check_not "no committed entry on the ESP is zero bytes" '\.efi=0(,|$)' \
-    "sudo -n sh -c 'stat -c %n=%s $ESP_DIR/*' | paste -sd,"
+  # An empty listing (a failed sudo) is a failure, not a pass on nothing.
+  if [ -z "$esp" ]; then
+    fail "$SCENARIO: no committed entry on the ESP is zero bytes" "the ESP listing is empty"
+  elif [ -n "$n" ] && ! LC_ALL=C grep -aEq -- "tetsu-$n(\.efi|\+)" <<<"$esp"; then
+    fail "$SCENARIO: no committed entry on the ESP is zero bytes" "no entry of snapshot $n in: $esp"
+  elif LC_ALL=C grep -aEq -- '\.efi=0(,|$)' <<<"$esp"; then
+    fail "$SCENARIO: no committed entry on the ESP is zero bytes" "got: $esp"
+  else
+    pass "$SCENARIO: no committed entry on the ESP is zero bytes"
+  fi
   [ -n "$n" ] || return 0
   check "the booted snapshot is read-only" 'ro=true' "sudo -n btrfs property get / ro"
   check "the booted entry is a committed one, not a leftover" "^tetsu-$n(\\.efi|\\+[0-9]+(-[0-9]+)?\\.efi)\$" \
