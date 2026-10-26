@@ -5,6 +5,7 @@
 #   tools/vm/tests/install.sh answers paranoid|comfort|balanced
 #   tools/vm/tests/install.sh interactive [comfort|balanced]   (default balanced)
 #   tools/vm/tests/install.sh sb-off
+#   tools/vm/tests/install.sh etc-sync
 #   tools/vm/tests/install.sh all
 #
 # Needs the image (image/build), /dev/kvm, qemu, swtpm, socat, mkfs.ext4,
@@ -519,9 +520,81 @@ scenario_sb_off() {
   stop_vm
 }
 
+# Prime the sudo ticket again: a long step outlives the first one.
+reprime_sudo() {
+  gexec "echo '$USER_PW' | sudo -S -p '' -v 2>&1; echo sudo-primed"
+  assert_contains "$SCENARIO: sudo is primed again" "$GOUT" "sudo-primed"
+}
+
+# First boot and blessing of snapshot 1, a transaction, the user's changes
+# after it, and the first boot of snapshot 2 with those changes carried over.
+scenario_etc_sync() {
+  LEVEL=paranoid
+  setup "etc-sync"
+  echo "== $SCENARIO (work: $WORK)"
+  make_blank_target
+  make_answers_image paranoid "$WORK/answers.img" fat
+  boot_medium "$WORK/answers.img"
+  expect 'answer file is in use' 300
+  wait_installed
+  stop_after_install
+  first_boot paranoid
+
+  # The first boot is blessed and recorded good by the boot check.
+  check "the boot check is active" '^active$' \
+    "for i in \$(seq 1 60); do systemctl is-active tetsu-boot-check && break; sleep 1; done; systemctl is-active tetsu-boot-check" 120
+  check "snapshot 1 is recorded good" '"boot": "good"' \
+    "for i in \$(seq 1 30); do sudo -n grep -q good /var/lib/tetsu/transactions/1.json && break; sleep 1; done; sudo -n cat /var/lib/tetsu/transactions/1.json" 90
+  # The hook is in the initrd the installer built.
+  check "the initrd holds the sync binary" 'usr/bin/tetsu-etc-sync$' \
+    "sudo -n lsinitcpio /usr/lib/tetsu/initrd.img | grep tetsu-etc-sync"
+  check "the initrd holds the sync unit" 'tetsu-etc-sync\.service$' \
+    "sudo -n lsinitcpio /usr/lib/tetsu/initrd.img | grep tetsu-etc-sync"
+
+  # A transaction, then the user's changes made after it.
+  reprime_sudo
+  check "tetsu-tx install tree succeeds" 'install-rc=0' \
+    "sudo -n tetsu-tx install tree >/tmp/tx.log 2>&1; echo install-rc=\$?; tail -n 5 /tmp/tx.log" 1500
+  reprime_sudo
+  gexec "echo SYNC-MARK-42 | sudo -n tee /etc/tetsu-vm-after-tx.conf >/dev/null; echo TETSU_VM=after | sudo -n tee -a /etc/environment >/dev/null; sudo -n useradd vmafter; echo changes-rc=\$?"
+  assert_contains "$SCENARIO: the user's changes are made" "$GOUT" "changes-rc=0"
+  check "the transaction is snapshot 2" 'tetsu-2' "sudo -n ls /efi/EFI/Linux"
+
+  # Boot snapshot 2.
+  reboot_guest
+  boot_to_login
+  login
+  check "snapshot 2 is booted" 'subvol=@snapshots/2/root' "cat /proc/cmdline"
+  check "the user's new file is carried over" 'SYNC-MARK-42' "cat /etc/tetsu-vm-after-tx.conf"
+  check "the user's appended line is carried over" 'TETSU_VM=after' "cat /etc/environment"
+  check "the user's account is carried over" 'uid=[0-9]+\(vmafter\)' "id vmafter"
+  check "the transaction's package is there" 'tree v' "tree --version"
+  check "the initrd ran the sync" 'tetsu-etc-sync: synced' \
+    "sudo -n journalctl -b -u tetsu-etc-sync --no-pager"
+  check "the sync report names the user's file" 'tetsu-vm-after-tx\.conf' \
+    "sudo -n cat /var/lib/tetsu/etc-sync/2/report.json"
+  check "the boot check is active on snapshot 2" '^active$' \
+    "for i in \$(seq 1 60); do systemctl is-active tetsu-boot-check && break; sleep 1; done; systemctl is-active tetsu-boot-check" 120
+  check "snapshot 2 is blessed (no boot counter in its name)" '^tetsu-2\.efi$' \
+    "for i in \$(seq 1 30); do sudo -n ls /efi/EFI/Linux | grep -qx tetsu-2.efi && break; sleep 2; done; sudo -n ls /efi/EFI/Linux" 120
+  check "snapshot 2 is recorded good" '"boot": "good"' \
+    "sudo -n cat /var/lib/tetsu/transactions/2.json"
+
+  # Once more: the marker says the sync is done.
+  reboot_guest
+  boot_to_login
+  login
+  check "snapshot 2 is booted again" 'subvol=@snapshots/2/root' "cat /proc/cmdline"
+  check "the sync is skipped by its marker" 'tetsu-etc-sync: skipped: the marker is present' \
+    "sudo -n journalctl -b -u tetsu-etc-sync --no-pager"
+  check "the user's file is still there" 'SYNC-MARK-42' "cat /etc/tetsu-vm-after-tx.conf"
+  poweroff_guest
+  stop_vm
+}
+
 # ------------------------------------------------------------------ main
 usage() {
-  sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 preflight() {
@@ -547,12 +620,14 @@ main() {
       ;;
     interactive) scenario_interactive "${1:-balanced}" ;;
     sb-off) scenario_sb_off ;;
+    etc-sync) scenario_etc_sync ;;
     all)
       scenario_answers paranoid
       scenario_answers comfort
       scenario_answers balanced
       scenario_interactive balanced
       scenario_sb_off
+      scenario_etc_sync
       ;;
     *) usage; exit 64 ;;
   esac
