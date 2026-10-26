@@ -10,6 +10,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use super::TxError;
+use crate::store::snapshot::PACMAN_DB;
 
 /// The bound package cache inside the scratch `/var`, relative to it.
 const CACHE_REL: &str = "cache/pacman/pkg";
@@ -105,6 +106,12 @@ pub fn covered(path: &str, entries: &[String]) -> bool {
     })
 }
 
+/// Whether `path` is still the seeded link to the pacman DB; anything that
+/// replaced it is state like any other.
+fn is_seeded_link(path: &Path) -> bool {
+    fs::read_link(path).is_ok_and(|target| target == Path::new(PACMAN_DB))
+}
+
 /// Collect the leaves under `dir` (`rel` is its path below the scratch).
 fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), TxError> {
     let mut any = false;
@@ -116,7 +123,7 @@ fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), TxError> {
         } else {
             format!("{rel}/{}", item.file_name().to_string_lossy())
         };
-        if child == PACMAN_LINK_REL {
+        if child == PACMAN_LINK_REL && is_seeded_link(&item.path()) {
             continue;
         }
         let kind = item.file_type().map_err(|e| io_failure(&item.path(), &e))?;
