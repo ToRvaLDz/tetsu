@@ -113,7 +113,7 @@ fn sync_path(path: &std::path::Path) -> Result<(), StoreError> {
 
 /// Delete snapshot `counter`, sealed or partial (an interrupted create):
 /// unseal the root, delete the nested `etc`, the root and `etc-base`, the
-/// markers, then the directory.
+/// markers and the stale nspawn lock, then the directory.
 pub fn delete_snapshot(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Result<(), StoreError> {
     let dir = layout.snapshot_dir(counter);
     match fs::symlink_metadata(&dir) {
@@ -138,6 +138,7 @@ pub fn delete_snapshot(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Resu
     for marker in [
         layout.committed_marker(counter),
         layout.etc_synced_marker(counter),
+        layout.nspawn_lock(counter),
     ] {
         match fs::remove_file(&marker) {
             Ok(()) => {}
