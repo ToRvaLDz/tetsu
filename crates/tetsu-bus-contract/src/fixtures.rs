@@ -6,9 +6,8 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::{
-    Contract, CustomType, Field, Interface, Kind, LoadError, Ty, TypeDef, Variant, Violation,
-};
+use crate::value::{Checker, FIXTURE_KINDS};
+use crate::{Contract, CustomType, Interface, Kind, LoadError, Ty, TypeDef, Violation};
 
 /// One fixture file: its path relative to the fixtures root
 /// (`<interface>/<Type>.<kind>.json`, `/`-separated) and its text.
@@ -125,121 +124,6 @@ fn parse_name(path: &str) -> Option<(String, String)> {
     Some((t.to_string(), kind.to_string()))
 }
 
-struct Checker<'a> {
-    iface: &'a Interface,
-    fixture: &'a str,
-    out: &'a mut Vec<Violation>,
-}
-
-impl Checker<'_> {
-    fn push(&mut self, kind: Kind, detail: String) {
-        self.out.push(Violation::new(kind, self.fixture, detail));
-    }
-
-    fn wrong(&mut self, path: &str, expected: &str, got: &Value) {
-        let got = match got {
-            Value::Null => "null",
-            Value::Bool(_) => "a bool",
-            Value::Number(_) => "a number",
-            Value::String(_) => "a string",
-            Value::Array(_) => "an array",
-            Value::Object(_) => "an object",
-        };
-        self.push(
-            Kind::FixtureWrongType,
-            format!("{path}: expected {expected}, got {got}"),
-        );
-    }
-
-    fn object(&mut self, fields: &[Field], v: &Value, path: &str) {
-        let Value::Object(map) = v else {
-            return self.wrong(path, "an object", v);
-        };
-        for key in map.keys() {
-            if !fields.iter().any(|f| &f.name == key) {
-                self.push(
-                    Kind::FixtureUnknownField,
-                    format!("{}: field not in the IDL", join(path, key)),
-                );
-            }
-        }
-        for f in fields {
-            let fpath = join(path, &f.name);
-            match map.get(&f.name) {
-                Some(value) => self.value(&f.ty, value, &fpath),
-                None if f.ty.is_optional() => {}
-                None => self.push(
-                    Kind::FixtureMissingField,
-                    format!("{fpath}: required field is missing"),
-                ),
-            }
-        }
-    }
-
-    fn value(&mut self, ty: &Ty, v: &Value, path: &str) {
-        match ty {
-            Ty::Bool if !v.is_boolean() => self.wrong(path, "a bool", v),
-            Ty::Int if !v.is_i64() => self.wrong(path, "an int", v),
-            Ty::Float if !v.is_number() => self.wrong(path, "a float", v),
-            Ty::String if !v.is_string() => self.wrong(path, "a string", v),
-            Ty::ForeignObject if !v.is_object() => self.wrong(path, "an object", v),
-            // `any` carries any JSON value; null only where the field is optional.
-            Ty::Any if v.is_null() => self.wrong(path, "a JSON value", v),
-            Ty::Optional(inner) => {
-                if !v.is_null() {
-                    self.value(inner, v, path);
-                }
-            }
-            Ty::Array(inner) => match v {
-                Value::Array(items) => {
-                    for (i, item) in items.iter().enumerate() {
-                        self.value(inner, item, &format!("{path}[{i}]"));
-                    }
-                }
-                _ => self.wrong(path, "an array", v),
-            },
-            Ty::Map(inner) => match v {
-                Value::Object(map) => {
-                    for (k, item) in map {
-                        self.value(inner, item, &join(path, k));
-                    }
-                }
-                _ => self.wrong(path, "an object", v),
-            },
-            Ty::Enum(variants) => self.enum_value(variants, v, path),
-            Ty::Object(fields) => self.object(fields, v, path),
-            Ty::Custom(name) => match self.iface.types.get(name).map(|t| &t.def) {
-                Some(TypeDef::Object(fields)) => self.object(fields, v, path),
-                Some(TypeDef::Enum(variants)) => self.enum_value(variants, v, path),
-                None => self.push(
-                    Kind::FixtureWrongType,
-                    format!("{path}: type {name} is not declared"),
-                ),
-            },
-            _ => {}
-        }
-    }
-
-    fn enum_value(&mut self, variants: &[Variant], v: &Value, path: &str) {
-        match v.as_str() {
-            Some(s) if variants.iter().any(|x| x.name == s) => {}
-            Some(s) => self.push(
-                Kind::FixtureWrongType,
-                format!("{path}: `{s}` is not a declared enum value"),
-            ),
-            None => self.wrong(path, "an enum value (string)", v),
-        }
-    }
-}
-
-fn join(path: &str, name: &str) -> String {
-    if path.is_empty() {
-        name.to_string()
-    } else {
-        format!("{path}.{name}")
-    }
-}
-
 fn check_fixture(
     iface: &Interface,
     type_name: &str,
@@ -280,7 +164,8 @@ fn check_fixture(
     };
     Checker {
         iface,
-        fixture: &f.path,
+        origin: &f.path,
+        kinds: FIXTURE_KINDS,
         out,
     }
     .object(fields, &value, "");

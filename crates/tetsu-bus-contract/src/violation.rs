@@ -38,6 +38,12 @@ pub enum Kind {
     FixtureUnknownField,
     FixtureMissingField,
     FixtureWrongType,
+    // Method replies and errors.
+    UnknownMethod,
+    UnknownError,
+    ReplyUnknownField,
+    ReplyMissingField,
+    ReplyWrongType,
 }
 
 /// One broken rule, with a readable path to the member it is about.

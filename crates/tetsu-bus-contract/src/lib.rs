@@ -10,7 +10,9 @@ mod compat;
 mod fixtures;
 mod load;
 mod model;
+mod replies;
 mod rules;
+mod value;
 mod violation;
 
 pub use bless::{BlessError, bless};
@@ -20,5 +22,6 @@ pub use load::{LoadError, load_dir, read_dir_sources};
 pub use model::{
     Capability, Contract, CustomType, Doc, ErrorDef, Field, Interface, Method, Ty, TypeDef, Variant,
 };
+pub use replies::{check_error, check_reply};
 pub use rules::check_rules;
 pub use violation::{Kind, Violation};
