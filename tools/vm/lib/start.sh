@@ -127,9 +127,14 @@ build_argv() {
   code=$(find_firmware "${TETSU_OVMF_CODE:-}" "OVMF secure boot CODE" "${OVMF_CODE_CANDIDATES[@]}")
   if kvm_usable; then accel=kvm cpu=host; else accel=tcg cpu=max; fi
 
+  # A secure pflash is for the SMM (secboot) build only: with a plain build
+  # every variable write would be dropped and no boot entry would persist.
+  local secure=()
+  case "${code##*/}" in *secboot*) secure=(-global driver=cfi.pflash01,property=secure,value=on) ;; esac
+
   ARGV=(qemu-system-x86_64
     -machine "q35,smm=on,accel=$accel" -cpu "$cpu" -m "$O_MEM" -smp "$O_CPUS"
-    -global driver=cfi.pflash01,property=secure,value=on
+    ${secure[@]+"${secure[@]}"}
     -drive "if=pflash,format=raw,unit=0,readonly=on,file=$(qesc "$code")"
     -drive "if=pflash,format=raw,unit=1,file=$(qesc "$st/vars.fd")"
     -chardev "socket,id=chrtpm,path=$(qesc "$st/swtpm.sock")"
