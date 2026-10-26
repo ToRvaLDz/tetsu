@@ -136,8 +136,23 @@ fn is_package_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "@._+-".contains(c))
 }
 
+/// What pacman warns, per repository, when a sync database was never
+/// fetched (a fresh system: the payload ships the local database only).
+const NO_SYNC_DB: &str = "does not exist (use '-Sy' to download)";
+
+/// The lookup failed because the sync databases are not there: install never
+/// fetches them (no partial upgrade), `update` does.
+fn no_sync_databases(lines: Vec<String>) -> TxError {
+    TxError::Failed {
+        reason: "the package databases have not been fetched yet".into(),
+        proposal: Some("tetsu-tx update, then install again".into()),
+        log: lines,
+    }
+}
+
 /// Check every name against the sync databases: `PackageNotFound` for the
-/// first that does not exist (or is not a package name).
+/// first that does not exist (or is not a package name), an update proposal
+/// when the databases themselves are missing.
 pub fn check_available(runner: &dyn Runner, ns: &Nspawn, pkgs: &[String]) -> Result<(), TxError> {
     if pkgs.is_empty() {
         return Err(TxError::failed("no package given"));
@@ -149,6 +164,9 @@ pub fn check_available(runner: &dyn Runner, ns: &Nspawn, pkgs: &[String]) -> Res
         let args = ns.args(Network::Offline, &["pacman", "-Si", name]);
         match runner.output(PROGRAM, &args) {
             Ok(_) => {}
+            Err(BootError::Tool { stderr, .. }) if stderr.contains(NO_SYNC_DB) => {
+                return Err(no_sync_databases(stderr_lines(&stderr)));
+            }
             Err(BootError::Tool { stderr, .. }) if stderr.contains("was not found") => {
                 return Err(TxError::PackageNotFound(name.clone()));
             }
