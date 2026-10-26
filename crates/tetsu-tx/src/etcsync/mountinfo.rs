@@ -34,7 +34,7 @@ pub fn source_of(mountinfo: &str, mount_point: &str) -> Result<String, SyncError
 }
 
 /// Decode the `\040` style octal escapes of mountinfo fields.
-fn unescape(field: &str) -> String {
+pub(crate) fn unescape(field: &str) -> String {
     let bytes = field.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

@@ -3,6 +3,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::etcsync::mountinfo::unescape;
+
 /// State of `greetd.service`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Greetd {
@@ -25,22 +27,39 @@ pub struct Facts {
 
 /// The mount points in `/proc/self/mountinfo`.
 pub fn mount_points(mountinfo: &str) -> BTreeSet<String> {
-    let _ = mountinfo;
-    BTreeSet::new()
+    mountinfo
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(4))
+        .map(unescape)
+        .collect()
 }
 
 /// The unit names in the output of
 /// `systemctl list-units --state=failed --plain --no-legend`.
 pub fn failed_units(listing: &str) -> Vec<String> {
-    let _ = listing;
-    Vec::new()
+    listing
+        .lines()
+        .filter_map(|line| {
+            line.split_whitespace()
+                .find(|w| !matches!(*w, "●" | "*" | "×"))
+        })
+        .map(str::to_owned)
+        .collect()
 }
 
 /// The state in the output of
 /// `systemctl show -p LoadState,ActiveState greetd.service`.
 pub fn greetd(show: &str) -> Greetd {
-    let _ = show;
-    Greetd::Active
+    let field = |key: &str| {
+        show.lines()
+            .find_map(|l| l.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+    };
+    match (field("LoadState"), field("ActiveState")) {
+        (Some("loaded"), Some("active")) => Greetd::Active,
+        (Some("loaded"), Some(state)) => Greetd::NotActive(state.to_owned()),
+        // Not installed, masked, or output we cannot read.
+        _ => Greetd::NotInstalled,
+    }
 }
 
 #[cfg(test)]

@@ -11,10 +11,11 @@ pub mod facts;
 
 use std::fmt;
 
+use crate::boot::entry::BootState;
 use crate::boot::esp::EspState;
 use crate::store::StoreError;
 use crate::store::record::{BootVerdict, Records};
-use facts::Facts;
+use facts::{Facts, Greetd};
 
 /// A check that failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,8 +37,28 @@ impl fmt::Display for Failure {
 
 /// Run the checks on `facts`; every failure, not only the first.
 pub fn evaluate(facts: &Facts) -> Result<(), Vec<Failure>> {
-    let _ = facts;
-    Ok(())
+    let mut failures = Vec::new();
+    for point in ["/", "/var"] {
+        if !facts.mount_points.contains(point) {
+            failures.push(Failure::NotMounted(point.to_owned()));
+        }
+    }
+    failures.extend(
+        facts
+            .failed_units
+            .iter()
+            .filter(|u| u.starts_with("tetsu-"))
+            .cloned()
+            .map(Failure::UnitFailed),
+    );
+    if let Greetd::NotActive(state) = &facts.greetd {
+        failures.push(Failure::GreetdNotActive(state.clone()));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
+    }
 }
 
 /// Write the verdicts this boot calls for; the counters and verdicts
@@ -50,8 +71,27 @@ pub fn record(
     booted: u64,
     passed: bool,
 ) -> Result<Vec<(u64, BootVerdict)>, StoreError> {
-    let _ = (records, esp, booted, passed);
-    Ok(Vec::new())
+    let all = records.load_or_reconstruct(esp)?;
+    let mut written = Vec::new();
+    for entry in &esp.entries {
+        let counter = entry.name.counter;
+        let exhausted = entry.state() == BootState::Bad;
+        // A boot that passes on its last try is good, not bad.
+        let this_boot = passed && counter == booted;
+        if exhausted && !this_boot && all.get(&counter).is_some_and(|r| r.boot.is_none()) {
+            records.set_boot(counter, BootVerdict::Bad)?;
+            written.push((counter, BootVerdict::Bad));
+        }
+    }
+    if passed
+        && all
+            .get(&booted)
+            .is_none_or(|r| r.boot != Some(BootVerdict::Good))
+    {
+        records.set_boot(booted, BootVerdict::Good)?;
+        written.push((booted, BootVerdict::Good));
+    }
+    Ok(written)
 }
 
 #[cfg(test)]
