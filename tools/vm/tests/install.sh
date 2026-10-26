@@ -377,11 +377,12 @@ scenario_answers() {
   stop_after_install
   first_boot "$level"
   second_boot_checks "$level"
-  # Only the guard is asserted. Past it, tx either commits or stops at the
-  # sync-database lookup that comes right after the guard; a refusal by the
-  # guard, a sudo failure or a crash matches neither.
-  check "tx install gets past the base guard" \
-    'install tree committed as snapshot|package not found: tree' \
+  # A fresh system has no sync databases and install never fetches them (no
+  # partial upgrade): past the base guard, tx either commits or stops at the
+  # lookup and proposes an update. A refusal by the guard, a bare "package
+  # not found", a sudo failure or a crash matches neither.
+  check "tx install passes the guard and proposes an update" \
+    'install tree committed as snapshot|try: tetsu-tx update, then install again' \
     "sudo -n tetsu-tx install tree 2>&1" 600
   poweroff_guest
   stop_vm
