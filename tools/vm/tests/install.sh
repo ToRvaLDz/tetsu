@@ -300,7 +300,6 @@ common_checks() { # LEVEL
   check "the kernel runs from the encrypted root" 'rd.luks.name=.* root=/dev/mapper/root' \
     "cat /proc/cmdline"
   check "the user is in wheel" 'wheel' "id -nG"
-  # (The serial line now and then doubles one byte of guest output, hence no ^.)
   check "the primary group is named after the user" "$USER_NAME\$" "id -gn"
   check "the root account is locked" 'root +L' "sudo -n passwd -S root"
   case "$level" in

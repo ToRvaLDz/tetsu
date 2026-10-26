@@ -161,7 +161,7 @@ tools/vm/tetsu-vm power-cut
 ## Tests
 
 ```sh
-tools/vm/tests/unit.sh          # dry-run command line, wait-for, send, power-cut; no ISO, KVM or QEMU (send tests need socat)
+tools/vm/tests/unit.sh          # dry-run command line, wait-for, send, power-cut; no ISO, KVM or QEMU (send tests need socat and python3)
 tools/vm/fetch-arch-iso         # once
 tools/vm/tests/boot-arch-iso.sh # integration, about a minute
 ```
