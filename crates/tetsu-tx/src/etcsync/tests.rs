@@ -316,7 +316,7 @@ fn a_fifo_is_skipped_and_noted() {
     let t = T::new();
     rustix::fs::mknodat(
         rustix::fs::CWD,
-        &t.root(Old).join("pipe"),
+        t.root(Old).join("pipe"),
         rustix::fs::FileType::Fifo,
         rustix::fs::Mode::from_raw_mode(0o600),
         0,
