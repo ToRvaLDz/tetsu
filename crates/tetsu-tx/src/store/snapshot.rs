@@ -341,6 +341,25 @@ mod tests {
     }
 
     #[test]
+    fn a_stale_nspawn_lock_does_not_block_the_delete() {
+        let (_t, l, b) = setup();
+        sealed(&l, &b, 3);
+        // A power cut after systemd-nspawn created its lock beside the root
+        // and before it unlinked it.
+        fs::write(l.nspawn_lock(3), b"").unwrap();
+        delete_snapshot(&l, &b, 3).unwrap();
+        assert!(!l.snapshot_dir(3).exists());
+    }
+
+    #[test]
+    fn an_unknown_entry_still_blocks_the_delete() {
+        let (_t, l, b) = setup();
+        sealed(&l, &b, 3);
+        fs::write(l.snapshot_dir(3).join("stray"), b"").unwrap();
+        assert!(delete_snapshot(&l, &b, 3).is_err());
+    }
+
+    #[test]
     fn delete_missing_is_not_found() {
         let (_t, l, b) = setup();
         assert!(matches!(
