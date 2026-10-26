@@ -1,0 +1,34 @@
+# The Tetsu base set: a meta-package whose depends are the packages every
+# Tetsu system carries. The payload installs only this package, so pacman
+# resolves the set from here (see image/README.md).
+pkgname=tetsu-base
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Tetsu base system (meta-package)'
+arch=(any)
+url=https://github.com/ToRvaLDz/tetsu
+license=('MIT OR Apache-2.0')
+depends=(
+  base
+  linux
+  intel-ucode
+  amd-ucode
+  systemd
+  systemd-ukify
+  mkinitcpio
+  btrfs-progs
+  cryptsetup
+  tpm2-tss
+  sbsigntools
+  efitools
+  efibootmgr
+  util-linux
+  sudo
+  archlinux-keyring
+  pacman
+  dosfstools
+)
+
+package() {
+  :
+}
