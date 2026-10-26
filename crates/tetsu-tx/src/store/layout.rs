@@ -131,6 +131,10 @@ mod tests {
         assert_eq!(l.root(7), Path::new("/mnt/top/@snapshots/7/root"));
         assert_eq!(l.etc(7), Path::new("/mnt/top/@snapshots/7/root/etc"));
         assert_eq!(l.etc_base(7), Path::new("/mnt/top/@snapshots/7/etc-base"));
+        assert_eq!(
+            l.etc_synced_marker(7),
+            Path::new("/mnt/top/@snapshots/7/etc-synced")
+        );
         assert_eq!(l.shared("@var"), Path::new("/mnt/top/@var"));
     }
 

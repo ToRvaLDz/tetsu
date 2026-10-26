@@ -327,6 +327,16 @@ mod tests {
     }
 
     #[test]
+    fn a_snapshot_holding_the_etc_synced_marker_is_deleted_completely() {
+        let (_t, l, b) = setup();
+        sealed(&l, &b, 3);
+        mark_committed(&l, 3).unwrap();
+        fs::write(l.etc_synced_marker(3), b"").unwrap();
+        delete_snapshot(&l, &b, 3).unwrap();
+        assert!(!l.snapshot_dir(3).exists());
+    }
+
+    #[test]
     fn delete_missing_is_not_found() {
         let (_t, l, b) = setup();
         assert!(matches!(
