@@ -116,6 +116,7 @@ mod tests {
                 "--link-journal=no",
                 "--timezone=off",
                 "--setenv=LC_ALL=C",
+                "--console=pipe",
                 "--bind=/run/tetsu/tx-var-5:/var",
                 "--bind=/var/cache/pacman/pkg:/var/cache/pacman/pkg",
                 "--resolv-conf=bind-host",
@@ -123,6 +124,14 @@ mod tests {
                 "-Syw",
             ]
         );
+    }
+
+    #[test]
+    fn the_console_is_a_pipe_so_stderr_stays_apart() {
+        for net in [Network::Online, Network::Offline] {
+            let args = container().args(net, &["pacman"]);
+            assert!(strs(&args).contains(&"--console=pipe"));
+        }
     }
 
     #[test]
