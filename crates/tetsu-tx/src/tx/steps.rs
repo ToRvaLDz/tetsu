@@ -400,6 +400,13 @@ mod tests {
     }
 
     #[test]
+    fn no_orphans_with_only_the_nspawn_note_is_no_orphans() {
+        let r = ScriptedRunner::new();
+        r.on_tail(&["pacman", "-Qdtq"], Reply::Fail(NSPAWN_NOTE_LINE.into()));
+        assert!(orphans(&r, &ns()).unwrap().is_empty());
+    }
+
+    #[test]
     fn a_real_orphan_query_failure_is_reported() {
         let r = ScriptedRunner::new();
         r.on_tail(
@@ -407,6 +414,17 @@ mod tests {
             Reply::Fail("error: database corrupt".into()),
         );
         assert!(orphans(&r, &ns()).is_err());
+    }
+
+    #[test]
+    fn an_orphan_query_failure_after_the_nspawn_note_is_reported() {
+        let r = ScriptedRunner::new();
+        r.on_tail(
+            &["pacman", "-Qdtq"],
+            Reply::Fail(format!("{NSPAWN_NOTE_LINE}\nerror: database corrupt")),
+        );
+        let err = orphans(&r, &ns()).unwrap_err();
+        assert_eq!(reason(err), "orphan query failed: error: database corrupt");
     }
 
     #[test]
