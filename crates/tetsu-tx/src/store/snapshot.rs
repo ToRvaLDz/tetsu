@@ -112,8 +112,8 @@ fn sync_path(path: &std::path::Path) -> Result<(), StoreError> {
 }
 
 /// Delete snapshot `counter`, sealed or partial (an interrupted create):
-/// unseal the root, delete the nested `etc`, the root and `etc-base`, then
-/// the directory.
+/// unseal the root, delete the nested `etc`, the root and `etc-base`, the
+/// markers, then the directory.
 pub fn delete_snapshot(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Result<(), StoreError> {
     let dir = layout.snapshot_dir(counter);
     match fs::symlink_metadata(&dir) {
@@ -135,11 +135,15 @@ pub fn delete_snapshot(layout: &Layout, btrfs: &dyn Btrfs, counter: u64) -> Resu
     if btrfs.is_subvolume(&base)? {
         btrfs.delete(&base)?;
     }
-    let marker = layout.committed_marker(counter);
-    match fs::remove_file(&marker) {
-        Ok(()) => {}
-        Err(e) if e.kind() == ErrorKind::NotFound => {}
-        Err(e) => return Err(StoreError::io(&marker, e)),
+    for marker in [
+        layout.committed_marker(counter),
+        layout.etc_synced_marker(counter),
+    ] {
+        match fs::remove_file(&marker) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(StoreError::io(&marker, e)),
+        }
     }
     fs::remove_dir(&dir).map_err(|e| StoreError::io(&dir, e))
 }

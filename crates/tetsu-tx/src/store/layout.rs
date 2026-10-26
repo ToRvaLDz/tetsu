@@ -4,6 +4,7 @@
 //! * `@snapshots/<n>/root/etc`   nested writable subvolume
 //! * `@snapshots/<n>/etc-base`   read-only base of the `/etc` merge
 //! * `@snapshots/<n>/committed`  marker: the UKI is committed on the ESP
+//! * `@snapshots/<n>/etc-synced` marker: the first-boot `/etc` sync is done
 //! * `@var`, `@home`, `@root`, `@swap`   shared, outside every snapshot
 
 use std::fs;
@@ -18,6 +19,10 @@ pub const SNAPSHOTS: &str = "@snapshots";
 
 /// File name of the commit marker in a snapshot directory.
 pub const COMMITTED: &str = "committed";
+
+/// File name of the marker the first-boot `/etc` sync leaves in a snapshot
+/// directory, outside the snapshot root so no later snapshot inherits it.
+pub const ETC_SYNCED: &str = "etc-synced";
 
 /// Shared subvolumes, outside every snapshot.
 pub const SHARED: [&str; 4] = ["@var", "@home", "@root", "@swap"];
@@ -62,6 +67,12 @@ impl Layout {
     /// Marker written once the snapshot's UKI is committed on the ESP.
     pub fn committed_marker(&self, counter: u64) -> PathBuf {
         self.snapshot_dir(counter).join(COMMITTED)
+    }
+
+    /// Marker written once the first-boot `/etc` sync of the snapshot is
+    /// complete.
+    pub fn etc_synced_marker(&self, counter: u64) -> PathBuf {
+        self.snapshot_dir(counter).join(ETC_SYNCED)
     }
 
     pub fn is_committed(&self, counter: u64) -> bool {
