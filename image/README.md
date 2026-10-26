@@ -44,9 +44,7 @@ on an up-to-date Arch host.
 ## Payload
 
 The base set is the `depends` of the `tetsu-base` meta-package, in
-`image/tetsu-base/PKGBUILD` (`base linux intel-ucode amd-ucode systemd
-systemd-ukify mkinitcpio btrfs-progs cryptsetup tpm2-tss sbsigntools efitools
-efibootmgr util-linux sudo archlinux-keyring pacman dosfstools`), plus
+`image/tetsu-base/PKGBUILD` (the list lives there only), plus
 `/usr/bin/{tetsu-tx,tetsu,tetsu-unlock-seal,tetsu-secrets}`. The payload's
 `Packages=` names only `tetsu-base`, so the set is defined in one place;
 `image/tests/tetsu-base.sh` pins that shape.
