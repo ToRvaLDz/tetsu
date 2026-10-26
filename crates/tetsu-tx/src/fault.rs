@@ -98,6 +98,11 @@ pub fn armed_from(value: Option<&str>) -> Result<Option<Point>, String> {
 /// Wait at `point` when it is the `armed` one: write `file` with the name,
 /// say so on stderr, and poll until the file is gone.
 pub fn pause_at(point: Point, armed: Option<Point>, file: &Path) {
+    pause_with(point, armed, file, &mut |line| eprintln!("{line}"));
+}
+
+/// [`pause_at`] with the log lines going to `say`.
+fn pause_with(point: Point, armed: Option<Point>, file: &Path, say: &mut dyn FnMut(&str)) {
     if armed != Some(point) {
         return;
     }
@@ -106,10 +111,10 @@ pub fn pause_at(point: Point, armed: Option<Point>, file: &Path) {
     }
     if let Err(e) = fs::write(file, format!("{}\n", point.name())) {
         // Without the file nobody can release the wait: go on.
-        eprintln!("tetsu-tx: cannot write {}: {e}", file.display());
+        say(&format!("tetsu-tx: cannot write {}: {e}", file.display()));
         return;
     }
-    eprintln!("tetsu-tx: paused at {}", point.name());
+    say(&format!("tetsu-tx: paused at {}", point.name()));
     while file.exists() {
         thread::sleep(POLL);
     }
@@ -209,5 +214,37 @@ mod tests {
         assert!(!waiter.is_finished());
         fs::remove_file(&file).unwrap();
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn the_log_line_comes_before_the_file_that_releases_the_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("paused-at");
+        // The file is the handle the harness reacts to: the line must be out
+        // by the time it exists, and removing it is what ends the wait.
+        let mut lines = Vec::new();
+        let mut file_existed_at_say = None;
+        let probe = file.clone();
+        pause_with(Point::Renamed, Some(Point::Renamed), &file, &mut |l| {
+            file_existed_at_say = Some(probe.exists());
+            lines.push(l.to_owned());
+            let _ = fs::remove_file(&probe);
+        });
+        assert_eq!(lines, ["tetsu-tx: paused at renamed"]);
+        assert_eq!(file_existed_at_say, Some(false));
+    }
+
+    #[test]
+    fn a_pause_file_that_cannot_be_written_is_reported_and_the_wait_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        // The name is taken by a directory: the write fails.
+        let file = dir.path().join("paused-at");
+        fs::create_dir(&file).unwrap();
+        let mut lines = Vec::new();
+        pause_with(Point::Renamed, Some(Point::Renamed), &file, &mut |l| {
+            lines.push(l.to_owned())
+        });
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("tetsu-tx: cannot write "), "{lines:?}");
     }
 }
