@@ -551,10 +551,12 @@ scenario_etc_sync() {
   check "the initrd holds the sync unit" 'tetsu-etc-sync\.service$' \
     "sudo -n lsinitcpio /usr/lib/tetsu/initrd.img | grep tetsu-etc-sync"
 
-  # A transaction, then the user's changes made after it.
+  # A transaction, then the user's changes made after it. An update, not an
+  # install: a fresh system has no sync databases and install never fetches
+  # them (no partial upgrade), while update does and always commits.
   reprime_sudo
-  check "tetsu-tx install tree succeeds" 'install-rc=0' \
-    "sudo -n tetsu-tx install tree >/tmp/tx.log 2>&1; echo install-rc=\$?; tail -n 5 /tmp/tx.log" 1500
+  check "tetsu-tx update succeeds" 'update-rc=0' \
+    "sudo -n tetsu-tx update >/tmp/tx.log 2>&1; echo update-rc=\$?; tail -n 5 /tmp/tx.log" 1500
   reprime_sudo
   gexec "echo SYNC-MARK-42 | sudo -n tee /etc/tetsu-vm-after-tx.conf >/dev/null; echo TETSU_VM=after | sudo -n tee -a /etc/environment >/dev/null; sudo -n useradd vmafter; echo changes-rc=\$?"
   assert_contains "$SCENARIO: the user's changes are made" "$GOUT" "changes-rc=0"
@@ -568,7 +570,8 @@ scenario_etc_sync() {
   check "the user's new file is carried over" 'SYNC-MARK-42' "cat /etc/tetsu-vm-after-tx.conf"
   check "the user's appended line is carried over" 'TETSU_VM=after' "cat /etc/environment"
   check "the user's account is carried over" 'uid=[0-9]+\(vmafter\)' "id vmafter"
-  check "the transaction's package is there" 'tree v' "tree --version"
+  check "snapshot 2 is the update" '"kind": "update"' \
+    "sudo -n cat /var/lib/tetsu/transactions/2.json"
   check "the initrd ran the sync" 'tetsu-etc-sync: synced' \
     "sudo -n journalctl -b -u tetsu-etc-sync --no-pager"
   check "the sync report names the user's file" 'tetsu-vm-after-tx\.conf' \
