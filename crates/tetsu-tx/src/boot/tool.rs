@@ -64,13 +64,25 @@ impl SystemRunner {
         Self { own_group: true }
     }
 
-    fn command(&self, program: &str, args: &[OsString]) -> Command {
+    fn command(&self, program: &str, args: &[OsString], env: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new(program);
-        cmd.args(args);
+        cmd.args(args).envs(env.iter().copied());
         if self.own_group {
             cmd.process_group(0);
         }
         cmd
+    }
+
+    /// Like [`Runner::output`], with extra environment variables, so a
+    /// secret reaches the tool without sitting in argv. Values are never
+    /// part of an error.
+    pub fn output_env(
+        &self,
+        program: &str,
+        args: &[OsString],
+        env: &[(&str, &str)],
+    ) -> Result<String, BootError> {
+        self.capture(program, args, env, None)
     }
 
     /// Run `program` and return its stdout, or the mapped failure. `stdin`
@@ -79,9 +91,10 @@ impl SystemRunner {
         &self,
         program: &str,
         args: &[OsString],
+        env: &[(&str, &str)],
         stdin: Option<&[u8]>,
     ) -> Result<String, BootError> {
-        let mut cmd = self.command(program, args);
+        let mut cmd = self.command(program, args, env);
         let out = match stdin {
             None => cmd.output(),
             Some(bytes) => Self::output_with_stdin(&mut cmd, bytes),
@@ -127,11 +140,11 @@ impl SystemRunner {
 
 impl Runner for SystemRunner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
-        self.capture(program, args, None).map(drop)
+        self.capture(program, args, &[], None).map(drop)
     }
 
     fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
-        self.capture(program, args, None)
+        self.capture(program, args, &[], None)
     }
 
     fn output_stdin(
@@ -140,7 +153,7 @@ impl Runner for SystemRunner {
         args: &[OsString],
         stdin: &[u8],
     ) -> Result<String, BootError> {
-        self.capture(program, args, Some(stdin))
+        self.capture(program, args, &[], Some(stdin))
     }
 
     fn check_tool(&self, program: &str) -> Result<(), BootError> {
@@ -301,6 +314,44 @@ mod tests {
             .output_stdin("sh", &args, b"x")
             .unwrap();
         assert_ne!(ours, pgrp(&out));
+    }
+
+    #[test]
+    fn env_vars_reach_the_tool() {
+        let args = ["-c".into(), "printf %s \"$X\"".into()];
+        let out = SystemRunner::new()
+            .output_env("sh", &args, &[("X", "v4lue")])
+            .unwrap();
+        assert_eq!(out, "v4lue");
+    }
+
+    #[test]
+    fn env_runs_honour_the_own_group_option() {
+        let ours = pgrp(&std::fs::read_to_string("/proc/self/stat").unwrap());
+        let args = ["-c".into(), "cat /proc/$$/stat".into()];
+        let alone = SystemRunner::own_group()
+            .output_env("sh", &args, &[("X", "1")])
+            .unwrap();
+        let pid: u32 = alone.split_whitespace().next().unwrap().parse().unwrap();
+        assert_eq!(pgrp(&alone), pid);
+        let same = SystemRunner::new()
+            .output_env("sh", &args, &[("X", "1")])
+            .unwrap();
+        assert_eq!(pgrp(&same), ours);
+    }
+
+    #[test]
+    fn env_failures_map_without_leaking_the_env() {
+        let args = ["-c".into(), "echo boom >&2; exit 3".into()];
+        let err = SystemRunner::new()
+            .output_env("sh", &args, &[("NEWPIN", "s3cret-pin")])
+            .unwrap_err();
+        assert!(matches!(err, BootError::Tool { .. }));
+        assert!(!format!("{err} {err:?}").contains("s3cret-pin"));
+        assert!(matches!(
+            SystemRunner::new().output_env("tetsu-no-such-tool-xyz", &[], &[("K", "s3cret-pin")]),
+            Err(BootError::ToolMissing { .. })
+        ));
     }
 
     #[test]

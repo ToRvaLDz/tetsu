@@ -3,8 +3,6 @@
 //! argv.
 
 use std::ffi::OsString;
-use std::io::ErrorKind;
-use std::process::Command;
 
 use tetsu_tx::boot::BootError;
 use tetsu_tx::boot::tool::{Runner, SystemRunner};
@@ -26,30 +24,7 @@ impl SealRunner for SystemRunner {
         args: &[OsString],
         env: &[(&str, &str)],
     ) -> Result<(), BootError> {
-        let out = Command::new(program)
-            .args(args)
-            .envs(env.iter().copied())
-            .output()
-            .map_err(|e| {
-                if e.kind() == ErrorKind::NotFound {
-                    BootError::ToolMissing {
-                        tool: program.to_owned(),
-                    }
-                } else {
-                    BootError::Io {
-                        path: program.into(),
-                        source: e,
-                    }
-                }
-            })?;
-        if out.status.success() {
-            return Ok(());
-        }
-        Err(BootError::Tool {
-            tool: program.to_owned(),
-            status: out.status.to_string(),
-            stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
-        })
+        self.output_env(program, args, env).map(drop)
     }
 }
 
