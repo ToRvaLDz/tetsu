@@ -793,3 +793,54 @@ fn an_mbr_tetsu_entry_is_neither_deleted_nor_reused() {
     assert!(efi.iter().any(|l| l.starts_with("efibootmgr --create")));
     assert_eq!(efi.last().unwrap(), "efibootmgr --bootorder 0003,0002,0001");
 }
+
+/// A Tetsu entry on the new ESP, with the active mark and loader of the test.
+fn entry_with(num: &str, mark: char, loader: &str) -> String {
+    format!("Boot{num}{mark} Tetsu\tHD(1,GPT,{ESP_PARTUUID},0x800,0x400000)/File({loader})\n")
+}
+
+/// The run with `before` as the listing, and a fresh entry 0002 after
+/// `--create`; the `efibootmgr` calls it made.
+fn same_esp_run(stale: String) -> Vec<String> {
+    let before = format!(
+        "BootOrder: 0001,0002\n{}{stale}",
+        entry("0001", "Fedora", OTHER_DISK)
+    );
+    let after = format!(
+        "BootOrder: 0002,0001\n{}{}",
+        entry("0001", "Fedora", OTHER_DISK),
+        entry("0002", "Tetsu", ESP_PARTUUID)
+    );
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        firmware(before, after, &[ESP_PARTUUID, OTHER_DISK]),
+    );
+    run.out.result.as_ref().unwrap();
+    efibootmgr_lines(&run)
+}
+
+#[test]
+fn an_inactive_entry_on_the_new_esp_is_removed_and_recreated() {
+    let efi = same_esp_run(entry_with("0002", ' ', r"\EFI\systemd\systemd-bootx64.efi"));
+    assert_eq!(efi.len(), 4, "{efi:?}");
+    assert_eq!(efi[1], "efibootmgr -B -b 0002");
+    assert!(efi[2].starts_with("efibootmgr --create"));
+    assert_eq!(efi[3], "efibootmgr --bootorder 0002,0001");
+}
+
+#[test]
+fn an_entry_on_the_new_esp_with_another_loader_is_removed_and_recreated() {
+    let efi = same_esp_run(entry_with("0002", '*', r"\EFI\BOOT\BOOTX64.EFI"));
+    assert_eq!(efi.len(), 4, "{efi:?}");
+    assert_eq!(efi[1], "efibootmgr -B -b 0002");
+    assert!(efi[2].starts_with("efibootmgr --create"));
+}
+
+#[test]
+fn an_active_entry_with_the_loader_spelled_differently_is_reused() {
+    let efi = same_esp_run(entry_with("0002", '*', "/EFI/SYSTEMD/SYSTEMD-BOOTX64.EFI"));
+    assert_eq!(efi.len(), 2, "{efi:?}");
+    assert_eq!(efi[1], "efibootmgr --bootorder 0002,0001");
+}
