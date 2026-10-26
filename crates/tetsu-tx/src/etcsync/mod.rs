@@ -19,5 +19,34 @@
 //! Sockets, FIFOs and devices are skipped and noted. Extended attributes,
 //! ACLs and times are not compared.
 
+pub mod apply;
 pub mod node;
 pub mod plan;
+
+#[cfg(test)]
+mod tests;
+
+use std::io;
+use std::path::{Path, PathBuf};
+
+use thiserror::Error;
+
+/// Why a sync could not finish.
+#[derive(Debug, Error)]
+pub enum SyncError {
+    #[error("{}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
+
+impl SyncError {
+    pub fn io(path: &Path, source: io::Error) -> Self {
+        Self::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}

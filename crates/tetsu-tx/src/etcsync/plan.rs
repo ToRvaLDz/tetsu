@@ -1,10 +1,13 @@
 //! The per-path decision of the three-way `/etc` sync. Pure: it looks at
 //! three [`Node`]s and says what to do.
 
+use serde::{Deserialize, Serialize};
+
 use super::node::{Kind, Node, same};
 
 /// Why a path is reported as a conflict.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConflictKind {
     /// Both sides changed it, differently.
     BothChanged,
