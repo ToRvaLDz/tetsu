@@ -30,6 +30,8 @@ pub const LUKS_UUID: &str = "0b9c7f3e-1111-4222-8333-444455556666";
 pub const KERNEL: &str = "6.12.1-arch1-1";
 pub const FIRMWARE_BEFORE: &str =
     "BootCurrent: 0001\nBootOrder: 0001,0000\nBoot0000* Windows\nBoot0001* Fedora\n";
+/// The PARTUUID of the target's new ESP.
+pub const ESP_PARTUUID: &str = "11111111-2222-4333-8444-555555555555";
 pub const FIRMWARE_AFTER: &str = "BootCurrent: 0001\nBootOrder: 0002,0001,0000\nBoot0000* Windows\nBoot0001* Fedora\nBoot0002* Tetsu\n";
 
 pub fn answers(level: UnlockLevel) -> Answers {
@@ -77,6 +79,10 @@ pub struct Machine {
     pub seen: RefCell<Vec<Seen>>,
     /// `efibootmgr` output before and after `--create`.
     pub boot_output: RefCell<(String, String)>,
+    /// PARTUUID `blkid` reports for the new ESP.
+    pub esp_partuuid: RefCell<String>,
+    /// PARTUUIDs `lsblk` lists: every partition present on the machine.
+    pub present_partuuids: RefCell<Vec<String>>,
     /// A call whose joined line starts with one of these fails.
     pub fail: RefCell<Vec<String>>,
     /// A call whose joined line contains one of these fails.
@@ -94,6 +100,8 @@ impl Machine {
             fail: RefCell::default(),
             fail_containing: RefCell::default(),
             missing: RefCell::default(),
+            esp_partuuid: RefCell::new(ESP_PARTUUID.to_owned()),
+            present_partuuids: RefCell::new(vec![ESP_PARTUUID.to_owned()]),
             boot_output: RefCell::new((FIRMWARE_BEFORE.to_owned(), FIRMWARE_AFTER.to_owned())),
         }
     }
@@ -168,7 +176,11 @@ impl Machine {
             "cert-to-efi-sig-list" | "sign-efi-sig-list" => {
                 Self::write(args.last().unwrap(), program);
             }
-            "efibootmgr" if args.is_empty() => return self.boot_output.borrow().0.clone(),
+            "blkid" => return format!("{}\n", self.esp_partuuid.borrow()),
+            "lsblk" => return self.present_partuuids.borrow().join("\n") + "\n",
+            "efibootmgr" if args.is_empty() || args == ["-v"] => {
+                return self.boot_output.borrow().0.clone();
+            }
             "efibootmgr" if args.first().map(String::as_str) == Some("--create") => {
                 return self.boot_output.borrow().1.clone();
             }

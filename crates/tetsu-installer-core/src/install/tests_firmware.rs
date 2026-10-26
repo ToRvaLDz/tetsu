@@ -12,7 +12,7 @@ use crate::secret::Secret;
 use crate::secureboot::MicrosoftCerts;
 use crate::unlock::UnlockLevel;
 
-use super::fake::{Outcome, answers, run_plan, run_with, target};
+use super::fake::{ESP_PARTUUID, Outcome, answers, run_plan, run_with, target};
 use super::plan::InstallPlan;
 
 const NEVER: &dyn Fn() -> bool = &|| false;
@@ -600,5 +600,167 @@ fn run_plan_with_a_cancelled_flag_stops_in_stage_three() {
             .lines()
             .iter()
             .all(|l| !l.starts_with("efibootmgr --bootorder"))
+    );
+}
+
+// ---- stale and reused boot entries (#50)
+
+const OTHER_DISK: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const DEAD_DISK: &str = "deadbeef-0000-4000-8000-000000000000";
+
+/// A `efibootmgr -v` line the way the tool prints it.
+fn entry(num: &str, label: &str, guid: &str) -> String {
+    format!(
+        "Boot{num}* {label}\tHD(1,GPT,{guid},0x800,0x400000)/File(\\EFI\\systemd\\systemd-bootx64.efi)\n"
+    )
+}
+
+/// A firmware with these listings around `--create`, and these partitions.
+fn firmware(before: String, after: String, present: &[&str]) -> impl FnOnce(&super::fake::Machine) {
+    let present: Vec<String> = present.iter().map(|p| (*p).to_owned()).collect();
+    move |m| {
+        *m.boot_output.borrow_mut() = (before, after);
+        *m.present_partuuids.borrow_mut() = present;
+    }
+}
+
+fn efibootmgr_lines(run: &Run) -> Vec<String> {
+    run.lines()
+        .into_iter()
+        .filter(|l| l.starts_with("efibootmgr"))
+        .collect()
+}
+
+#[test]
+fn a_dead_tetsu_entry_is_removed_before_the_new_one_is_created() {
+    let before = format!(
+        "BootOrder: 0003,0001\n{}{}",
+        entry("0003", "Tetsu", DEAD_DISK),
+        entry("0001", "Fedora", OTHER_DISK)
+    );
+    // The firmware hands the freed number out again.
+    let after = format!(
+        "BootOrder: 0003,0001\n{}{}",
+        entry("0003", "Tetsu", ESP_PARTUUID),
+        entry("0001", "Fedora", OTHER_DISK)
+    );
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        firmware(before, after, &[ESP_PARTUUID, OTHER_DISK]),
+    );
+    run.out.result.as_ref().unwrap();
+    let efi = efibootmgr_lines(&run);
+    assert_eq!(efi.len(), 4, "{efi:?}");
+    assert_eq!(efi[1], "efibootmgr -B -b 0003");
+    assert!(efi[2].starts_with("efibootmgr --create"));
+    assert_eq!(efi[3], "efibootmgr --bootorder 0003,0001");
+    assert!(warnings(&run).iter().all(|w| !w.contains("stale")));
+}
+
+#[test]
+fn an_entry_for_the_new_esp_is_reused() {
+    let before = format!(
+        "BootOrder: 0001,0002\n{}{}",
+        entry("0001", "Fedora", OTHER_DISK),
+        entry("0002", "Tetsu", &ESP_PARTUUID.to_uppercase())
+    );
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        firmware(before, String::new(), &[ESP_PARTUUID, OTHER_DISK]),
+    );
+    run.out.result.as_ref().unwrap();
+    let efi = efibootmgr_lines(&run);
+    assert_eq!(efi.len(), 2, "{efi:?}");
+    assert_eq!(efi[1], "efibootmgr --bootorder 0002,0001");
+}
+
+#[test]
+fn a_tetsu_entry_on_another_present_disk_is_left_alone() {
+    let before = format!(
+        "BootOrder: 0002,0001\n{}{}",
+        entry("0002", "Tetsu", OTHER_DISK),
+        entry("0001", "Fedora", OTHER_DISK)
+    );
+    let after = format!(
+        "BootOrder: 0003,0002,0001\n{}{}{}",
+        entry("0002", "Tetsu", OTHER_DISK),
+        entry("0001", "Fedora", OTHER_DISK),
+        entry("0003", "Tetsu", ESP_PARTUUID)
+    );
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        firmware(before, after, &[ESP_PARTUUID, OTHER_DISK]),
+    );
+    run.out.result.as_ref().unwrap();
+    let efi = efibootmgr_lines(&run);
+    assert!(
+        efi.iter().all(|l| !l.starts_with("efibootmgr -B")),
+        "{efi:?}"
+    );
+    assert_eq!(efi.last().unwrap(), "efibootmgr --bootorder 0003,0002,0001");
+}
+
+#[test]
+fn a_failed_removal_warns_and_the_entry_is_created_anyway() {
+    let before = format!(
+        "BootOrder: 0003,0001\n{}{}",
+        entry("0003", "Tetsu", DEAD_DISK),
+        entry("0001", "Fedora", OTHER_DISK)
+    );
+    let after = format!(
+        "BootOrder: 0004,0003,0001\n{}{}{}",
+        entry("0003", "Tetsu", DEAD_DISK),
+        entry("0001", "Fedora", OTHER_DISK),
+        entry("0004", "Tetsu", ESP_PARTUUID)
+    );
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        |m| {
+            firmware(before, after, &[ESP_PARTUUID, OTHER_DISK])(m);
+            m.fail_on("efibootmgr -B");
+        },
+    );
+    run.out.result.as_ref().unwrap();
+    assert!(
+        warnings(&run)
+            .iter()
+            .any(|w| w.contains("stale") && w.contains("0003")),
+        "{:?}",
+        warnings(&run)
+    );
+    assert_eq!(
+        efibootmgr_lines(&run).last().unwrap(),
+        "efibootmgr --bootorder 0004,0003,0001"
+    );
+}
+
+#[test]
+fn nothing_is_removed_when_the_partition_list_cannot_vouch_for_the_new_esp() {
+    let before = format!("BootOrder: 0003\n{}", entry("0003", "Tetsu", DEAD_DISK));
+    let after = format!(
+        "BootOrder: 0004,0003\n{}{}",
+        entry("0003", "Tetsu", DEAD_DISK),
+        entry("0004", "Tetsu", ESP_PARTUUID)
+    );
+    // No partition listed at all: every entry would look dead.
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        firmware(before, after, &[]),
+    );
+    run.out.result.as_ref().unwrap();
+    assert!(
+        efibootmgr_lines(&run)
+            .iter()
+            .all(|l| !l.starts_with("efibootmgr -B"))
     );
 }
