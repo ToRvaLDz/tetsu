@@ -445,6 +445,7 @@ mod tests {
             proc,
             esp,
             records: dir.path().join("transactions"),
+            lock: dir.path().join("run/tetsu/tx.lock"),
         };
         Records::new(&paths.records).write(&rec(2, None)).unwrap();
         Sys { _dir: dir, paths }
@@ -540,5 +541,22 @@ mod tests {
         let report = run(&s.paths, &ScriptedRunner::new());
         assert!(report.failures.is_empty() && report.written.is_empty());
         assert_eq!(report.warnings.len(), 1);
+    }
+
+    #[test]
+    fn a_running_transaction_defers_the_verdict_not_the_health() {
+        let s = sys("+2-1");
+        let _held = crate::store::lock::TxLock::acquire(&s.paths.lock).unwrap();
+        let runner = ScriptedRunner::new();
+        runner.on(
+            &["systemctl", "show"],
+            Reply::Out("LoadState=not-found\n".into()),
+        );
+        let report = run(&s.paths, &runner);
+        assert!(report.failures.is_empty(), "{report:?}");
+        assert!(report.written.is_empty());
+        assert!(report.warnings[0].contains("transaction"), "{report:?}");
+        let rec = Records::new(&s.paths.records).load().unwrap();
+        assert_eq!(rec[&2].boot, None);
     }
 }
