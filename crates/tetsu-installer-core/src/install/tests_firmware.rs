@@ -764,3 +764,32 @@ fn nothing_is_removed_when_the_partition_list_cannot_vouch_for_the_new_esp() {
             .all(|l| !l.starts_with("efibootmgr -B"))
     );
 }
+
+#[test]
+fn an_mbr_tetsu_entry_is_neither_deleted_nor_reused() {
+    // `HD(1,MBR,<sig>,...)`: its third field is a disk signature, not a GUID.
+    let mbr = "Boot0002* Tetsu\tHD(1,MBR,0x1234abcd,0x800,0x400000)/File(\\EFI\\systemd\\systemd-bootx64.efi)\n";
+    let before = format!(
+        "BootOrder: 0002,0001\n{mbr}{}",
+        entry("0001", "Fedora", OTHER_DISK)
+    );
+    let after = format!(
+        "BootOrder: 0003,0002,0001\n{mbr}{}{}",
+        entry("0001", "Fedora", OTHER_DISK),
+        entry("0003", "Tetsu", ESP_PARTUUID)
+    );
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::Off,
+        |_, _| {},
+        firmware(before, after, &[ESP_PARTUUID, OTHER_DISK]),
+    );
+    run.out.result.as_ref().unwrap();
+    let efi = efibootmgr_lines(&run);
+    assert!(
+        efi.iter().all(|l| !l.starts_with("efibootmgr -B")),
+        "{efi:?}"
+    );
+    assert!(efi.iter().any(|l| l.starts_with("efibootmgr --create")));
+    assert_eq!(efi.last().unwrap(), "efibootmgr --bootorder 0003,0002,0001");
+}
