@@ -23,6 +23,8 @@ use crate::store::record::{Record, Records, TxKind};
 use crate::store::{Begun, Store, snapshot};
 
 mod packages;
+#[cfg(test)]
+mod progress_tests;
 mod rollback;
 #[cfg(test)]
 mod tests;

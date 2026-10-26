@@ -15,7 +15,7 @@ use crate::store::lock::TxLock;
 use crate::store::record::{BootVerdict, Record};
 use crate::tx::fake::{Reply, ScriptedRunner};
 
-const QI: &str = "\
+pub(super) const QI: &str = "\
 Name            : tetsu-base
 Version         : 1-1
 Depends On      : bash
@@ -51,16 +51,16 @@ struct State {
     records: Vec<String>,
 }
 
-struct Env {
+pub(super) struct Env {
     _tmp: tempfile::TempDir,
     layout: Layout,
     records: Records,
     esp: Esp,
     btrfs: FakeBtrfs,
-    lock: PathBuf,
+    pub(super) lock: PathBuf,
     run_dir: PathBuf,
     cache: PathBuf,
-    runner: ScriptedRunner,
+    pub(super) runner: ScriptedRunner,
     booted: u64,
     clock: Box<dyn Fn() -> u64>,
     /// Runs when the fake ukify has written its output.
@@ -90,7 +90,7 @@ fn container_scratch(line: &[String]) -> PathBuf {
 impl Env {
     /// Snapshot 1 booted and blessed good; `qi` and `after` are what the
     /// host queries before and after the package phase.
-    fn with(qi: &str, after: &str) -> Self {
+    pub(super) fn with(qi: &str, after: &str) -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let top = tmp.path().join("top");
         fs::create_dir(&top).unwrap();
@@ -139,7 +139,7 @@ impl Env {
         env
     }
 
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::with(QI, AFTER)
     }
 
@@ -170,7 +170,7 @@ impl Env {
     }
 
     /// Snapshot 1 and a booted snapshot 2 that has a user account.
-    fn two_snapshots() -> Self {
+    pub(super) fn two_snapshots() -> Self {
         let mut env = Self::new();
         env.add_snapshot(
             2,
@@ -180,7 +180,7 @@ impl Env {
         env
     }
 
-    fn engine<'a>(&'a self, runner: &'a dyn Runner) -> Engine<'a> {
+    pub(super) fn engine<'a>(&'a self, runner: &'a dyn Runner) -> Engine<'a> {
         Engine {
             layout: self.layout.clone(),
             records: self.records.clone(),
@@ -205,7 +205,7 @@ impl Env {
         }
     }
 
-    fn run(&self, request: &Request) -> Result<Report, TxError> {
+    pub(super) fn run(&self, request: &Request) -> Result<Report, TxError> {
         self.engine(&self.runner).run(request)
     }
 
@@ -235,7 +235,7 @@ impl Env {
             .collect()
     }
 
-    fn record(&self, n: u64) -> Record {
+    pub(super) fn record(&self, n: u64) -> Record {
         self.records.load().unwrap().remove(&n).unwrap()
     }
 
@@ -255,7 +255,7 @@ impl Env {
     }
 }
 
-fn pkgs(names: &[&str]) -> Vec<String> {
+pub(super) fn pkgs(names: &[&str]) -> Vec<String> {
     names.iter().map(|s| (*s).to_owned()).collect()
 }
 
