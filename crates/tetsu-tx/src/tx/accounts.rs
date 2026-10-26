@@ -3,6 +3,12 @@
 //! the accounts the user made. Pure text; the first-boot sync reuses it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
+
+use crate::boot::BootError;
+use crate::tx::TxError;
 
 /// The account files that are merged, relative to `/etc`.
 pub const ACCOUNT_FILES: [&str; 4] = ["passwd", "group", "shadow", "gshadow"];
@@ -34,6 +40,41 @@ pub fn merge(target: &str, running: &str) -> String {
         }
     }
     out
+}
+
+/// A regular file's text; `None` when missing, a failure for a symlink or
+/// anything that is not a regular file.
+pub fn read_regular(path: &Path) -> Result<Option<String>, TxError> {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_file() => {}
+        Ok(_) => {
+            return Err(TxError::failed(format!(
+                "{} is not a regular file",
+                path.display()
+            )));
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(BootError::io(path, e).into()),
+    }
+    fs::read_to_string(path)
+        .map(Some)
+        .map_err(|e| BootError::io(path, e).into())
+}
+
+/// Carry one account file over: merge `running` into `target`, the running
+/// side wins on a shared key. Nothing happens when `running` is missing; a
+/// missing `target` is copied whole, mode included.
+pub fn merge_file(running: &Path, target: &Path) -> Result<(), TxError> {
+    let Some(running_text) = read_regular(running)? else {
+        return Ok(());
+    };
+    // Writing in place keeps the mode of the target.
+    let written = match read_regular(target)? {
+        Some(target_text) => fs::write(target, merge(&target_text, &running_text)),
+        None => fs::copy(running, target).map(drop),
+    };
+    written.map_err(|e| BootError::io(target, e))?;
+    Ok(())
 }
 
 #[cfg(test)]
