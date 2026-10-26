@@ -1,75 +1,180 @@
 //! Engine and store values to wire values and contract errors.
 
+use serde_json::json;
 use tetsu_bus::server::ErrorReply;
 use tetsu_bus::tx as wire;
 
-use crate::boot::entry::BootState;
+use crate::boot::entry::{BootState, canonical};
 use crate::store::record::{Record, TxKind};
-use crate::tx::TxError;
 use crate::tx::engine::{Report, Request};
+use crate::tx::{PackageChange, TxError};
+
+const SECS_PER_DAY: u64 = 86_400;
 
 /// `YYYY-MM-DDTHH:MM:SS.000Z` for Unix seconds.
 pub fn rfc3339_ms(secs: u64) -> String {
-    let _ = secs;
-    todo!()
+    let (year, month, day) = civil_from_days(secs / SECS_PER_DAY);
+    let rest = secs % SECS_PER_DAY;
+    let (hour, minute, second) = (rest / 3600, rest % 3600 / 60, rest % 60);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.000Z")
+}
+
+/// The proleptic Gregorian date of a day count since 1970-01-01.
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    // Howard Hinnant's algorithm, with eras of 400 years starting 0000-03-01.
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    (year, month, day)
 }
 
 /// The wire kind of a record kind.
 pub fn tx_kind(kind: TxKind) -> wire::TxKind {
-    let _ = kind;
-    todo!()
+    match kind {
+        TxKind::Update => wire::TxKind::Update,
+        TxKind::Install => wire::TxKind::Install,
+        TxKind::InstallAur => wire::TxKind::InstallAur,
+        TxKind::Remove => wire::TxKind::Remove,
+        TxKind::Rollback => wire::TxKind::Rollback,
+    }
+}
+
+fn changes(changes: &[PackageChange]) -> Vec<wire::PackageChange> {
+    changes
+        .iter()
+        .map(|c| wire::PackageChange {
+            name: c.name.clone(),
+            from: c.from.clone(),
+            to: c.to.clone(),
+        })
+        .collect()
+}
+
+/// The id of a record: the one it was given, else `tx-<counter>`.
+fn record_id(record: &Record) -> String {
+    record
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("tx-{}", record.counter))
 }
 
 /// A committed record as a wire transaction; `None` for a record that
 /// is not a transaction (the installer's, or one rebuilt from the ESP).
 pub fn from_record(record: &Record) -> Option<wire::Transaction> {
-    let _ = record;
-    todo!()
+    let kind = record.kind?;
+    Some(wire::Transaction {
+        id: record_id(record),
+        kind: tx_kind(kind),
+        packages: record.packages.clone(),
+        state: wire::TxState::Succeeded,
+        started_at: rfc3339_ms(record.started_at.unwrap_or(0)),
+        finished_at: record.finished_at.map(rfc3339_ms),
+        snapshot: Some(record.counter.to_string()),
+        changes: changes(&record.changes),
+        failure: None,
+    })
 }
 
 /// The transaction `request` is, as it starts at `started` (Unix seconds).
 pub fn running(id: &str, request: &Request, started: u64) -> wire::Transaction {
-    let _ = (id, request, started);
-    todo!()
+    let packages = match request {
+        Request::Install(p) | Request::Remove(p) => p.clone(),
+        Request::Update | Request::Rollback(_) => Vec::new(),
+    };
+    wire::Transaction {
+        id: id.to_owned(),
+        kind: tx_kind(request.kind()),
+        packages,
+        state: wire::TxState::Running,
+        started_at: rfc3339_ms(started),
+        finished_at: None,
+        snapshot: None,
+        changes: Vec::new(),
+        failure: None,
+    }
 }
 
 /// The transaction a report closes.
 pub fn finished(id: &str, report: &Report, started: u64, finished: u64) -> wire::Transaction {
-    let _ = (id, report, started, finished);
-    todo!()
+    wire::Transaction {
+        id: id.to_owned(),
+        kind: tx_kind(report.kind),
+        packages: report.packages.clone(),
+        state: wire::TxState::Succeeded,
+        started_at: rfc3339_ms(started),
+        finished_at: Some(rfc3339_ms(finished)),
+        snapshot: Some(report.counter.to_string()),
+        changes: changes(&report.changes),
+        failure: None,
+    }
 }
 
 /// `running` as it ends in failure, with `failure` carried verbatim.
 pub fn failed(running: &wire::Transaction, finished: u64, failure: &str) -> wire::Transaction {
-    let _ = (running, finished, failure);
-    todo!()
+    wire::Transaction {
+        state: wire::TxState::Failed,
+        finished_at: Some(rfc3339_ms(finished)),
+        failure: Some(failure.to_owned()),
+        ..running.clone()
+    }
 }
 
 /// What went wrong, as text for `Transaction.failure`: the reason with the
 /// proposal appended.
 pub fn failure_text(error: &TxError) -> String {
-    let _ = error;
-    todo!()
+    match error {
+        TxError::Failed {
+            reason,
+            proposal: Some(proposal),
+            ..
+        } => format!("{reason}\ntry: {proposal}"),
+        TxError::Failed { reason, .. } => reason.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// The contract error for `error`. `asked` is the snapshot id the caller
 /// named, if any.
 pub fn error_reply(id: &str, error: &TxError, asked: Option<&str>) -> ErrorReply {
-    let _ = (id, error, asked);
-    todo!()
+    match error {
+        TxError::InProgress => ErrorReply::new(wire::TRANSACTION_IN_PROGRESS, json!({ "id": id })),
+        TxError::PackageNotFound(name) => {
+            ErrorReply::new(wire::PACKAGE_NOT_FOUND, json!({ "name": name }))
+        }
+        TxError::NotUserPackage(name) => {
+            ErrorReply::new(wire::NOT_USER_PACKAGE, json!({ "name": name }))
+        }
+        TxError::SnapshotNotFound(_) => ErrorReply::new(
+            wire::SNAPSHOT_NOT_FOUND,
+            json!({ "id": asked.unwrap_or_default() }),
+        ),
+        TxError::Failed { .. } => ErrorReply::new(
+            wire::TRANSACTION_FAILED,
+            json!({ "id": id, "reason": failure_text(error) }),
+        ),
+    }
 }
 
 /// The counter a snapshot id names; anything but the canonical decimal
 /// spelling is a `SnapshotNotFound`.
 pub fn parse_snapshot_id(id: &str) -> Result<u64, ErrorReply> {
-    let _ = id;
-    todo!()
+    canonical(id).ok_or_else(|| ErrorReply::new(wire::SNAPSHOT_NOT_FOUND, json!({ "id": id })))
 }
 
 /// `GetStatus.default_boot` of an entry's boot-counting state.
 pub fn default_boot(state: BootState) -> wire::DefaultBoot {
-    let _ = state;
-    todo!()
+    match state {
+        BootState::Good => wire::DefaultBoot::Good,
+        BootState::Bad => wire::DefaultBoot::Bad,
+        BootState::Untried | BootState::Trying => wire::DefaultBoot::Untried,
+    }
 }
 
 #[cfg(test)]
