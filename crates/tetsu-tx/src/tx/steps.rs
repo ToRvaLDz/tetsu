@@ -8,7 +8,7 @@ use std::path::Path;
 
 use super::TxError;
 use super::nspawn::{Network, Nspawn, PROGRAM};
-use super::pkg::{blocking_packages, output_or_empty, parse_names};
+use super::pkg::{blocking_packages, parse_names};
 use crate::boot::BootError;
 use crate::boot::tool::Runner;
 
@@ -106,11 +106,15 @@ pub fn update_install(runner: &dyn Runner, ns: &Nspawn) -> Result<(), TxError> {
 }
 
 /// Packages installed as dependencies that nothing needs any more.
-/// `pacman -Qdtq` exits 1 with no output when there are none.
+/// `pacman -Qdtq` exits 1 with no output when there are none; nspawn's note
+/// on stderr does not make that a failure.
 pub fn orphans(runner: &dyn Runner, ns: &Nspawn) -> Result<Vec<String>, TxError> {
     let args = ns.args(Network::Offline, &["pacman", "-Qdtq"]);
-    let out = output_or_empty(runner, PROGRAM, &args)?;
-    Ok(parse_names(&out))
+    match runner.output(PROGRAM, &args) {
+        Ok(out) => Ok(parse_names(&out)),
+        Err(BootError::Tool { stderr, .. }) if stderr_lines(&stderr).is_empty() => Ok(Vec::new()),
+        Err(e) => Err(step_failed("orphan query", e)),
+    }
 }
 
 /// Remove `orphans` with their configuration and unneeded dependencies;
