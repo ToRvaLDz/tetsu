@@ -96,7 +96,11 @@ pub fn run(paths: &Paths, runner: &dyn Runner) -> Result<Outcome, SyncError> {
             // Unmount whatever the sync did; its own failure comes first.
             if let Err(e) = runner.run("umount", &[top.clone().into_os_string()]) {
                 // The top level is still there: never clean up under it.
-                return outcome.and(Err(SyncError::StillMounted { top, source: e }));
+                return Err(SyncError::StillMounted {
+                    top,
+                    source: e,
+                    sync: outcome.err().map(Box::new),
+                });
             }
             outcome
         }

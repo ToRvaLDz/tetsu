@@ -52,11 +52,17 @@ pub enum SyncError {
     #[error(transparent)]
     Tool(#[from] BootError),
     /// `umount` of the top level failed: it is left mounted and untouched.
-    #[error("{} is still mounted: {source}", top.display())]
+    /// `sync` is the sync's own failure, when it failed first.
+    #[error(
+        "{}{} is still mounted: {source}",
+        sync.as_ref().map(|e| format!("{e}; ")).unwrap_or_default(),
+        top.display()
+    )]
     StillMounted {
         top: PathBuf,
         #[source]
         source: BootError,
+        sync: Option<Box<SyncError>>,
     },
     /// The device behind the new root could not be found.
     #[error("{0}")]
