@@ -650,6 +650,26 @@ fn the_var_report_goes_into_the_log_and_the_record() {
 }
 
 #[test]
+fn the_scratch_var_keeps_the_pacman_db_reachable() {
+    let env = Env::new();
+    let seen = Rc::new(RefCell::new(None));
+    let sink = Rc::clone(&seen);
+    env.runner
+        .on_tail_effect(&["pacman", "-Su", "--noconfirm"], move |line| {
+            let link = container_scratch(line).join("lib/pacman");
+            *sink.borrow_mut() = fs::read_link(link).ok();
+        });
+    let report = env.run(&Request::Update).unwrap();
+    assert_eq!(seen.borrow().as_deref(), Some(Path::new("/usr/lib/pacman")));
+    // The seeded link is not state the transaction loses.
+    assert!(
+        !report.log.iter().any(|l| l.contains("/var/lib/pacman")),
+        "{:?}",
+        report.log
+    );
+}
+
+#[test]
 fn stale_scratch_dirs_are_swept_under_the_lock() {
     let env = Env::new();
     write(&env.run_dir.join("tx-var-77/leftover"), "x");

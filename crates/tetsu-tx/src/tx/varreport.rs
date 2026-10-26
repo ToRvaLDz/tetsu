@@ -250,6 +250,16 @@ mod tests {
     }
 
     #[test]
+    fn the_seeded_pacman_db_link_is_not_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let s = scratch.path();
+        fs::create_dir_all(s.join("lib")).unwrap();
+        symlink("/usr/lib/pacman", s.join("lib/pacman")).unwrap();
+        assert!(var_report(s, root.path()).unwrap().is_empty());
+    }
+
+    #[test]
     fn an_empty_scratch_reports_nothing() {
         let root = tempfile::tempdir().unwrap();
         let scratch = tempfile::tempdir().unwrap();
