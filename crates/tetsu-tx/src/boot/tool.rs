@@ -155,4 +155,86 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+
+    /// The process group in `/proc/<id>/stat` (field 5, after the command
+    /// name, which may hold spaces and parentheses).
+    fn pgrp(stat: &str) -> u32 {
+        let after = stat.rsplit_once(')').unwrap().1;
+        after.split_whitespace().nth(2).unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn stdin_bytes_reach_the_tool() {
+        let out = SystemRunner::new()
+            .output_stdin("cat", &[], b"s3cret\n")
+            .unwrap();
+        assert_eq!(out, "s3cret\n");
+    }
+
+    #[test]
+    fn stdin_failure_maps_like_output() {
+        let args = ["-c".into(), "cat >/dev/null; echo boom >&2; exit 5".into()];
+        match SystemRunner::new()
+            .output_stdin("sh", &args, b"x")
+            .unwrap_err()
+        {
+            BootError::Tool { status, stderr, .. } => {
+                assert!(status.contains('5'), "{status}");
+                assert_eq!(stderr, "boom");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            SystemRunner::new().output_stdin("tetsu-no-such-tool-xyz", &[], b"x"),
+            Err(BootError::ToolMissing { .. })
+        ));
+    }
+
+    #[test]
+    fn a_tool_that_ignores_stdin_does_not_break_the_write() {
+        let big = vec![b'x'; 1 << 20];
+        assert!(SystemRunner::new().output_stdin("true", &[], &big).is_ok());
+    }
+
+    #[test]
+    fn the_own_group_option_moves_the_tool_to_a_new_group() {
+        let ours = pgrp(&std::fs::read_to_string("/proc/self/stat").unwrap());
+        let args = ["-c".into(), "cat /proc/$$/stat".into()];
+        let alone = SystemRunner::own_group().output("sh", &args).unwrap();
+        let theirs = pgrp(&alone);
+        assert_ne!(ours, theirs);
+        // `process_group(0)` makes the child the leader of its group.
+        let pid: u32 = alone.split_whitespace().next().unwrap().parse().unwrap();
+        assert_eq!(theirs, pid);
+        // The default shares the group of the caller.
+        let same = pgrp(&SystemRunner::new().output("sh", &args).unwrap());
+        assert_eq!(ours, same);
+    }
+
+    #[test]
+    fn the_own_group_option_applies_to_stdin_runs_too() {
+        let ours = pgrp(&std::fs::read_to_string("/proc/self/stat").unwrap());
+        let args = ["-c".into(), "cat >/dev/null; cat /proc/$$/stat".into()];
+        let out = SystemRunner::own_group()
+            .output_stdin("sh", &args, b"x")
+            .unwrap();
+        assert_ne!(ours, pgrp(&out));
+    }
+
+    #[test]
+    fn the_default_trait_method_refuses_stdin() {
+        struct NoStdin;
+        impl Runner for NoStdin {
+            fn run(&self, _: &str, _: &[OsString]) -> Result<(), BootError> {
+                Ok(())
+            }
+            fn output(&self, _: &str, _: &[OsString]) -> Result<String, BootError> {
+                Ok(String::new())
+            }
+        }
+        assert!(matches!(
+            NoStdin.output_stdin("cat", &[], b"x"),
+            Err(BootError::Io { .. })
+        ));
+    }
 }
