@@ -284,6 +284,37 @@ mod tests {
     }
 
     #[test]
+    fn an_old_record_without_an_id_loads_as_none() {
+        let (_d, r) = records();
+        fs::create_dir_all(r.dir()).unwrap();
+        fs::write(
+            r.path(3),
+            r#"{"counter":3,"kind":"update","source":2,"boot":null}"#,
+        )
+        .unwrap();
+        assert_eq!(r.load().unwrap()[&3].id, None);
+    }
+
+    #[test]
+    fn the_transaction_id_round_trips() {
+        let (_d, r) = records();
+        let with_id = Record {
+            id: Some("tx-0123456789abcdef".into()),
+            ..rec(4)
+        };
+        r.write(&with_id).unwrap();
+        assert_eq!(r.load().unwrap()[&4], with_id);
+    }
+
+    #[test]
+    fn a_record_with_no_id_is_written_without_the_key() {
+        let (_d, r) = records();
+        r.write(&rec(5)).unwrap();
+        let text = fs::read_to_string(r.path(5)).unwrap();
+        assert!(!text.contains("\"id\""), "{text}");
+    }
+
+    #[test]
     fn missing_dir_is_empty() {
         let (_d, r) = records();
         assert!(r.load().unwrap().is_empty());
