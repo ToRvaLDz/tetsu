@@ -20,6 +20,8 @@ const REPORT: &str = "report.json";
 /// Why the sync did not run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Skip {
+    /// The kernel command line names no Tetsu snapshot.
+    NotTetsu,
     NoRecord,
     /// The record was rebuilt from the ESP: nothing says what to sync.
     Reconstructed,
@@ -36,6 +38,7 @@ pub enum Skip {
 impl fmt::Display for Skip {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NotTetsu => f.write_str("not booted from a Tetsu snapshot"),
             Self::NoRecord => f.write_str("no transaction record"),
             Self::Reconstructed => f.write_str("the record was rebuilt from the ESP"),
             Self::Rollback => f.write_str("a rollback"),

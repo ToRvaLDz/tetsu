@@ -21,6 +21,8 @@
 
 pub mod apply;
 pub mod firstboot;
+pub mod initrd;
+pub mod mountinfo;
 pub mod node;
 pub mod plan;
 
@@ -32,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::boot::BootError;
 use crate::store::StoreError;
 
 /// Why a sync could not finish.
@@ -43,6 +46,12 @@ pub enum SyncError {
         #[source]
         source: io::Error,
     },
+    /// `mount` or `umount` failed.
+    #[error(transparent)]
+    Tool(#[from] BootError),
+    /// The device behind the new root could not be found.
+    #[error("{0}")]
+    Mountinfo(String),
     /// The records could not be read.
     #[error(transparent)]
     Store(#[from] StoreError),
