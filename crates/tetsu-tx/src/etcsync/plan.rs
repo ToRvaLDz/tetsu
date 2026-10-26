@@ -1,7 +1,7 @@
 //! The per-path decision of the three-way `/etc` sync. Pure: it looks at
 //! three [`Node`]s and says what to do.
 
-use super::node::Node;
+use super::node::{Kind, Node, same};
 
 /// Why a path is reported as a conflict.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,8 +42,43 @@ pub fn decide(
     new: Option<&Node>,
     account: bool,
 ) -> Action {
-    let _ = (base, old, new, account);
-    todo!()
+    if [base, old, new].into_iter().flatten().any(Node::is_special) {
+        return Action::Skip;
+    }
+    if let (Some(o), Some(n)) = (old, new)
+        && o.is_dir()
+        && n.is_dir()
+    {
+        let take_old_attrs =
+            base.is_some_and(|b| b.is_dir() && !same(Some(o), Some(b)) && same(Some(n), Some(b)));
+        return Action::Recurse { take_old_attrs };
+    }
+    let (user, tx) = (!same(old, base), !same(new, base));
+    match (user, tx) {
+        (false, _) => Action::Keep,
+        (true, false) => match old {
+            Some(_) => Action::TakeOld,
+            None => Action::DeleteNew,
+        },
+        (true, true) if same(old, new) => Action::Keep,
+        (true, true) if account && both_regular(old, new) => Action::MergeAccounts,
+        (true, true) => {
+            let kind = match (old, new) {
+                (None, _) => ConflictKind::UserDeleted,
+                (_, None) => ConflictKind::TxDeleted,
+                _ => ConflictKind::BothChanged,
+            };
+            Action::Conflict {
+                kind,
+                keep_old: old.is_some(),
+            }
+        }
+    }
+}
+
+fn both_regular(old: Option<&Node>, new: Option<&Node>) -> bool {
+    let regular = |n: Option<&Node>| n.is_some_and(|n| matches!(n.kind, Kind::File(_)));
+    regular(old) && regular(new)
 }
 
 #[cfg(test)]
