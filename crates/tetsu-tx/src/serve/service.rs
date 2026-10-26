@@ -82,10 +82,15 @@ fn parse_ask(method: &str, parameters: &Value) -> Result<Ask, ErrorReply> {
         "org.tetsu.tx.v1.Update" => Ok(Ask::Update),
         "org.tetsu.tx.v1.Install" => packages(parameters).map(Ask::Install),
         "org.tetsu.tx.v1.Remove" => packages(parameters).map(Ask::Remove),
-        _ => {
+        "org.tetsu.tx.v1.Rollback" => {
             let wire::RollbackParams { to } = parse(parameters, "to")?;
             Ok(Ask::Rollback(to))
         }
+        // The dispatcher only routes the four write methods here.
+        other => Err(ErrorReply::new(
+            "org.varlink.service.MethodNotFound",
+            json!({ "method": other }),
+        )),
     }
 }
 
