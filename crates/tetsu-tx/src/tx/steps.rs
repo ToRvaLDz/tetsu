@@ -463,6 +463,32 @@ mod tests {
     }
 
     #[test]
+    fn missing_sync_databases_tell_the_user_to_update_first() {
+        let r = ScriptedRunner::new();
+        r.on_tail(
+            &["pacman", "-Si", "tree"],
+            Reply::Fail(
+                "warning: database file for 'core' does not exist (use '-Sy' to download)\n\
+                 warning: database file for 'extra' does not exist (use '-Sy' to download)\n\
+                 error: package 'tree' was not found"
+                    .into(),
+            ),
+        );
+        let err = install_download(&r, &ns(), &names(&["tree"])).unwrap_err();
+        match err {
+            TxError::Failed {
+                reason, proposal, ..
+            } => {
+                assert!(reason.contains("package databases"), "{reason}");
+                let proposal = proposal.expect("a proposal");
+                assert!(proposal.contains("tetsu-tx update"), "{proposal}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(r.lines().iter().all(|l| !l.contains("-Sw")));
+    }
+
+    #[test]
     fn another_si_failure_is_not_a_missing_package() {
         let r = ScriptedRunner::new();
         r.on_tail(
