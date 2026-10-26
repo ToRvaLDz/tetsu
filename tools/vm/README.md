@@ -213,8 +213,5 @@ passphrase once, comfort asks nothing (TPM), balanced asks only the PIN
 of comfort and balanced asks the disk passphrase twice (the unlock and the
 seal's own question), and balanced the new PIN twice.
 
-The guest's serial line now and then doubles one byte of output; the checks
-avoid `^` anchors where it matters.
-
 Test hooks: `TETSU_VM_KVM=0|1` forces TCG/KVM in the command line,
 `TETSU_VM_QEMU_COMM` / `TETSU_VM_SWTPM_COMM` change the expected process names.
