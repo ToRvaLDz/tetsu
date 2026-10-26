@@ -267,6 +267,28 @@ mod tests {
     }
 
     #[test]
+    fn a_pacman_db_that_replaced_the_link_is_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let s = scratch.path();
+        write(s, "lib/pacman/local/ALPM_DB_VERSION", "9");
+        assert_eq!(
+            var_report(s, root.path()).unwrap(),
+            ["/var/lib/pacman/local/ALPM_DB_VERSION"]
+        );
+    }
+
+    #[test]
+    fn a_pacman_db_link_elsewhere_is_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let s = scratch.path();
+        fs::create_dir_all(s.join("lib")).unwrap();
+        symlink("/srv/pacman", s.join("lib/pacman")).unwrap();
+        assert_eq!(var_report(s, root.path()).unwrap(), ["/var/lib/pacman"]);
+    }
+
+    #[test]
     fn an_empty_scratch_reports_nothing() {
         let root = tempfile::tempdir().unwrap();
         let scratch = tempfile::tempdir().unwrap();
