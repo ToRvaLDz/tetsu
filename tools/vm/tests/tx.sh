@@ -72,22 +72,32 @@ boot_login() {
 
 # ------------------------------------------------------------ transactions
 # start_paused POINT ARGS...: tetsu-tx ARGS... in the background, held at
-# POINT; returns once it waits there.
+# POINT; returns once it waits there. A failed run or a pause file that cannot
+# be written ends the wait at once.
 start_paused() {
-  local point=$1
+  local point=$1 log=/tmp/tx-$point.log
   shift
   reprime_sudo
-  gexec "(sudo -n env TETSU_TX_PAUSE_AT=$point tetsu-tx $* >/tmp/tx-$point.log 2>&1 &); echo started"
-  check "the transaction waits at $point" "tetsu-tx: paused at $point\$" \
-    "for i in \$(seq 1 $TX_SECS); do sudo -n grep -qx $point /run/tetsu/paused-at 2>/dev/null && break; grep -q '^error' /tmp/tx-$point.log && break; sleep 1; done; cat /tmp/tx-$point.log" $((TX_SECS + 60))
+  gexec "(sudo -n env TETSU_TX_PAUSE_AT=$point tetsu-tx $* >$log 2>&1 &); echo started"
+  gexec "$(guest_poll "$TX_SECS" "sudo -n grep -qx $point /run/tetsu/paused-at 2>/dev/null" \
+    "grep -Eq '^error|tetsu-tx: cannot write' $log"); cat $log" $((TX_SECS + 60))
+  case $GOUT in
+    *"tetsu-tx: cannot write"*) die "the pause file cannot be written at $point: $GOUT" ;;
+  esac
+  if LC_ALL=C grep -aEq -- "tetsu-tx: paused at $point\$" <<<"$GOUT"; then
+    pass "$SCENARIO: the transaction waits at $point"
+  else
+    fail "$SCENARIO: the transaction waits at $point" "got: $GOUT"
+  fi
 }
 
 # release_and_wait POINT: let the transaction held at POINT go on and wait
 # for its report (the log of start_paused).
 release_and_wait() {
-  local point=$1
+  local point=$1 log=/tmp/tx-$1.log
   check "the transaction held at $point commits" 'committed as snapshot [0-9]+' \
-    "sudo -n rm -f /run/tetsu/paused-at; for i in \$(seq 1 $TX_SECS); do grep -q 'committed as snapshot' /tmp/tx-$point.log && break; grep -q '^error' /tmp/tx-$point.log && break; sleep 1; done; cat /tmp/tx-$point.log" $((TX_SECS + 60))
+    "sudo -n rm -f /run/tetsu/paused-at; $(guest_poll "$TX_SECS" "grep -q 'committed as snapshot' $log" \
+      "grep -q '^error' $log"); cat $log" $((TX_SECS + 60))
 }
 
 # The newest snapshot number in the booted command line.

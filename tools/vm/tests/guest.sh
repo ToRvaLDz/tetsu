@@ -291,6 +291,14 @@ reprime_sudo() {
   assert_contains "$SCENARIO: sudo is primed again" "$GOUT" "sudo-primed"
 }
 
+# guest_poll SECS COND [STOP]: guest shell text that polls once a second, for
+# at most SECS, until COND or STOP succeeds. For gexec/check commands.
+guest_poll() {
+  local text="for i in \$(seq 1 $1); do $2 && break;"
+  [ -z "${3:-}" ] || text+=" $3 && break;"
+  printf '%s sleep 1; done' "$text"
+}
+
 # ---------------------------------------------------------------- checks
 common_checks() { # LEVEL
   local level=$1
