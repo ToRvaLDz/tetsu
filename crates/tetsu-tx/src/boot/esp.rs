@@ -131,6 +131,9 @@ impl Esp {
             .join(EntryName::untried(counter, BOOT_TRIES).file_name());
         fs::rename(&tmp, &dest).map_err(|e| BootError::io(&tmp, e))?;
         fault::reach(Point::Renamed);
+        // On FAT the renamed entry gets its size only when the file itself is
+        // synced; the directory fsync alone can commit an entry of size 0.
+        sync(&dest)?;
         sync(&self.dir)?;
         fault::reach(Point::Committed);
         Ok(dest)
