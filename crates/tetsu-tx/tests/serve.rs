@@ -38,11 +38,20 @@ struct Run {
     result: Result<Report, TxError>,
 }
 
+/// The test's grip on a read of the records: it signals after the scan
+/// and returns only once released.
+struct ScanHold {
+    scanned: Sender<()>,
+    release: Receiver<()>,
+}
+
 struct Fake {
     runs: Mutex<VecDeque<Run>>,
     calls: Mutex<Vec<Request>>,
     gate: Mutex<Receiver<()>>,
     records: Mutex<Vec<Record>>,
+    /// When set, a read of the records reports it has scanned, then waits.
+    scan_hold: Mutex<Option<ScanHold>>,
     packages: Mutex<Result<Vec<String>, String>>,
     status: Mutex<Result<StatusView, String>>,
 }
@@ -83,7 +92,12 @@ impl Backend for Fake {
     }
 
     fn transactions(&self) -> Result<Vec<Record>, String> {
-        Ok(self.records.lock().unwrap().clone())
+        let scan = self.records.lock().unwrap().clone();
+        if let Some(hold) = self.scan_hold.lock().unwrap().as_ref() {
+            let _ = hold.scanned.send(());
+            let _ = hold.release.recv();
+        }
+        Ok(scan)
     }
 
     fn user_packages(&self) -> Result<Vec<String>, String> {
@@ -109,6 +123,7 @@ impl Rig {
             calls: Mutex::default(),
             gate: Mutex::new(receiver),
             records: Mutex::default(),
+            scan_hold: Mutex::new(None),
             packages: Mutex::new(Ok(Vec::new())),
             status: Mutex::new(Err("unscripted".into())),
         });
@@ -876,6 +891,53 @@ fn list_merges_committed_and_failed_newest_first_and_honours_the_limit() {
             .call(&fqn("ListTransactions"), json!({ "limit": null }))
             .await;
         assert_eq!(ids(&null).len(), 3);
+    });
+}
+
+#[test]
+fn list_keeps_a_transaction_that_commits_and_clears_during_the_read() {
+    let rig = Rig::new();
+    rig.script(
+        &[EngineEvent::Begun { counter: 7 }],
+        true,
+        Ok(report(7, TxKind::Update, &[])),
+    );
+    let step = rig.gate.clone();
+    let (scanned, scan_seen) = mpsc::channel();
+    let (release, hold) = mpsc::channel();
+    *rig.backend.scan_hold.lock().unwrap() = Some(ScanHold {
+        scanned,
+        release: hold,
+    });
+    with_server(&rig, allow(), |path, contract| async move {
+        let mut caller = Client::connect(&path, &contract).await;
+        caller.send(&fqn("Update"), json!({}), true).await;
+        caller.recv(&fqn("Update")).await;
+        let mut watcher = Client::connect(&path, &contract).await;
+        watcher
+            .send(&fqn("WatchTransactions"), json!({}), true)
+            .await;
+        let initial = watcher.recv(&fqn("WatchTransactions")).await;
+        let id = event(&initial).1["running"][0]["id"].clone();
+
+        // The list scans the records while the transaction still runs.
+        let mut reader = Client::connect(&path, &contract).await;
+        reader
+            .send(&fqn("ListTransactions"), json!({}), false)
+            .await;
+        while scan_seen.try_recv().is_err() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        // It commits after the scan and leaves the hub before the list resumes.
+        step.send(()).unwrap();
+        let finished = watcher.recv(&fqn("WatchTransactions")).await;
+        assert_eq!(event(&finished).0, "finished");
+        release.send(()).unwrap();
+
+        let list = reader.recv(&fqn("ListTransactions")).await;
+        let listed = &list.parameters["transactions"];
+        assert_eq!(listed.as_array().unwrap().len(), 1, "{list:?}");
+        assert_eq!(listed[0]["id"], id);
     });
 }
 

@@ -209,15 +209,17 @@ impl<B: Backend, P: Policy> TxService<B, P> {
             Some(Err(_)) => return Response::Error(ErrorReply::invalid_parameter("limit")),
             None => None,
         };
+        // Snapshot the hub first: a transaction that commits after the scan
+        // and leaves the hub before the read returns is then still listed.
+        let known = self.hub.known();
         let records = match self.read(|b| b.transactions()).await {
             Ok(records) => records,
             Err(why) => return read_failed("listing the transactions", &why),
         };
         let committed: Vec<wire::Transaction> =
             records.iter().filter_map(convert::from_record).collect();
-        let mut all: Vec<wire::Transaction> = self
-            .hub
-            .known()
+        // One entry per id: a record wins over the hub's copy.
+        let mut all: Vec<wire::Transaction> = known
             .into_iter()
             .filter(|t| !committed.iter().any(|c| c.id == t.id))
             .collect();
