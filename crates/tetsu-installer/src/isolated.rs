@@ -52,7 +52,7 @@ impl Runner for IsolatedRunner {
     }
 
     fn check_tool(&self, program: &str) -> Result<(), BootError> {
-        SystemRunner.check_tool(program)
+        SystemRunner::new().check_tool(program)
     }
 }
 
@@ -80,7 +80,7 @@ mod tests {
         let theirs = pgrp(&IsolatedRunner.output("sh", &args).unwrap());
         assert_ne!(ours, theirs);
         // The plain runner shares the group: the property is the wrapper's.
-        let same = pgrp(&SystemRunner.output("sh", &args).unwrap());
+        let same = pgrp(&SystemRunner::new().output("sh", &args).unwrap());
         assert_eq!(ours, same);
     }
 

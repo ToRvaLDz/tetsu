@@ -342,7 +342,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let plain = dir.path().join("plain");
         fs::create_dir(&plain).unwrap();
-        let b = CliBtrfs::new(crate::boot::tool::SystemRunner);
+        let b = CliBtrfs::new(crate::boot::tool::SystemRunner::new());
         assert!(!b.is_subvolume(&plain).unwrap());
         assert!(!b.is_subvolume(&dir.path().join("missing")).unwrap());
     }

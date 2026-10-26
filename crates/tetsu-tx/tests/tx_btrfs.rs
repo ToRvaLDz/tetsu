@@ -238,7 +238,7 @@ impl World {
     fn new() -> Self {
         let fs_ = LoopBtrfs::new();
         let layout = Layout::new(&fs_.mnt);
-        let btrfs = CliBtrfs::new(SystemRunner);
+        let btrfs = CliBtrfs::new(SystemRunner::new());
         let keys = make_keys(&fs_.work("keys"));
         let world = Self {
             layout,

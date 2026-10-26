@@ -61,18 +61,22 @@ mod tests {
     fn the_environment_reaches_the_tool_and_failures_are_mapped() {
         let ok: [OsString; 2] = ["-c".into(), "test \"$NEWPIN\" = 1234".into()];
         assert!(
-            SystemRunner
+            SystemRunner::new()
                 .run_env("sh", &ok, &[("NEWPIN", "1234")])
                 .is_ok()
         );
-        assert!(SystemRunner.run_env("sh", &ok, &[("NEWPIN", "9")]).is_err());
+        assert!(
+            SystemRunner::new()
+                .run_env("sh", &ok, &[("NEWPIN", "9")])
+                .is_err()
+        );
         let boom: [OsString; 2] = ["-c".into(), "echo boom >&2; exit 3".into()];
-        match SystemRunner.run_env("sh", &boom, &[]).unwrap_err() {
+        match SystemRunner::new().run_env("sh", &boom, &[]).unwrap_err() {
             BootError::Tool { stderr, .. } => assert_eq!(stderr, "boom"),
             other => panic!("{other:?}"),
         }
         assert!(matches!(
-            SystemRunner.run_env("tetsu-no-such-tool-xyz", &[], &[]),
+            SystemRunner::new().run_env("tetsu-no-such-tool-xyz", &[], &[]),
             Err(BootError::ToolMissing { .. })
         ));
     }

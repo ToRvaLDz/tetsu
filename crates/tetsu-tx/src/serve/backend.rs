@@ -61,9 +61,9 @@ impl Backend for HostBackend {
         request: &Request,
         observer: &(dyn Fn(EngineEvent) + Sync),
     ) -> Result<Report, TxError> {
-        let btrfs = CliBtrfs::new(SystemRunner);
+        let btrfs = CliBtrfs::new(SystemRunner::new());
         let host = Host {
-            runner: &SystemRunner,
+            runner: &SystemRunner::new(),
             btrfs: &btrfs,
             probe: &StatvfsProbe,
             proc_cmdline: &self.proc_cmdline,
@@ -81,7 +81,7 @@ impl Backend for HostBackend {
     }
 
     fn user_packages(&self) -> Result<Vec<String>, String> {
-        read_user_packages(&self.options, &SystemRunner)
+        read_user_packages(&self.options, &SystemRunner::new())
     }
 
     fn status(&self) -> Result<StatusView, String> {

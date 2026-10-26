@@ -124,7 +124,7 @@ fn transaction_zero(layout: &Layout, btrfs: &dyn Btrfs) {
 fn layout_snapshot_seal_and_delete() {
     let fs_ = LoopBtrfs::new();
     let layout = Layout::new(&fs_.mnt);
-    let btrfs = CliBtrfs::new(SystemRunner);
+    let btrfs = CliBtrfs::new(SystemRunner::new());
     transaction_zero(&layout, &btrfs);
 
     for s in ["@snapshots", "@var", "@home", "@root", "@swap"] {
@@ -179,7 +179,7 @@ fn layout_snapshot_seal_and_delete() {
 fn orphans_records_and_retention() {
     let fs_ = LoopBtrfs::new();
     let layout = Layout::new(&fs_.mnt);
-    let btrfs = CliBtrfs::new(SystemRunner);
+    let btrfs = CliBtrfs::new(SystemRunner::new());
     transaction_zero(&layout, &btrfs);
     let records = Records::new(&fs_.work("records"));
     let store = Store::new(layout.clone(), records.clone(), &btrfs);

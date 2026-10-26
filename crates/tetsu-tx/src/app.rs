@@ -211,8 +211,8 @@ pub fn main(args: &[String]) -> ExitCode {
     }
     let clock = now_secs;
     let host = Host {
-        runner: &SystemRunner,
-        btrfs: &CliBtrfs::new(SystemRunner),
+        runner: &SystemRunner::new(),
+        btrfs: &CliBtrfs::new(SystemRunner::new()),
         probe: &StatvfsProbe,
         proc_cmdline: &proc_cmdline,
         clock: &clock,

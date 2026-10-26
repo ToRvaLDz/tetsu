@@ -74,6 +74,15 @@ impl Runner for RunnerRef<'_> {
         self.0.output(program, args)
     }
 
+    fn output_stdin(
+        &self,
+        program: &str,
+        args: &[OsString],
+        stdin: &[u8],
+    ) -> Result<String, BootError> {
+        self.0.output_stdin(program, args, stdin)
+    }
+
     fn check_tool(&self, program: &str) -> Result<(), BootError> {
         self.0.check_tool(program)
     }

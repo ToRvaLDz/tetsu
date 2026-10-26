@@ -18,7 +18,7 @@ pub fn main(args: impl IntoIterator<Item = String>) -> ExitCode {
     let ctx = Context {
         paths: Paths::system(),
         is_root: rustix::process::geteuid().is_root(),
-        runner: &SystemRunner,
+        runner: &SystemRunner::new(),
         entropy: &SystemEntropy,
     };
     let result = match command {

@@ -8,7 +8,7 @@ use tetsu_installer_core::seal::{self, Outcome, SealPaths};
 use tetsu_tx::boot::tool::SystemRunner;
 
 fn main() -> ExitCode {
-    match seal::run(&SealPaths::system(), &SystemRunner) {
+    match seal::run(&SealPaths::system(), &SystemRunner::new()) {
         Ok(Outcome::NotNeeded) => {}
         Ok(Outcome::Sealed) => println!("tetsu-unlock-seal: the disk is now sealed to the TPM"),
         Ok(Outcome::Waiting(why)) => {

@@ -67,7 +67,7 @@ fn run(opts: &Options) -> Result<(), String> {
         TextFrontend::new(stdin.lock(), io::stdout()).hide_secrets(tty::stdin_is_tty()),
     );
     let run_dir = Path::new(DEFAULT_RUN_DIR);
-    let runner = SystemRunner;
+    let runner = SystemRunner::new();
     let file = answer_file(opts, run_dir, &runner)?;
     if file.is_some() {
         fe.borrow_mut().message(FILE_WARNING);

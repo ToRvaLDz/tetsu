@@ -36,6 +36,8 @@ pub(crate) struct ScriptedRunner {
     rules: RefCell<Vec<Rule>>,
     calls: RefCell<Vec<Vec<String>>>,
     missing: RefCell<Vec<String>>,
+    /// The stdin of every `output_stdin` call, in call order.
+    stdins: RefCell<Vec<Vec<u8>>>,
 }
 
 impl Rule {
@@ -113,6 +115,11 @@ impl ScriptedRunner {
         self
     }
 
+    /// The stdin bytes of every `output_stdin` call so far.
+    pub fn stdins(&self) -> Vec<Vec<u8>> {
+        self.stdins.borrow().clone()
+    }
+
     /// Every call so far, as one space-joined string each.
     pub fn lines(&self) -> Vec<String> {
         self.calls.borrow().iter().map(|c| c.join(" ")).collect()
@@ -162,6 +169,16 @@ impl Runner for ScriptedRunner {
         self.answer(program, args)
     }
 
+    fn output_stdin(
+        &self,
+        program: &str,
+        args: &[OsString],
+        stdin: &[u8],
+    ) -> Result<String, BootError> {
+        self.stdins.borrow_mut().push(stdin.to_vec());
+        self.answer(program, args)
+    }
+
     fn check_tool(&self, program: &str) -> Result<(), BootError> {
         if self.missing.borrow().iter().any(|m| m == program) {
             return Err(BootError::ToolMissing {
@@ -191,6 +208,19 @@ mod tests {
         assert_eq!(r.output("pacman", &args(&["-S", "vim"])).unwrap(), "");
         assert_eq!(r.output("other", &args(&["-Q"])).unwrap(), "");
         assert_eq!(r.lines(), ["pacman -Qi vim", "pacman -S vim", "other -Q"]);
+    }
+
+    #[test]
+    fn stdin_is_recorded_and_the_call_is_scripted_like_output() {
+        let r = ScriptedRunner::new();
+        r.on(&["cryptsetup"], Reply::Out("ok".into()));
+        assert_eq!(
+            r.output_stdin("cryptsetup", &args(&["open"]), b"key")
+                .unwrap(),
+            "ok"
+        );
+        assert_eq!(r.lines(), ["cryptsetup open"]);
+        assert_eq!(r.stdins(), [b"key".to_vec()]);
     }
 
     #[test]

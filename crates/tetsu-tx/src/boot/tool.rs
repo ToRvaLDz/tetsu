@@ -3,8 +3,10 @@
 
 use std::ffi::OsString;
 use std::io::ErrorKind;
+use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 
 use super::BootError;
 
@@ -14,6 +16,21 @@ pub trait Runner {
 
     /// Run to completion and return stdout. Fails like [`Runner::run`].
     fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError>;
+
+    /// Like [`Runner::output`], with `stdin` written to the tool and then
+    /// closed, so a secret never sits in argv or in a file. The default
+    /// refuses: a fake that does not model stdin must not drop the bytes.
+    fn output_stdin(
+        &self,
+        program: &str,
+        _args: &[OsString],
+        _stdin: &[u8],
+    ) -> Result<String, BootError> {
+        Err(BootError::io(
+            program,
+            std::io::Error::new(ErrorKind::Unsupported, "this runner has no stdin"),
+        ))
+    }
 
     /// Fail with `ToolMissing` when `program` cannot be run. Lets callers
     /// check cheap preconditions before they change anything.
@@ -30,12 +47,46 @@ fn is_executable(path: &Path) -> bool {
 
 /// Runs programs found through `PATH` with `std::process::Command`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SystemRunner;
+pub struct SystemRunner {
+    own_group: bool,
+}
 
 impl SystemRunner {
-    /// Run `program` and return its stdout, or the mapped failure.
-    fn capture(program: &str, args: &[OsString]) -> Result<String, BootError> {
-        let out = match Command::new(program).args(args).output() {
+    /// Tools share the process group of the caller.
+    pub const fn new() -> Self {
+        Self { own_group: false }
+    }
+
+    /// Every tool leads a new process group. The terminal sends Ctrl+C to
+    /// the foreground group only, so it reaches the caller and never kills
+    /// a running tool halfway.
+    pub const fn own_group() -> Self {
+        Self { own_group: true }
+    }
+
+    fn command(&self, program: &str, args: &[OsString]) -> Command {
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        if self.own_group {
+            cmd.process_group(0);
+        }
+        cmd
+    }
+
+    /// Run `program` and return its stdout, or the mapped failure. `stdin`
+    /// is written to the tool and closed; without it the tool reads nothing.
+    fn capture(
+        &self,
+        program: &str,
+        args: &[OsString],
+        stdin: Option<&[u8]>,
+    ) -> Result<String, BootError> {
+        let mut cmd = self.command(program, args);
+        let out = match stdin {
+            None => cmd.output(),
+            Some(bytes) => Self::output_with_stdin(&mut cmd, bytes),
+        };
+        let out = match out {
             Ok(o) => o,
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 return Err(BootError::ToolMissing {
@@ -53,15 +104,43 @@ impl SystemRunner {
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
         })
     }
+
+    /// `Command::output` with `bytes` on stdin. A thread feeds the pipe, so
+    /// a tool that fills its own output before it reads cannot deadlock.
+    fn output_with_stdin(cmd: &mut Command, bytes: &[u8]) -> std::io::Result<Output> {
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut pipe = child.stdin.take().expect("stdin is piped");
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                // A tool that exits without reading closes the pipe: its
+                // status, not the broken pipe, tells what went wrong.
+                let _ = pipe.write_all(bytes);
+            });
+            child.wait_with_output()
+        })
+    }
 }
 
 impl Runner for SystemRunner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<(), BootError> {
-        Self::capture(program, args).map(drop)
+        self.capture(program, args, None).map(drop)
     }
 
     fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
-        Self::capture(program, args)
+        self.capture(program, args, None)
+    }
+
+    fn output_stdin(
+        &self,
+        program: &str,
+        args: &[OsString],
+        stdin: &[u8],
+    ) -> Result<String, BootError> {
+        self.capture(program, args, Some(stdin))
     }
 
     fn check_tool(&self, program: &str) -> Result<(), BootError> {
@@ -87,13 +166,13 @@ mod tests {
 
     #[test]
     fn success_is_ok() {
-        assert!(SystemRunner.run("true", &[]).is_ok());
+        assert!(SystemRunner::new().run("true", &[]).is_ok());
     }
 
     #[test]
     fn failure_carries_tool_status_and_stderr() {
         let args = ["-c".into(), "echo boom >&2; exit 3".into()];
-        match SystemRunner.run("sh", &args).unwrap_err() {
+        match SystemRunner::new().run("sh", &args).unwrap_err() {
             BootError::Tool {
                 tool,
                 status,
@@ -109,10 +188,10 @@ mod tests {
 
     #[test]
     fn check_tool_finds_present_and_flags_absent() {
-        assert!(SystemRunner.check_tool("sh").is_ok());
-        assert!(SystemRunner.check_tool("/bin/sh").is_ok());
+        assert!(SystemRunner::new().check_tool("sh").is_ok());
+        assert!(SystemRunner::new().check_tool("/bin/sh").is_ok());
         assert!(matches!(
-            SystemRunner.check_tool("tetsu-no-such-tool-xyz"),
+            SystemRunner::new().check_tool("tetsu-no-such-tool-xyz"),
             Err(BootError::ToolMissing { .. })
         ));
     }
@@ -120,13 +199,13 @@ mod tests {
     #[test]
     fn output_returns_stdout() {
         let args = ["-c".into(), "echo hello; echo noise >&2".into()];
-        assert_eq!(SystemRunner.output("sh", &args).unwrap(), "hello\n");
+        assert_eq!(SystemRunner::new().output("sh", &args).unwrap(), "hello\n");
     }
 
     #[test]
     fn output_failure_carries_tool_status_and_stderr() {
         let args = ["-c".into(), "echo out; echo boom >&2; exit 4".into()];
-        match SystemRunner.output("sh", &args).unwrap_err() {
+        match SystemRunner::new().output("sh", &args).unwrap_err() {
             BootError::Tool {
                 tool,
                 status,
@@ -143,14 +222,17 @@ mod tests {
     #[test]
     fn output_of_an_absent_binary_is_tool_missing() {
         assert!(matches!(
-            SystemRunner.output("tetsu-no-such-tool-xyz", &[]),
+            SystemRunner::new().output("tetsu-no-such-tool-xyz", &[]),
             Err(BootError::ToolMissing { .. })
         ));
     }
 
     #[test]
     fn absent_binary_is_tool_missing() {
-        match SystemRunner.run("tetsu-no-such-tool-xyz", &[]).unwrap_err() {
+        match SystemRunner::new()
+            .run("tetsu-no-such-tool-xyz", &[])
+            .unwrap_err()
+        {
             BootError::ToolMissing { tool } => assert_eq!(tool, "tetsu-no-such-tool-xyz"),
             other => panic!("{other:?}"),
         }
