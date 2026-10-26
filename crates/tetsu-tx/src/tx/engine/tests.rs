@@ -332,6 +332,7 @@ fn update_commits_the_next_snapshot() {
     let record = env.record(2);
     assert_eq!(record.kind, Some(TxKind::Update));
     assert_eq!(record.source, Some(1));
+    assert_eq!(record.running, Some(1));
     assert_eq!(record.changes, report.changes);
     assert_eq!(record.boot, None);
     assert!(record.started_at < record.finished_at && record.started_at.is_some());
@@ -345,6 +346,29 @@ fn update_commits_the_next_snapshot() {
         "{ukify}"
     );
     assert!(env.scratch_dirs().is_empty());
+}
+
+#[test]
+fn a_run_from_a_pending_default_records_the_booted_snapshot_as_running() {
+    let env = Env::new();
+    env.add_snapshot(2, "root:x:0:0:root:/root:/bin/bash\n");
+    // Snapshot 2 is committed but never tried: the pending default.
+    fs::rename(
+        env.esp.dir().join("tetsu-2.efi"),
+        env.esp.dir().join("tetsu-2+3.efi"),
+    )
+    .unwrap();
+    env.records
+        .write(&Record {
+            counter: 2,
+            ..Record::default()
+        })
+        .unwrap();
+    let report = env.run(&Request::Update).unwrap();
+    assert_eq!(report.counter, 3);
+    let record = env.record(3);
+    assert_eq!(record.source, Some(2));
+    assert_eq!(record.running, Some(1));
 }
 
 #[test]

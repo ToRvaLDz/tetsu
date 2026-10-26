@@ -319,6 +319,34 @@ mod tests {
     }
 
     #[test]
+    fn a_record_without_the_running_snapshot_loads_as_none() {
+        let (_d, r) = records();
+        fs::create_dir_all(r.dir()).unwrap();
+        fs::write(
+            r.path(3),
+            r#"{"counter":3,"kind":"update","source":2,"boot":null}"#,
+        )
+        .unwrap();
+        assert_eq!(r.load().unwrap()[&3].running, None);
+    }
+
+    #[test]
+    fn the_running_snapshot_round_trips() {
+        let (_d, r) = records();
+        let x = Record {
+            running: Some(4),
+            ..rec(6)
+        };
+        r.write(&x).unwrap();
+        assert_eq!(r.load().unwrap()[&6].running, Some(4));
+        assert!(
+            fs::read_to_string(r.path(6))
+                .unwrap()
+                .contains("\"running\": 4")
+        );
+    }
+
+    #[test]
     fn missing_dir_is_empty() {
         let (_d, r) = records();
         assert!(r.load().unwrap().is_empty());
