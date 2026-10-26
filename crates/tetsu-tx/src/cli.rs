@@ -26,6 +26,8 @@ pub const EXIT_BUSY: u8 = 3;
 pub const DEFAULT_TOP: &str = "/run/tetsu/top";
 /// Where the ESP is mounted by default.
 pub const DEFAULT_ESP: &str = "/efi";
+/// Where `serve` listens by default.
+pub const DEFAULT_SOCKET: &str = "/run/tetsu/org.tetsu.tx.v1";
 
 /// The usage text.
 pub const USAGE: &str = "\
@@ -37,6 +39,7 @@ commands:
   remove <pkg>...        remove packages of the user layer
   rollback [<n>]         boot snapshot <n> (default: the last good one) again
   list [--json]          show the transactions
+  serve                  answer org.tetsu.tx.v1 on the bus until stopped
 
 options:
   --top <dir>       top-level Btrfs mount   (default /run/tetsu/top)
@@ -47,6 +50,7 @@ options:
   --cache <dir>     package cache           (default /var/cache/pacman/pkg)
   --cmdline <text>  kernel command line of a snapshot without etc/kernel/cmdline
   --booted <n>      booted snapshot, instead of reading /proc/cmdline
+  --socket <file>   bus socket of serve   (default /run/tetsu/org.tetsu.tx.v1)
   -h, --help        this text
 
 exit status: 0 done, 1 the transaction failed, 2 usage, 3 another transaction runs
@@ -61,6 +65,10 @@ pub enum Command {
     Rollback(Option<u64>),
     List {
         json: bool,
+    },
+    /// Answer `org.tetsu.tx.v1` on the bus until stopped.
+    Serve {
+        socket: PathBuf,
     },
     /// Print the usage and stop.
     Help,
@@ -111,6 +119,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut options = Options::default();
     let mut positional: Vec<String> = Vec::new();
     let (mut json, mut help) = (false, false);
+    let mut socket: Option<PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -132,7 +141,11 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     Some(value) => value,
                     None => return Err(UsageError(format!("{name} needs a value"))),
                 };
-                set_option(&mut options, name, value)?;
+                if name == "--socket" {
+                    socket = Some(PathBuf::from(value));
+                } else {
+                    set_option(&mut options, name, value)?;
+                }
             }
             _ => positional.push(arg.clone()),
         }
@@ -140,13 +153,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let command = if help {
         Command::Help
     } else {
-        command_of(positional, json)?
+        command_of(positional, json, socket)?
     };
     Ok(Invocation { command, options })
 }
 
 /// The options that take a value.
-const VALUE_FLAGS: [&str; 8] = [
+const VALUE_FLAGS: [&str; 9] = [
+    "--socket",
     "--top",
     "--esp",
     "--records",
@@ -184,13 +198,20 @@ fn set_option(options: &mut Options, name: &str, value: String) -> Result<(), Us
 }
 
 /// The command and its arguments from the non-option words.
-fn command_of(mut words: Vec<String>, json: bool) -> Result<Command, UsageError> {
+fn command_of(
+    mut words: Vec<String>,
+    json: bool,
+    socket: Option<PathBuf>,
+) -> Result<Command, UsageError> {
     if words.is_empty() {
         return Err(UsageError("no command given".to_owned()));
     }
     let name = words.remove(0);
     if json && name != "list" {
         return Err(UsageError("--json only applies to list".to_owned()));
+    }
+    if socket.is_some() && name != "serve" {
+        return Err(UsageError("--socket only applies to serve".to_owned()));
     }
     let no_arguments = |words: &[String]| match words.first() {
         Some(extra) => Err(UsageError(format!(
@@ -201,6 +222,9 @@ fn command_of(mut words: Vec<String>, json: bool) -> Result<Command, UsageError>
     match name.as_str() {
         "update" => no_arguments(&words).map(|()| Command::Update),
         "list" => no_arguments(&words).map(|()| Command::List { json }),
+        "serve" => no_arguments(&words).map(|()| Command::Serve {
+            socket: socket.unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET)),
+        }),
         "install" | "remove" if words.is_empty() => {
             Err(UsageError(format!("{name} needs at least one package")))
         }

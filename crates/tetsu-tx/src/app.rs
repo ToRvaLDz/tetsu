@@ -8,7 +8,13 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use tetsu_bus::server::bind_system;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::task::LocalSet;
 
 use crate::boot::BootError;
 use crate::boot::esp::Esp;
@@ -19,6 +25,8 @@ use crate::cli::{
     Command, EXIT_FAILED, EXIT_USAGE, Invocation, Options, USAGE, exit_code, list_rows, parse,
     render_error, render_list, render_report,
 };
+use crate::serve::backend::HostBackend;
+use crate::serve::policy::LocalRoot;
 use crate::store::btrfs::{Btrfs, CliBtrfs};
 use crate::store::layout::{Layout, booted_counter};
 use crate::store::record::Records;
@@ -105,6 +113,12 @@ impl Outcome {
 pub fn execute(invocation: &Invocation, host: &Host<'_>) -> Outcome {
     let request = match &invocation.command {
         Command::Help => return Outcome::done(USAGE.to_owned()),
+        Command::Serve { .. } => {
+            return Outcome::failed(
+                "error: serve is run by the program itself\n".to_owned(),
+                EXIT_FAILED,
+            );
+        }
         Command::List { json } => return list(&invocation.options, host, *json),
         Command::Update => Request::Update,
         Command::Install(pkgs) => Request::Install(pkgs.clone()),
@@ -199,6 +213,9 @@ pub fn main(args: &[String]) -> ExitCode {
     };
     // Unreadable: the booted snapshot then has to come from `--booted`.
     let proc_cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    if let Command::Serve { socket } = &invocation.command {
+        return serve_main(&invocation.options, proc_cmdline, socket);
+    }
     let clock = now_secs;
     let host = Host {
         runner: &SystemRunner,
@@ -212,6 +229,51 @@ pub fn main(args: &[String]) -> ExitCode {
     let _ = std::io::stdout().write_all(outcome.stdout.as_bytes());
     let _ = std::io::stderr().write_all(outcome.stderr.as_bytes());
     ExitCode::from(outcome.code)
+}
+
+/// `serve`: answer the bus until SIGTERM or SIGINT. Exit code 1 with a
+/// message when it cannot bind or run.
+fn serve_main(options: &Options, proc_cmdline: String, socket: &Path) -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("tetsu-tx: cannot start the runtime: {e}");
+            return ExitCode::from(EXIT_FAILED);
+        }
+    };
+    let backend = Arc::new(HostBackend {
+        options: options.clone(),
+        proc_cmdline,
+    });
+    let result = LocalSet::new().block_on(&runtime, run_server(backend, socket));
+    // A transaction still running on its thread dies with the process: the
+    // collection of the next transaction recovers whatever it left.
+    runtime.shutdown_background();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("tetsu-tx: {message}");
+            ExitCode::from(EXIT_FAILED)
+        }
+    }
+}
+
+async fn run_server(backend: Arc<HostBackend>, socket: &Path) -> Result<(), String> {
+    let listener =
+        bind_system(socket).map_err(|e| format!("cannot listen on {}: {e}", socket.display()))?;
+    let stop = |e: std::io::Error| format!("cannot watch for signals: {e}");
+    let mut term = signal(SignalKind::terminate()).map_err(stop)?;
+    let mut int = signal(SignalKind::interrupt()).map_err(stop)?;
+    tokio::select! {
+        served = crate::serve::serve(listener, backend, Rc::new(LocalRoot)) => {
+            served.map_err(|e| format!("serving failed: {e}"))
+        }
+        _ = term.recv() => Ok(()),
+        _ = int.recv() => Ok(()),
+    }
 }
 
 #[cfg(test)]
