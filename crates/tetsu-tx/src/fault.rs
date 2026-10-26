@@ -95,8 +95,9 @@ pub fn armed_from(value: Option<&str>) -> Result<Option<Point>, String> {
     }
 }
 
-/// Wait at `point` when it is the `armed` one: write `file` with the name,
-/// say so on stderr, and poll until the file is gone.
+/// Wait at `point` when it is the `armed` one: say so on stderr, write `file`
+/// with the name, and poll until the file is gone. The file comes second: it
+/// is what the harness reacts to, so the line is already in the log by then.
 pub fn pause_at(point: Point, armed: Option<Point>, file: &Path) {
     pause_with(point, armed, file, &mut |line| eprintln!("{line}"));
 }
@@ -109,12 +110,12 @@ fn pause_with(point: Point, armed: Option<Point>, file: &Path, say: &mut dyn FnM
     if let Some(dir) = file.parent() {
         let _ = fs::create_dir_all(dir);
     }
+    say(&format!("tetsu-tx: paused at {}", point.name()));
     if let Err(e) = fs::write(file, format!("{}\n", point.name())) {
         // Without the file nobody can release the wait: go on.
         say(&format!("tetsu-tx: cannot write {}: {e}", file.display()));
         return;
     }
-    say(&format!("tetsu-tx: paused at {}", point.name()));
     while file.exists() {
         thread::sleep(POLL);
     }
@@ -221,15 +222,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("paused-at");
         // The file is the handle the harness reacts to: the line must be out
-        // by the time it exists, and removing it is what ends the wait.
+        // by the time it exists. The releaser stands in for the harness.
+        let releaser = {
+            let file = file.clone();
+            std::thread::spawn(move || {
+                while !file.exists() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                fs::remove_file(&file).unwrap();
+            })
+        };
         let mut lines = Vec::new();
         let mut file_existed_at_say = None;
         let probe = file.clone();
         pause_with(Point::Renamed, Some(Point::Renamed), &file, &mut |l| {
             file_existed_at_say = Some(probe.exists());
             lines.push(l.to_owned());
-            let _ = fs::remove_file(&probe);
         });
+        releaser.join().unwrap();
         assert_eq!(lines, ["tetsu-tx: paused at renamed"]);
         assert_eq!(file_existed_at_say, Some(false));
     }
@@ -244,7 +254,7 @@ mod tests {
         pause_with(Point::Renamed, Some(Point::Renamed), &file, &mut |l| {
             lines.push(l.to_owned())
         });
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].starts_with("tetsu-tx: cannot write "), "{lines:?}");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[1].starts_with("tetsu-tx: cannot write "), "{lines:?}");
     }
 }
