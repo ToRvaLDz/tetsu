@@ -25,8 +25,12 @@ use crate::store::{Begun, Store, snapshot};
 
 mod packages;
 #[cfg(test)]
+mod pause_tests;
+#[cfg(test)]
 mod progress_tests;
 mod rollback;
+#[cfg(test)]
+mod rollback_tests;
 #[cfg(test)]
 mod tests;
 

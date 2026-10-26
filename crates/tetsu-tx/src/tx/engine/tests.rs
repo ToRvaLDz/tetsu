@@ -10,7 +10,6 @@ use std::rc::Rc;
 use super::*;
 use crate::boot::BootError;
 use crate::boot::keys::KeyRef;
-use crate::fault::{self, Point};
 use crate::store::btrfs::tests::FakeBtrfs;
 use crate::store::lock::TxLock;
 use crate::store::record::{BootVerdict, Record};
@@ -34,7 +33,7 @@ Provides        : None
 ";
 const QQE: &str = "tetsu-base\nvim\n";
 const AFTER: &str = "bash 5.2-1\ntetsu-base 1-1\nvim 9.1-1\n";
-const INITRD: &str = "usr/lib/tetsu/initrd.img";
+pub(super) const INITRD: &str = "usr/lib/tetsu/initrd.img";
 
 struct Plenty;
 
@@ -46,7 +45,7 @@ impl SpaceProbe for Plenty {
 
 /// Everything on disk a failed transaction must leave alone.
 #[derive(Debug, PartialEq, Eq)]
-struct State {
+pub(super) struct State {
     snapshots: Vec<u64>,
     esp: Vec<String>,
     records: Vec<String>,
@@ -54,10 +53,10 @@ struct State {
 
 pub(super) struct Env {
     _tmp: tempfile::TempDir,
-    layout: Layout,
-    records: Records,
-    esp: Esp,
-    btrfs: FakeBtrfs,
+    pub(super) layout: Layout,
+    pub(super) records: Records,
+    pub(super) esp: Esp,
+    pub(super) btrfs: FakeBtrfs,
     pub(super) lock: PathBuf,
     run_dir: PathBuf,
     cache: PathBuf,
@@ -210,7 +209,7 @@ impl Env {
         self.engine(&self.runner).run(request)
     }
 
-    fn names(dir: &Path) -> Vec<String> {
+    pub(super) fn names(dir: &Path) -> Vec<String> {
         let mut v: Vec<String> = fs::read_dir(dir)
             .map(|r| {
                 r.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -221,7 +220,7 @@ impl Env {
         v
     }
 
-    fn state(&self) -> State {
+    pub(super) fn state(&self) -> State {
         State {
             snapshots: self.layout.list_snapshots().unwrap(),
             esp: Self::names(self.esp.dir()),
@@ -249,7 +248,7 @@ impl Env {
     }
 
     /// The system is as it was and the next transaction can start.
-    fn assert_unchanged(&self, before: &State, what: &str) {
+    pub(super) fn assert_unchanged(&self, before: &State, what: &str) {
         assert_eq!(&self.state(), before, "{what}");
         assert!(self.scratch_dirs().is_empty(), "{what}: scratch left");
         TxLock::acquire(&self.lock).unwrap_or_else(|e| panic!("{what}: lock held: {e}"));
@@ -268,7 +267,7 @@ fn change(name: &str, from: Option<&str>, to: Option<&str>) -> PackageChange {
     }
 }
 
-fn failure(e: TxError) -> (String, Option<String>) {
+pub(super) fn failure(e: TxError) -> (String, Option<String>) {
     match e {
         TxError::Failed {
             reason, proposal, ..
@@ -717,105 +716,6 @@ fn failures_after_the_commit_are_warnings() {
 }
 
 #[test]
-fn rollback_builds_the_new_snapshot_from_the_target() {
-    let env = Env::two_snapshots();
-    let report = env.run(&Request::Rollback(Some(1))).unwrap();
-    assert_eq!(report.counter, 3);
-    assert_eq!(report.kind, TxKind::Rollback);
-    assert!(report.changes.is_empty());
-    assert_eq!(
-        fs::read_to_string(env.layout.root(3).join("tag")).unwrap(),
-        "from-1"
-    );
-    assert_eq!(
-        fs::read_to_string(env.layout.root(3).join(INITRD)).unwrap(),
-        "initrd-1"
-    );
-    assert!(env.layout.is_committed(3));
-    assert!(Env::names(env.esp.dir()).contains(&"tetsu-3+3.efi".to_owned()));
-    let record = env.record(3);
-    assert_eq!(record.kind, Some(TxKind::Rollback));
-    assert_eq!(record.source, Some(1));
-    assert_eq!(record.rolled_back_from, Some(2));
-}
-
-#[test]
-fn rollback_runs_no_pacman_and_no_initrd_build() {
-    let env = Env::two_snapshots();
-    env.run(&Request::Rollback(Some(1))).unwrap();
-    let lines = env.runner.lines();
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].starts_with("ukify "), "{lines:?}");
-}
-
-#[test]
-fn rollback_without_a_target_goes_to_the_last_good_snapshot() {
-    let env = Env::two_snapshots();
-    let report = env.run(&Request::Rollback(None)).unwrap();
-    assert_eq!(report.counter, 3);
-    assert_eq!(env.record(3).source, Some(1));
-}
-
-#[test]
-fn rollback_keeps_the_accounts_of_the_running_system() {
-    let env = Env::two_snapshots();
-    env.run(&Request::Rollback(Some(1))).unwrap();
-    let passwd = fs::read_to_string(env.layout.etc(3).join("passwd")).unwrap();
-    assert_eq!(
-        passwd,
-        "root:x:0:0:root:/root:/bin/zsh\nmarco:x:1000:1000::/home/marco:/bin/bash\n"
-    );
-    // The rest of /etc is the target's, with no general sync.
-    assert_eq!(
-        fs::read_to_string(env.layout.etc(3).join("kernel/cmdline")).unwrap(),
-        "quiet\n"
-    );
-}
-
-#[test]
-fn rollback_to_an_unknown_or_uncommitted_snapshot_is_not_found() {
-    let env = Env::two_snapshots();
-    // Snapshot 7 has a record (so it is no orphan) but was never committed.
-    env.btrfs.adopt(&env.layout.root(7));
-    env.records
-        .write(&Record {
-            counter: 7,
-            ..Record::default()
-        })
-        .unwrap();
-    let before = env.state();
-    for target in [9, 7] {
-        let e = env.run(&Request::Rollback(Some(target))).unwrap_err();
-        assert!(
-            matches!(e, TxError::SnapshotNotFound(n) if n == target),
-            "{e:?}"
-        );
-    }
-    env.assert_unchanged(&before, "unknown target");
-    assert!(env.runner.lines().is_empty());
-}
-
-#[test]
-fn rollback_with_no_good_older_snapshot_is_not_found() {
-    let env = Env::new();
-    let before = env.state();
-    let e = env.run(&Request::Rollback(None)).unwrap_err();
-    assert!(matches!(e, TxError::SnapshotNotFound(_)), "{e:?}");
-    env.assert_unchanged(&before, "no target");
-}
-
-#[test]
-fn rollback_to_a_snapshot_without_an_initrd_fails_cleanly() {
-    let env = Env::two_snapshots();
-    fs::remove_file(env.layout.root(1).join(INITRD)).unwrap();
-    let before = env.state();
-    let (reason, _) = failure(env.run(&Request::Rollback(Some(1))).unwrap_err());
-    assert!(reason.contains("initrd"), "{reason}");
-    env.assert_unchanged(&before, "missing initrd");
-    assert!(env.runner.lines().is_empty());
-}
-
-#[test]
 fn every_container_binds_the_configured_cache_including_the_initrd_build() {
     let env = Env::new();
     env.run(&Request::Update).unwrap();
@@ -826,32 +726,4 @@ fn every_container_binds_the_configured_cache_including_the_initrd_build() {
         assert!(l.contains(&bind), "{l}");
     }
     assert!(lines.iter().any(|l| l.contains("mkinitcpio")));
-}
-
-#[test]
-fn an_update_reaches_every_pause_point_in_protocol_order() {
-    let env = Env::new();
-    fault::take_seen();
-    env.run(&Request::Update).unwrap();
-    assert_eq!(fault::take_seen(), Point::ALL);
-}
-
-#[test]
-fn an_install_reaches_every_pause_point_in_protocol_order() {
-    let env = Env::new();
-    fault::take_seen();
-    env.run(&Request::Install(pkgs(&["vim"]))).unwrap();
-    assert_eq!(fault::take_seen(), Point::ALL);
-}
-
-#[test]
-fn a_rollback_has_no_package_phase_to_pause_in() {
-    let env = Env::two_snapshots();
-    fault::take_seen();
-    env.run(&Request::Rollback(Some(1))).unwrap();
-    let expected: Vec<Point> = Point::ALL
-        .into_iter()
-        .filter(|p| !matches!(p, Point::Downloaded | Point::Installed))
-        .collect();
-    assert_eq!(fault::take_seen(), expected);
 }
