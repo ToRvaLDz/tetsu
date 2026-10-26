@@ -338,6 +338,37 @@ mod tests {
         }
     }
 
+    const NSPAWN_NOTE: &str = "Note: in a future version of systemd-nspawn the default set of \
+        permitted socket address families will be restricted to AF_INET, AF_INET6 and AF_UNIX.";
+
+    #[test]
+    fn the_nspawn_note_is_not_the_failure_reason() {
+        let r = ScriptedRunner::new();
+        let pacman = "error: failed retrieving file 'core.db' from mirror";
+        r.on_tail(
+            &["pacman", "-Suw", "--noconfirm"],
+            Reply::Fail(format!("{NSPAWN_NOTE}\n{pacman}\n")),
+        );
+        match update_download(&r, &ns()).unwrap_err() {
+            TxError::Failed { reason, log, .. } => {
+                assert_eq!(reason, format!("update download failed: {pacman}"));
+                assert_eq!(log, [pacman]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_stderr_of_only_the_nspawn_note_reads_as_a_plain_failure() {
+        let r = ScriptedRunner::new();
+        r.on_tail(
+            &["pacman", "-Suw", "--noconfirm"],
+            Reply::Fail(NSPAWN_NOTE.into()),
+        );
+        let err = update_download(&r, &ns()).unwrap_err();
+        assert!(reason(err).starts_with("update download failed ("));
+    }
+
     #[test]
     fn orphans_are_listed_and_removed_with_rns() {
         let r = ScriptedRunner::new();
