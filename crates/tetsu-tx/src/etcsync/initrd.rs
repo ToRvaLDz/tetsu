@@ -289,6 +289,21 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_sync_and_a_failed_unmount_are_both_told() {
+        let env = Env::new(CMDLINE);
+        let runner = ScriptedRunner::new();
+        runner.on_effect(&["mount"], |line| {
+            let top = Path::new(line.last().unwrap());
+            build(top);
+            fs::write(top.join("@var/lib/tetsu/etc-sync"), "in the way").unwrap();
+        });
+        runner.on(&["umount"], Reply::Fail("target is busy".into()));
+        let err = run(&env.paths, &runner).unwrap_err().to_string();
+        assert!(err.contains("still mounted"), "{err}");
+        assert!(err.contains("etc-sync"), "{err}");
+    }
+
+    #[test]
     fn a_failed_mount_is_an_error_and_leaves_nothing_behind() {
         let env = Env::new(CMDLINE);
         let runner = ScriptedRunner::new();
