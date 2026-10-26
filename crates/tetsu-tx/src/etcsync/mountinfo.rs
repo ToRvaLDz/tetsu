@@ -1,6 +1,7 @@
 //! The device behind a mount point, from `/proc/self/mountinfo`.
 
 use super::SyncError;
+use crate::mountinfo::unescape;
 
 /// The source device of the btrfs filesystem mounted at `mount_point`; the
 /// last mount there wins. Fails when nothing is mounted there or it is not
@@ -31,31 +32,6 @@ pub fn source_of(mountinfo: &str, mount_point: &str) -> Result<String, SyncError
             "nothing is mounted at {mount_point}"
         ))),
     }
-}
-
-/// Decode the `\040` style octal escapes of mountinfo fields.
-pub(crate) fn unescape(field: &str) -> String {
-    let bytes = field.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let octal = (bytes[i] == b'\\')
-            .then(|| bytes.get(i + 1..i + 4))
-            .flatten()
-            .filter(|d| d.iter().all(|c| (b'0'..=b'7').contains(c)))
-            .and_then(|d| u8::from_str_radix(std::str::from_utf8(d).ok()?, 8).ok());
-        match octal {
-            Some(b) => {
-                out.push(b);
-                i += 4;
-            }
-            None => {
-                out.push(bytes[i]);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]

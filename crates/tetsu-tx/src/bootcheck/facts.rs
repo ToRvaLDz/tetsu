@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::etcsync::mountinfo::unescape;
+use crate::mountinfo::unescape;
 
 /// State of `greetd.service`.
 #[derive(Clone, Debug, PartialEq, Eq)]
