@@ -342,7 +342,7 @@ mod tests {
         }
     }
 
-    const NSPAWN_NOTE: &str = "Note: in a future version of systemd-nspawn the default set of \
+    const NSPAWN_NOTE_LINE: &str = "Note: in a future version of systemd-nspawn the default set of \
         permitted socket address families will be restricted to AF_INET, AF_INET6 and AF_UNIX.";
 
     #[test]
@@ -351,7 +351,7 @@ mod tests {
         let pacman = "error: failed retrieving file 'core.db' from mirror";
         r.on_tail(
             &["pacman", "-Suw", "--noconfirm"],
-            Reply::Fail(format!("{NSPAWN_NOTE}\n{pacman}\n")),
+            Reply::Fail(format!("{NSPAWN_NOTE_LINE}\n{pacman}\n")),
         );
         match update_download(&r, &ns()).unwrap_err() {
             TxError::Failed { reason, log, .. } => {
@@ -367,7 +367,7 @@ mod tests {
         let r = ScriptedRunner::new();
         r.on_tail(
             &["pacman", "-Suw", "--noconfirm"],
-            Reply::Fail(NSPAWN_NOTE.into()),
+            Reply::Fail(NSPAWN_NOTE_LINE.into()),
         );
         let err = update_download(&r, &ns()).unwrap_err();
         assert!(reason(err).starts_with("update download failed ("));
