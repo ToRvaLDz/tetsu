@@ -5,7 +5,14 @@
 //! transaction writes, and it does nothing unless `TETSU_TX_PAUSE_AT` names
 //! a point.
 
+use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
+use std::thread;
+use std::time::Duration;
+
+/// How often a paused transaction looks for the pause file to be gone.
+const POLL: Duration = Duration::from_millis(200);
 
 /// Environment variable naming the point to pause at.
 pub const PAUSE_ENV: &str = "TETSU_TX_PAUSE_AT";
@@ -52,27 +59,73 @@ impl Point {
 
     /// The name used in the environment and in the log line.
     pub fn name(self) -> &'static str {
-        todo!()
+        match self {
+            Self::GcDone => "gc-done",
+            Self::Snapshot => "snapshot",
+            Self::Downloaded => "downloaded",
+            Self::Installed => "installed",
+            Self::Sealed => "sealed",
+            Self::UkiStaged => "uki-staged",
+            Self::Renamed => "renamed",
+            Self::Committed => "committed",
+            Self::Recorded => "recorded",
+        }
     }
 
     /// The point called `name`.
     pub fn parse(name: &str) -> Result<Point, String> {
-        let _ = name;
-        todo!()
+        Self::ALL
+            .into_iter()
+            .find(|p| p.name() == name)
+            .ok_or_else(|| {
+                let valid: Vec<&str> = Self::ALL.iter().map(|p| p.name()).collect();
+                format!(
+                    "unknown pause point {name} in {PAUSE_ENV} (valid: {})",
+                    valid.join(", ")
+                )
+            })
     }
 }
 
-/// The point named by `value` of [`PAUSE_ENV`]; `None` when unset.
+/// The point named by `value` of [`PAUSE_ENV`]; `None` when unset or empty.
 pub fn armed_from(value: Option<&str>) -> Result<Option<Point>, String> {
-    let _ = value;
-    todo!()
+    match value {
+        None | Some("") => Ok(None),
+        Some(name) => Point::parse(name).map(Some),
+    }
 }
 
 /// Wait at `point` when it is the `armed` one: write `file` with the name,
 /// say so on stderr, and poll until the file is gone.
 pub fn pause_at(point: Point, armed: Option<Point>, file: &Path) {
-    let _ = (point, armed, file);
-    todo!()
+    if armed != Some(point) {
+        return;
+    }
+    if let Some(dir) = file.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Err(e) = fs::write(file, format!("{}\n", point.name())) {
+        // Without the file nobody can release the wait: go on.
+        eprintln!("tetsu-tx: cannot write {}: {e}", file.display());
+        return;
+    }
+    eprintln!("tetsu-tx: paused at {}", point.name());
+    while file.exists() {
+        thread::sleep(POLL);
+    }
+}
+
+/// The point the CLI armed, if any.
+static ARMED: OnceLock<Point> = OnceLock::new();
+
+/// Arm `point` for this process; only the CLI calls it.
+pub fn arm(point: Point) {
+    let _ = ARMED.set(point);
+}
+
+/// The transaction is at `point`: wait here when it is the armed one.
+pub fn reach(point: Point) {
+    pause_at(point, ARMED.get().copied(), Path::new(PAUSE_FILE));
 }
 
 #[cfg(test)]
