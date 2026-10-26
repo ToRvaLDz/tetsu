@@ -220,3 +220,51 @@ seal's own question), and balanced the new PIN twice.
 
 Test hooks: `TETSU_VM_KVM=0|1` forces TCG/KVM in the command line,
 `TETSU_VM_QEMU_COMM` / `TETSU_VM_SWTPM_COMM` change the expected process names.
+
+## Transaction acceptance
+
+`tools/vm/tests/tx.sh` is the acceptance test of the transactions (ticket #48):
+`tetsu-tx update`, `rollback`, a power cut at every step of the commit protocol
+and the fallback after three failed boots, on a system installed by the medium.
+It sources the helpers of `tests/guest.sh`, shared with `install.sh`.
+
+```sh
+image/build                                   # after every change of tetsu-tx
+tools/vm/tests/tx.sh base                     # the install the cases start from
+tools/vm/tests/tx.sh rollback
+tools/vm/tests/tx.sh power-cut renamed        # one pause point, or: power-cut all
+tools/vm/tests/tx.sh fallback
+tools/vm/tests/tx.sh all                      # an hour or more: every case downloads an update
+```
+
+Exit 77 (skip) like `install.sh`. One paranoid install (an answers volume, no
+TPM binding, so copies of the disk are independent) builds the base in
+`target/vm-tx/base/`; a case that finds it ready reuses it (remove
+`target/vm-tx/base/ready` to rebuild). Every case runs on a qcow2 overlay of
+the base disk with its own copy of VARS and TPM state. Work files and serial
+logs go to `target/vm-tx/<case>/` (`TETSU_TX_WORK`).
+
+| Case | What it checks |
+|------|----------------|
+| `rollback` | on snapshot 1: `tetsu-tx update` (2, pending), `install tree` (3, built from 2), boot 3 and change `/etc` and the accounts, `tetsu-tx rollback` (the newest good one older than 3 is 1, since 2 never booted); snapshot 4 boots with the package list of 1 (checksum of `pacman -Q`), no `tree`, the file made before the transactions, no `/etc` file made on 3 (a rollback does not sync `/etc`) but the merged account |
+| `power-cut POINT` | `tetsu-tx update` is held at POINT and the power is cut; the system boots a complete snapshot (the expected one, `btrfs property get / ro` is true, a committed ESP entry, the boot check passes); the next transaction, held at `gc-done`, shows the leftovers collected (no snapshot without a committed UKI, no `.efi.tmp`) and a record for every entry on the ESP |
+| `fallback` | an update held at `installed` gets an enabled failing `tetsu-vm-broken.service` in its snapshot; three boots of snapshot 2 fail the boot check (`tetsu-2+2-1.efi`, `+1-2`, `+0-3`), the fourth runs snapshot 1 and the record of 2 says `bad` |
+
+The pause points are a test hook of `tetsu-tx`: with `TETSU_TX_PAUSE_AT=<point>`
+in its environment a transaction writes the point name to `/run/tetsu/paused-at`,
+prints `tetsu-tx: paused at <point>` on stderr and waits until that file is
+removed (the harness cuts the power instead, or removes it to go on). The hook
+only waits, never changes what is written, and does nothing when the variable
+is unset (`serve` ignores it). In protocol order:
+
+| Point | Reached | Boots after a cut |
+|-------|---------|-------------------|
+| `gc-done` | leftovers collected, before the snapshot | 1 |
+| `snapshot` | the new snapshot exists | 1 |
+| `downloaded` | packages downloaded (not for a rollback or a remove) | 1 |
+| `installed` | package phase done (not for a rollback), snapshot not sealed | 1 |
+| `sealed` | the snapshot is sealed read-only | 1 |
+| `uki-staged` | `tetsu-<n>.efi.tmp` written and synced | 1 |
+| `renamed` | renamed into place, ESP directory not synced yet (the FAT rename) | 1 or 2 (on trial) |
+| `committed` | the entry is committed and synced | 2 (on trial) |
+| `recorded` | the record is written, retention has not run | 2 (on trial) |
