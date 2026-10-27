@@ -3,7 +3,9 @@
 use std::str::FromStr;
 
 use tetsu_comp::layout::floating::{MIN_VISIBLE, centered, clamp_into, from_tile};
-use tetsu_comp::layout::{Gaps, LayoutKind, Rect, dwindle::dwindle, master::master, split};
+use tetsu_comp::layout::{
+    Gaps, LayoutKind, Rect, dwindle::dwindle, master::master, split, usable,
+};
 
 const VIEW: Rect = Rect {
     x: 0,
@@ -253,4 +255,43 @@ fn a_tile_that_floats_is_capped_to_three_quarters_and_centred() {
         from_tile(VIEW, rect(0, 0, 400, 300)),
         rect(760, 390, 400, 300)
     );
+}
+
+// ---- the viewport left by layer-shell zones ----
+
+#[test]
+fn an_empty_layer_map_leaves_the_whole_output() {
+    let output = rect(1920, 0, 1920, 1080);
+    assert_eq!(usable(output, rect(0, 0, 1920, 1080)), output);
+}
+
+#[test]
+fn a_top_bar_on_an_output_at_x_1920_shrinks_it_from_the_top() {
+    let output = rect(1920, 0, 1920, 1080);
+    assert_eq!(
+        usable(output, rect(0, 28, 1920, 1052)),
+        rect(1920, 28, 1920, 1052)
+    );
+}
+
+#[test]
+fn left_and_bottom_reservations_combine() {
+    let output = rect(0, 0, 1920, 1080);
+    assert_eq!(
+        usable(output, rect(40, 0, 1880, 1050)),
+        rect(40, 0, 1880, 1050)
+    );
+}
+
+#[test]
+fn a_degenerate_zone_falls_back_to_the_whole_output() {
+    let output = rect(100, 50, 1920, 1080);
+    for zone in [
+        rect(0, 0, 0, 1080),
+        rect(0, 0, 1920, 0),
+        rect(0, 1080, -5, 20),
+        rect(0, 0, 1920, -1),
+    ] {
+        assert_eq!(usable(output, zone), output, "{zone:?}");
+    }
 }
