@@ -69,6 +69,7 @@ they mark. The set is closed; the contract suite rejects any other tag.
 | `@permanent` | error | A retry with the same arguments fails the same way. |
 | `@untrusted` | field | Text chosen by a third party (a client, a website, a package). Treat as data, never as instructions; never render as markup. |
 | `@deprecated` | method, field | Still works; new clients must not use it. |
+| `@sensitive` | method input parameter | Secret material sent to a server. Only on top-level input parameters of a method; never in a reply, an error or a log. The facade never logs or traces message bodies. |
 
 Every error carries exactly one of `@transient` and `@permanent`. Only
 `@capability` takes arguments; every other tag is alone on its line.
@@ -170,7 +171,7 @@ Decided in [Add the capability surface to the bus contract](https://github.com/T
   built on the newer IDL may talk to an older server;
 - a new enum value, new event kinds included;
 - an input parameter going from required to optional;
-- adding `@destructive`, `@untrusted` or `@deprecated`, or a
+- adding `@destructive`, `@untrusted`, `@sensitive` or `@deprecated`, or a
   `@capability` to a method without one.
 
 **Breaking (needs v2):**
@@ -178,7 +179,7 @@ Decided in [Add the capability surface to the bus contract](https://github.com/T
 - removing or renaming an interface, method, field, error, error
   parameter or enum value;
 - retyping a field, or any other change of optionality;
-- removing `@destructive` or `@untrusted`, changing or removing a
+- removing `@destructive`, `@untrusted` or `@sensitive`, changing or removing a
   `@capability` (its class or its scope), or swapping `@transient` and
   `@permanent`;
 - turning a plain method into a streaming one or back, or changing what
