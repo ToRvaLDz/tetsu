@@ -32,6 +32,13 @@ pub(super) struct Workspaces {
     events: Vec<WorkspaceEvent>,
 }
 
+/// The `<n>` of a `ws-<n>` id; ids without one sort last.
+fn creation_number(id: &str) -> u64 {
+    id.strip_prefix("ws-")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(u64::MAX)
+}
+
 impl Workspaces {
     /// Adds output `id` named `name`: workspaces homed on that name come
     /// back at their old indices, workspaces without an output are
@@ -99,7 +106,8 @@ impl Workspaces {
             .filter(|w| w.output_id.is_none())
             .map(|w| (w.index, w.id.clone()))
             .collect();
-        orphans.sort();
+        // Equal indices: creation order, by the number in "ws-<n>".
+        orphans.sort_by_key(|(index, ws)| (*index, creation_number(ws), ws.clone()));
         let mut adopted = Vec::new();
         for (_, ws) in orphans {
             let next = self.highest(id).map_or(0, |h| h + 1);
@@ -313,5 +321,33 @@ impl Workspaces {
     pub(super) fn output_name(&self, output_id: &str) -> Option<&str> {
         let output = self.outputs.iter().find(|o| o.id == output_id)?;
         Some(&output.name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn orphan(id: &str, index: i64) -> Workspace {
+        Workspace {
+            id: id.into(),
+            name: None,
+            output_id: None,
+            index,
+        }
+    }
+
+    #[test]
+    fn orphans_with_the_same_index_are_adopted_in_numeric_id_order() {
+        let mut workspaces = Workspaces {
+            list: vec![orphan("ws-10", 0), orphan("ws-9", 0)],
+            ..Workspaces::default()
+        };
+        let adopted: Vec<_> = workspaces
+            .adopt("out-1")
+            .into_iter()
+            .map(|(ws, _)| ws)
+            .collect();
+        assert_eq!(adopted, ["ws-9", "ws-10"]);
     }
 }
