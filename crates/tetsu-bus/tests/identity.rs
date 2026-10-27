@@ -121,7 +121,9 @@ mod gone {
                 // Hand the socket to a child that reports when the server
                 // closes it, then exit: the connector is gone.
                 let marker = std::env::var(MARKER).unwrap();
-                Command::new("sh")
+                // Orphaned on purpose: it must outlive this helper.
+                #[allow(clippy::zombie_processes)]
+                let _orphan = Command::new("sh")
                     .args(["-c", "cat >/dev/null; : > \"$1\"", "sh", &marker])
                     .stdin(Stdio::from(OwnedFd::from(stream)))
                     .stdout(Stdio::null())
