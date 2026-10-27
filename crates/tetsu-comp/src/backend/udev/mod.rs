@@ -46,6 +46,7 @@ use smithay::reexports::input::Libinput;
 use smithay::utils::Point;
 
 use crate::gpu::assign::OutputPlan;
+use crate::lock::glue::View;
 use crate::state::State;
 
 use feedback::SurfaceDmabufFeedback;
@@ -87,6 +88,9 @@ struct Head {
     /// Where this output's buffers are scanned out from.
     target: DrmNode,
     feedback: Option<SurfaceDmabufFeedback>,
+    /// Whether each queued, not yet presented frame was rendered in the
+    /// locked scene; the next vblank presents the first.
+    in_flight: std::collections::VecDeque<bool>,
 }
 
 /// The tty backend's state.
@@ -96,6 +100,8 @@ pub struct Tty {
     devices: Vec<Device>,
     heads: Vec<Head>,
     cursor_id: Id,
+    /// The id of the lock backdrop.
+    lock_id: Id,
     libinput: Libinput,
     wait_for_frame_completion: bool,
     /// The `linux-dmabuf` global, kept alive for the session.
@@ -121,6 +127,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn Error>> {
         devices: Vec::new(),
         heads: Vec::new(),
         cursor_id: Id::new(),
+        lock_id: Id::new(),
         libinput: libinput_for(&session, &seat)?,
         wait_for_frame_completion: state.render_settings.wait_for_frame_completion,
         dmabuf_global: None,
@@ -181,11 +188,27 @@ fn libinput_for(session: &LibSeatSession, seat: &str) -> Result<Libinput, Box<dy
 impl State {
     /// A frame reached the screen: draw the next one.
     fn frame_done(&mut self, node: DrmNode, crtc: crtc::Handle) {
+        let mut presented = None;
         if let Some(tty) = self.tty.as_mut()
-            && let Some(head) = tty.heads.iter().find(|h| h.node == node && h.crtc == crtc)
-            && let Err(e) = head.drm_output.frame_submitted()
+            && let Some(head) = tty
+                .heads
+                .iter_mut()
+                .find(|h| h.node == node && h.crtc == crtc)
         {
-            eprintln!("tetsu-comp: frame_submitted: {e}");
+            match head.drm_output.frame_submitted() {
+                // A frame reached the screen: it counts for the lock only if
+                // it was rendered in the locked scene.
+                Ok(_) => {
+                    presented = Some((
+                        head.output.clone(),
+                        head.in_flight.pop_front().unwrap_or(false),
+                    ));
+                }
+                Err(e) => eprintln!("tetsu-comp: frame_submitted: {e}"),
+            }
+        }
+        if let Some((output, locked)) = presented {
+            self.output_presented(&output, locked);
         }
         self.render_crtc(node, crtc);
     }
@@ -203,6 +226,13 @@ impl State {
 
     /// Draws a frame; with nothing to draw, tries again next frame time.
     fn render_crtc(&mut self, node: DrmNode, crtc: crtc::Handle) {
+        // Decided before the renderer is borrowed: what this head may show.
+        let view = self
+            .tty
+            .as_ref()
+            .and_then(|t| t.heads.iter().find(|h| h.node == node && h.crtc == crtc))
+            .map(|h| h.output.clone())
+            .map_or(View::Normal, |output| self.view(&output));
         let Some(mut tty) = self.tty.take() else {
             return;
         };
@@ -210,7 +240,7 @@ impl State {
             .seat
             .get_pointer()
             .map_or_else(Point::default, |p| p.current_location());
-        let rendered = tty.render(&self.space, pointer, node, crtc);
+        let rendered = tty.render(&self.space, &view, pointer, node, crtc);
         let head = tty.heads.iter().find(|h| h.node == node && h.crtc == crtc);
         let known = head.is_some();
         let output = head.map(|h| h.output.clone());
@@ -255,8 +285,15 @@ impl State {
                 for device in &mut tty.devices {
                     device.manager.pause();
                 }
+                // Queued frames never reach the screen now.
+                for head in &mut tty.heads {
+                    head.in_flight.clear();
+                }
             }
             SessionEvent::ActivateSession => {
+                for head in &mut tty.heads {
+                    head.in_flight.clear();
+                }
                 if tty.libinput.resume().is_err() {
                     eprintln!("tetsu-comp: cannot resume libinput");
                 }

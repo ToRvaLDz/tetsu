@@ -2,13 +2,17 @@
 //! development.
 
 use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
+use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::element::surface::{
+    WaylandSurfaceRenderElement, render_elements_from_surface_tree,
+};
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::{self, WinitEvent};
 use smithay::utils::{Rectangle, Transform};
 
 use crate::input::ModKey;
-use crate::render::CLEAR_COLOR;
+use crate::lock::glue::View;
+use crate::render::{CLEAR_COLOR, LOCK_COLOR};
 use crate::state::State;
 
 /// The output's name.
@@ -33,34 +37,70 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {
                 let size = backend.window_size();
+                // The scene is decided once per frame, here and nowhere else.
+                let view = state.view(&output);
+                let mut drawn = false;
                 {
                     let Ok((renderer, mut framebuffer)) = backend.bind() else {
                         return;
                     };
-                    let rendered = smithay::desktop::space::render_output::<
-                        _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
-                        _,
-                        _,
-                    >(
-                        &output,
-                        renderer,
-                        &mut framebuffer,
-                        1.0,
-                        0,
-                        [&state.space],
-                        &[],
-                        &mut damage_tracker,
-                        CLEAR_COLOR,
-                    );
-                    if let Err(e) = rendered {
-                        eprintln!("tetsu-comp: render failed: {e}");
+                    let rendered = match &view {
+                        View::Normal => smithay::desktop::space::render_output::<
+                            _,
+                            WaylandSurfaceRenderElement<GlesRenderer>,
+                            _,
+                            _,
+                        >(
+                            &output,
+                            renderer,
+                            &mut framebuffer,
+                            1.0,
+                            0,
+                            [&state.space],
+                            &[],
+                            &mut damage_tracker,
+                            CLEAR_COLOR,
+                        )
+                        .map(|_| ()),
+                        // Locked: the lock surface over a solid colour; no
+                        // space, so no window can show.
+                        View::Locked(surface) => {
+                            let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = surface
+                                .as_ref()
+                                .map(|surface| {
+                                    render_elements_from_surface_tree(
+                                        renderer,
+                                        surface,
+                                        (0, 0),
+                                        1.0,
+                                        1.0,
+                                        Kind::Unspecified,
+                                    )
+                                })
+                                .unwrap_or_default();
+                            damage_tracker
+                                .render_output(renderer, &mut framebuffer, 0, &elements, LOCK_COLOR)
+                                .map(|_| ())
+                        }
+                    };
+                    match rendered {
+                        Ok(()) => drawn = true,
+                        Err(e) => eprintln!("tetsu-comp: render failed: {e}"),
                     }
                 }
-                if let Err(e) = backend.submit(Some(&[Rectangle::from_size(size)])) {
-                    eprintln!("tetsu-comp: swap failed: {e}");
+                match backend.submit(Some(&[Rectangle::from_size(size)])) {
+                    // Presented: only now does a locked frame count.
+                    Ok(()) if drawn => {
+                        let locked = matches!(view, View::Locked(_));
+                        state.send_frames(&output);
+                        state.output_presented(&output, locked);
+                    }
+                    Ok(()) => state.send_frames(&output),
+                    Err(e) => {
+                        eprintln!("tetsu-comp: swap failed: {e}");
+                        state.send_frames(&output);
+                    }
                 }
-                state.send_frames(&output);
                 backend.window().request_redraw();
             }
             WinitEvent::CloseRequested => state.loop_signal.stop(),
