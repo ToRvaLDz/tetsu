@@ -12,13 +12,15 @@ use smithay::backend::input::{
 };
 use smithay::desktop::WindowSurfaceType;
 use smithay::input::keyboard::{FilterResult, Keysym, ModifiersState, keysyms};
-use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
+use smithay::input::pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 
 use crate::engine::Action as EngineAction;
 use crate::state::State;
 
+/// Linux evdev code of the left mouse button.
+const BTN_LEFT: u32 = 0x110;
 /// Wheel clicks are 120 units; a click scrolls this many pixels.
 const PIXELS_PER_CLICK: f64 = 15.0;
 const CLICK_UNITS: f64 = 120.0;
@@ -231,6 +233,13 @@ impl State {
         }
     }
 
+    /// Whether the layout modifier is held right now.
+    fn mod_held(&self) -> bool {
+        self.seat
+            .get_keyboard()
+            .is_some_and(|k| self.mod_key.held(&k.modifier_state()))
+    }
+
     /// Runs a layout bind and follows it: layout, focus, close request.
     fn run_action(&mut self, action: EngineAction) {
         let effect = self.engine.apply(action, &self.viewports());
@@ -259,6 +268,20 @@ impl State {
                 .element_under(pointer.current_location())
                 .and_then(|(window, _)| self.mapped.iter().find(|m| m.window == *window))
                 .map(|m| m.id.clone());
+            if let Some(id) = id.as_deref()
+                && button == BTN_LEFT
+                && self.mod_held()
+            {
+                let start_data = GrabStartData {
+                    focus: None,
+                    button,
+                    location: pointer.current_location(),
+                };
+                self.start_move_grab(id, start_data, SERIAL_COUNTER.next_serial());
+                if pointer.is_grabbed() {
+                    return;
+                }
+            }
             self.focus_window(id.as_deref());
         }
         pointer.button(

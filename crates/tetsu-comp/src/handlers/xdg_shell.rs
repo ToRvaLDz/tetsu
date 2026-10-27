@@ -1,6 +1,7 @@
 //! xdg-shell: toplevels become windows of the model.
 
 use smithay::desktop::{PopupKind, Window};
+use smithay::input::Seat;
 use smithay::reexports::wayland_server::protocol::{wl_output, wl_seat};
 use smithay::utils::Serial;
 use smithay::wayland::shell::xdg::{
@@ -42,6 +43,36 @@ impl XdgShellHandler for State {
     }
 
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+
+    /// A floating window can be moved by its client's request; tiles ignore it.
+    fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        let Some(seat) = Seat::<State>::from_resource(&seat) else {
+            return;
+        };
+        let Some(pointer) = seat.get_pointer() else {
+            return;
+        };
+        // Only a request that follows a click on the window counts.
+        if !pointer.has_grab(serial) {
+            return;
+        }
+        let Some(start_data) = pointer.grab_start_data() else {
+            return;
+        };
+        let Some(id) = self
+            .mapped
+            .iter()
+            .find(|m| {
+                m.window
+                    .toplevel()
+                    .is_some_and(|t| t.wl_surface() == surface.wl_surface())
+            })
+            .map(|m| m.id.clone())
+        else {
+            return;
+        };
+        self.start_move_grab(&id, start_data, serial);
+    }
 
     // Fullscreen and maximize are declined: the window keeps its tile.
     fn fullscreen_request(

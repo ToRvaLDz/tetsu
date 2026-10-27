@@ -4,6 +4,7 @@ pub mod backend;
 pub mod bus;
 pub mod cli;
 pub mod engine;
+pub mod grab;
 pub mod input;
 pub mod layout;
 pub mod model;
