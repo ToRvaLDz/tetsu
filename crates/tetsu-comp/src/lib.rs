@@ -9,6 +9,7 @@
 pub mod backend;
 pub mod bus;
 pub mod cli;
+pub mod config;
 pub mod engine;
 pub mod gpu;
 pub mod grab;

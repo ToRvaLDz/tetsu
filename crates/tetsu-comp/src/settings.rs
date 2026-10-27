@@ -139,6 +139,8 @@ pub enum SettingsError {
     BlankLockCommand,
     /// `trust.input[n]` is empty or starts with a blank program.
     BadTrustCommand(usize),
+    /// A key no layer knows (the layers' registry, `config::keys`).
+    UnknownKey(String),
 }
 
 impl fmt::Display for SettingsError {
@@ -184,6 +186,7 @@ impl fmt::Display for SettingsError {
             Self::BadTrustCommand(at) => {
                 write!(f, "trust.input[{at}]: needs a command with a program name")
             }
+            Self::UnknownKey(key) => write!(f, "{key}: unknown key"),
         }
     }
 }
@@ -236,7 +239,7 @@ struct RawLayout {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawRule {
+pub(crate) struct RawRule {
     app_id: Option<String>,
     title: Option<String>,
     floating: Option<bool>,
@@ -245,7 +248,11 @@ struct RawRule {
     size: Option<[i64; 2]>,
 }
 
-fn gap(key: &'static str, value: Option<i64>, default: i32) -> Result<i32, SettingsError> {
+pub(crate) fn gap(
+    key: &'static str,
+    value: Option<i64>,
+    default: i32,
+) -> Result<i32, SettingsError> {
     match value {
         None => Ok(default),
         Some(v) if v < 0 => Err(SettingsError::NegativeGap(key, v)),
@@ -269,7 +276,7 @@ fn pattern(
         .transpose()
 }
 
-fn rule(index: usize, raw: RawRule) -> Result<Rule, SettingsError> {
+pub(crate) fn rule(index: usize, raw: RawRule) -> Result<Rule, SettingsError> {
     if raw.app_id.is_none() && raw.title.is_none() {
         return Err(SettingsError::NoMatcher(index));
     }
@@ -295,28 +302,40 @@ fn rule(index: usize, raw: RawRule) -> Result<Rule, SettingsError> {
     })
 }
 
+pub(crate) fn device_choice(path: &str) -> Result<DeviceChoice, SettingsError> {
+    if path == "auto" {
+        return Ok(DeviceChoice::Auto);
+    }
+    let p = Path::new(path);
+    let under_dri = p.strip_prefix("/dev/dri").is_ok_and(|rest| {
+        let mut parts = rest.components();
+        matches!(parts.next(), Some(std::path::Component::Normal(_))) && parts.next().is_none()
+    });
+    if under_dri {
+        Ok(DeviceChoice::Node(p.to_owned()))
+    } else {
+        Err(SettingsError::BadRenderDevice(path.to_owned()))
+    }
+}
+
+pub(crate) fn sync_mode(name: &str) -> Result<SyncMode, SettingsError> {
+    match name {
+        "auto" => Ok(SyncMode::Auto),
+        "on" => Ok(SyncMode::On),
+        "off" => Ok(SyncMode::Off),
+        other => Err(SettingsError::UnknownSyncMode(other.to_owned())),
+    }
+}
+
 fn render(raw: RawRender) -> Result<RenderSettings, SettingsError> {
-    let device = match raw.device.as_deref() {
-        None | Some("auto") => DeviceChoice::Auto,
-        Some(path) => {
-            let p = Path::new(path);
-            let under_dri = p.strip_prefix("/dev/dri").is_ok_and(|rest| {
-                let mut parts = rest.components();
-                matches!(parts.next(), Some(std::path::Component::Normal(_)))
-                    && parts.next().is_none()
-            });
-            if !under_dri {
-                return Err(SettingsError::BadRenderDevice(path.to_owned()));
-            }
-            DeviceChoice::Node(p.to_owned())
-        }
-    };
-    let explicit_sync = match raw.explicit_sync.as_deref() {
-        None | Some("auto") => SyncMode::Auto,
-        Some("on") => SyncMode::On,
-        Some("off") => SyncMode::Off,
-        Some(other) => return Err(SettingsError::UnknownSyncMode(other.to_owned())),
-    };
+    let device = raw
+        .device
+        .as_deref()
+        .map_or(Ok(DeviceChoice::Auto), device_choice)?;
+    let explicit_sync = raw
+        .explicit_sync
+        .as_deref()
+        .map_or(Ok(SyncMode::Auto), sync_mode)?;
     Ok(RenderSettings {
         device,
         explicit_sync,
@@ -324,26 +343,36 @@ fn render(raw: RawRender) -> Result<RenderSettings, SettingsError> {
     })
 }
 
-fn lock(raw: RawLock) -> Result<LockSettings, SettingsError> {
-    let command = raw
-        .command
-        .unwrap_or_else(|| LockSettings::default().command);
+pub(crate) fn lock_command(command: &[String]) -> Result<(), SettingsError> {
     if command
         .first()
         .is_some_and(|program| program.trim().is_empty())
     {
         return Err(SettingsError::BlankLockCommand);
     }
-    Ok(LockSettings { command })
+    Ok(())
 }
 
-fn trust(raw: RawTrust) -> Result<TrustSettings, SettingsError> {
-    let input = raw.input.unwrap_or_default();
+pub(crate) fn trust_input(input: &[Vec<String>]) -> Result<(), SettingsError> {
     for (at, argv) in input.iter().enumerate() {
         if argv.first().is_none_or(|program| program.trim().is_empty()) {
             return Err(SettingsError::BadTrustCommand(at));
         }
     }
+    Ok(())
+}
+
+fn lock(raw: RawLock) -> Result<LockSettings, SettingsError> {
+    let command = raw
+        .command
+        .unwrap_or_else(|| LockSettings::default().command);
+    lock_command(&command)?;
+    Ok(LockSettings { command })
+}
+
+fn trust(raw: RawTrust) -> Result<TrustSettings, SettingsError> {
+    let input = raw.input.unwrap_or_default();
+    trust_input(&input)?;
     Ok(TrustSettings { input })
 }
 
