@@ -1,11 +1,17 @@
 //! Finding the compositor's bus socket.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::path::PathBuf;
+use std::os::unix::fs::FileTypeExt;
+use std::path::{Path, PathBuf};
 
 /// The variable that names the socket outright.
 pub const ENV_SOCKET: &str = "TETSU_COMP_SOCKET";
+
+/// Where the compositor keeps its sockets, below `XDG_RUNTIME_DIR`. The
+/// layout is the compositor's; it is repeated here because this crate does
+/// not depend on it.
+const COMP_DIR: [&str; 2] = ["tetsu", "comp"];
 
 /// The environment discovery reads, made explicit so tests can set it.
 #[derive(Debug, Default, Clone)]
@@ -21,7 +27,11 @@ pub struct SocketEnv {
 impl SocketEnv {
     /// The environment of this process.
     pub fn from_process() -> Self {
-        todo!()
+        Self {
+            comp_socket: std::env::var_os(ENV_SOCKET),
+            runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
+        }
     }
 }
 
@@ -37,14 +47,74 @@ pub enum Discovery {
 }
 
 impl fmt::Display for Discovery {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoRuntimeDir => write!(f, "XDG_RUNTIME_DIR is not set; set {ENV_SOCKET}"),
+            Self::NotRunning(dir) => write!(
+                f,
+                "tetsu-comp is not running (no socket in {}); \
+                 set {ENV_SOCKET} if it listens elsewhere",
+                dir.display()
+            ),
+            Self::Ambiguous(names) => write!(
+                f,
+                "several compositors are running ({}): \
+                 set {ENV_SOCKET} to the one to inspect",
+                names.join(", ")
+            ),
+        }
     }
 }
 
-/// The socket to talk to.
-pub fn discover(_env: &SocketEnv) -> Result<PathBuf, Discovery> {
-    todo!()
+/// Whether `path` is a Unix socket (not followed through a symlink).
+fn is_socket(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_socket())
+}
+
+/// A display name that is a single path component.
+fn plain_name(name: &OsStr) -> bool {
+    !name.is_empty() && !name.as_encoded_bytes().contains(&b'/')
+}
+
+/// The sockets of the comp directory, by sorted name.
+fn scan(dir: &Path) -> Vec<String> {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = read
+        .filter_map(Result::ok)
+        .filter(|e| is_socket(&e.path()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The socket to talk to: `TETSU_COMP_SOCKET`; else the socket named like
+/// `WAYLAND_DISPLAY` in the comp directory; else the only socket there.
+pub fn discover(env: &SocketEnv) -> Result<PathBuf, Discovery> {
+    if let Some(path) = env.comp_socket.as_ref().filter(|p| !p.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    let runtime = env
+        .runtime_dir
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .ok_or(Discovery::NoRuntimeDir)?;
+    let dir = COMP_DIR.iter().fold(runtime, |dir, part| dir.join(part));
+    if let Some(display) = env.wayland_display.as_deref().filter(|d| plain_name(d)) {
+        let path = dir.join(display);
+        if is_socket(&path) {
+            return Ok(path);
+        }
+    }
+    let mut names = scan(&dir);
+    match names.len() {
+        0 => Err(Discovery::NotRunning(dir)),
+        1 => Ok(dir.join(names.remove(0))),
+        _ => Err(Discovery::Ambiguous(names)),
+    }
 }
 
 #[cfg(test)]
@@ -156,7 +226,7 @@ mod tests {
         let rig = Rig::new();
         let (only, _l) = rig.socket("wayland-0");
         std::fs::write(rig.comp_dir().join("notes"), "x").unwrap();
-        assert_eq!(discover(&rig.env(None)), Ok(only));
+        assert_eq!(discover(&rig.env(None)), Ok(only.clone()));
         // A regular file named by the display is no socket either.
         std::fs::write(rig.comp_dir().join("wayland-5"), "x").unwrap();
         assert_eq!(discover(&rig.env(Some("wayland-5"))), Ok(only));
