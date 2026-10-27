@@ -12,4 +12,6 @@
 //!   matched to the bus. Per-output filtering follows `output.v1`.
 //! - Battery and network are polled every few seconds, so a cable or Wi-Fi
 //!   change shows up late. Polling wakes the process without drawing.
+pub mod clock;
 pub mod model;
+pub mod sources;
