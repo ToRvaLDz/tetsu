@@ -832,7 +832,10 @@ fn a_window_opened_with_no_output_lands_on_the_workspace_of_the_next_one() {
     let focused = model.focused_workspace().map(str::to_owned);
     assert!(focused.is_some());
     assert_eq!(model.workspace_of(&win), focused.as_deref());
-    assert_eq!(model.windows_on(focused.as_deref().unwrap()), [win.clone()]);
+    assert_eq!(
+        model.windows_on(focused.as_deref().unwrap()),
+        std::slice::from_ref(&win)
+    );
     // The window event carries the workspace.
     let on_ws = events
         .window
