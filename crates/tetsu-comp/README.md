@@ -149,7 +149,10 @@ Trust is decided when a client connects and does not change. The compositor
 starts the clients it trusts over a socket pair and hands the child end over
 as `WAYLAND_SOCKET`; everything that comes through `WAYLAND_DISPLAY` is
 untrusted, including the children of a trusted client. `[lock] command` runs
-as the locker, `[trust] input` helpers as input clients. Only input clients
+as the locker, `[trust] input` helpers as input clients. Each command must
+be the Wayland client itself: a wrapper script or launcher has to `exec` it,
+because a wrapper that does not connect passes the trusted socket on to its
+descendants, and the first of them to connect is trusted. Only input clients
 see and bind `zwp_virtual_keyboard_manager_v1` and
 `zwlr_virtual_pointer_manager_v1`; virtual keys go to the keyboard focus and
 never match a compositor bind. A trusted input client can type into the lock
