@@ -22,11 +22,14 @@ use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{delegate_dispatch2, delegate_registry, registry_handlers};
 
+/// A configured size; a side is `None` when the compositor left it open.
+type Size = (Option<NonZeroU32>, Option<NonZeroU32>);
+
 struct App {
     registry: RegistryState,
     outputs: OutputState,
     shm: Shm,
-    configures: Vec<(ObjectId, (Option<NonZeroU32>, Option<NonZeroU32>))>,
+    configures: Vec<(ObjectId, Size)>,
 }
 
 impl CompositorHandler for App {

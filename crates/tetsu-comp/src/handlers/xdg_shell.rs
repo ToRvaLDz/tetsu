@@ -1,0 +1,101 @@
+//! xdg-shell: toplevels become windows of the model.
+
+use smithay::desktop::{PopupKind, Window};
+use smithay::reexports::wayland_server::protocol::{wl_output, wl_seat};
+use smithay::utils::Serial;
+use smithay::wayland::compositor::with_states;
+use smithay::wayland::shell::xdg::{
+    PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+    XdgToplevelSurfaceData,
+};
+
+use crate::model::WindowUpdate;
+use crate::state::State;
+
+impl XdgShellHandler for State {
+    fn xdg_shell_state(&mut self) -> &mut XdgShellState {
+        &mut self.xdg_shell_state
+    }
+
+    fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        self.unmapped.push(Window::new_wayland_window(surface));
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.unmap_window(surface.wl_surface());
+    }
+
+    fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
+        surface.with_pending_state(|state| state.geometry = positioner.get_geometry());
+        let _ = self.popups.track_popup(PopupKind::Xdg(surface));
+    }
+
+    fn reposition_request(
+        &mut self,
+        surface: PopupSurface,
+        positioner: PositionerState,
+        token: u32,
+    ) {
+        surface.with_pending_state(|state| {
+            state.geometry = positioner.get_geometry();
+            state.positioner = positioner;
+        });
+        surface.send_repositioned(token);
+    }
+
+    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+
+    // Fullscreen and maximize are declined: the window keeps its tile.
+    fn fullscreen_request(
+        &mut self,
+        surface: ToplevelSurface,
+        _output: Option<wl_output::WlOutput>,
+    ) {
+        surface.send_configure();
+    }
+
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        surface.send_configure();
+    }
+
+    fn title_changed(&mut self, surface: ToplevelSurface) {
+        self.update_text(&surface);
+    }
+
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        self.update_text(&surface);
+    }
+}
+
+impl State {
+    /// Copies a mapped window's title and app_id into the model.
+    fn update_text(&mut self, surface: &ToplevelSurface) {
+        let Some(id) = self
+            .mapped
+            .iter()
+            .find(|m| {
+                m.window
+                    .toplevel()
+                    .is_some_and(|t| t.wl_surface() == surface.wl_surface())
+            })
+            .map(|m| m.id.clone())
+        else {
+            // Not mapped yet: the model reads both when it maps.
+            return;
+        };
+        let (app_id, title) = with_states(surface.wl_surface(), |states| {
+            let data = states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .map(|d| d.lock().unwrap_or_else(|e| e.into_inner()));
+            data.map_or((None, None), |d| (d.app_id.clone(), d.title.clone()))
+        });
+        self.model.update(
+            &id,
+            WindowUpdate {
+                app_id: Some(app_id),
+                title: Some(title),
+            },
+        );
+    }
+}
