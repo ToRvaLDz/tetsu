@@ -4,7 +4,10 @@
 //! The core holds no credential and calls no model provider: the model sits
 //! behind the `Backend` boundary, implemented elsewhere.
 
+pub mod agent;
+pub mod backend;
 pub mod contract;
 pub mod discovery;
 pub mod runner;
 pub mod tools;
+pub mod turn;
