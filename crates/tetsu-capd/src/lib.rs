@@ -2,4 +2,5 @@
 
 pub mod catalog;
 pub mod clock;
+pub mod decide;
 pub mod store;
