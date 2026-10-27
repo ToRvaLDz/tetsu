@@ -165,7 +165,11 @@ fn without_gaps_the_areas_cover_the_viewport_exactly() {
     for n in 1..=9 {
         for (name, rects) in both(view, Gaps::NONE, n) {
             let covered: i64 = rects.iter().map(|r| i64::from(r.w) * i64::from(r.h)).sum();
-            assert_eq!(covered, i64::from(view.w) * i64::from(view.h), "{name} n={n}");
+            assert_eq!(
+                covered,
+                i64::from(view.w) * i64::from(view.h),
+                "{name} n={n}"
+            );
         }
     }
 }

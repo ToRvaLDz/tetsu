@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use tetsu_bus::window::{ListWindowsReply, WindowEvent};
+use tetsu_bus::window::{ListWindowsReply, Placement, WindowEvent};
 use tetsu_bus::workspace::ListWorkspacesReply;
 use tetsu_bus_contract::{Contract, check_error};
 use tetsu_comp::bus::{Mirror, Publisher, Snapshot, WATCH_QUEUE};
@@ -337,6 +337,23 @@ fn the_mirror_equals_the_model_after_any_sequence() {
     model.focus(Some(&two));
     check(&mut model, &mut mirror);
     model.close(&two);
+    check(&mut model, &mut mirror);
+
+    // Moves, placement changes and workspace switches.
+    let a = model.open(info("a"));
+    model.focus(Some(&a));
+    let b = model.open(info("b"));
+    model.focus(Some(&b));
+    let spare = model.workspace_at("out-1", 1).unwrap();
+    check(&mut model, &mut mirror);
+    model.move_to_workspace(&b, &spare);
+    model.set_placement(&a, Placement::Floating);
+    check(&mut model, &mut mirror);
+    model.focus_workspace(&spare);
+    check(&mut model, &mut mirror);
+    model.set_placement(&b, Placement::Floating);
+    model.focus_workspace("ws-1");
+    model.set_placement(&a, Placement::Tiled);
     check(&mut model, &mut mirror);
 }
 

@@ -275,3 +275,167 @@ fn focusing_a_window_on_another_output_focuses_its_workspace() {
     );
     assert_eq!(events.window, [WindowEvent::focused(Some(first))]);
 }
+
+/// Two windows on ws-1, the second focused; ws-2 exists. Flushed.
+fn two_windows_and_a_spare_workspace() -> (Model, String, String, String) {
+    let (mut model, output) = started();
+    let one = model.open(info("a", "one"));
+    model.focus(Some(&one));
+    let two = model.open(info("a", "two"));
+    model.focus(Some(&two));
+    let spare = model.workspace_at(&output, 1).unwrap();
+    model.flush();
+    (model, one, two, spare)
+}
+
+#[test]
+fn a_workspace_is_created_on_demand_with_added_only() {
+    let (mut model, output) = started();
+    let ws = model.workspace_at(&output, 1).unwrap();
+    assert_eq!(ws, "ws-2");
+    let events = check_all(&mut model);
+    assert_eq!(events.workspace.len(), 1);
+    assert_eq!(events.workspace[0].kind, WorkspaceKind::Added);
+    let added = events.workspace[0].workspace.clone().unwrap();
+    assert_eq!(
+        (added.id.as_str(), added.index, added.output_id.as_deref()),
+        ("ws-2", 1, Some("out-1"))
+    );
+    let snapshot = model.workspaces_snapshot();
+    assert_eq!(snapshot.active["out-1"], "ws-1");
+    assert_eq!(snapshot.focused_id.as_deref(), Some("ws-1"));
+}
+
+#[test]
+fn asking_for_a_workspace_again_is_idempotent() {
+    let (mut model, output) = started();
+    let first = model.workspace_at(&output, 2).unwrap();
+    model.flush();
+    assert_eq!(model.workspace_at(&output, 2).as_deref(), Some(&*first));
+    assert_eq!(model.workspace_at(&output, 0).as_deref(), Some("ws-1"));
+    assert_eq!(model.flush().workspace, []);
+    assert_eq!(model.workspace_at("out-9", 1), None);
+}
+
+#[test]
+fn added_precedes_activated_when_the_new_workspace_is_focused() {
+    let (mut model, output) = started();
+    let ws = model.workspace_at(&output, 1).unwrap();
+    model.focus_workspace(&ws);
+    let events = check_all(&mut model);
+    let kinds: Vec<_> = events.workspace.iter().map(|e| e.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            WorkspaceKind::Added,
+            WorkspaceKind::Activated,
+            WorkspaceKind::Focused
+        ]
+    );
+}
+
+#[test]
+fn a_window_can_open_on_another_workspace() {
+    let (mut model, output) = started();
+    let ws = model.workspace_at(&output, 1).unwrap();
+    let id = model.open_on(info("a", "one"), &ws);
+    let events = check_all(&mut model);
+    let window = events.window[0].window.clone().unwrap();
+    assert_eq!(window.id, id);
+    assert_eq!(window.workspace_id.as_deref(), Some(&*ws));
+    assert_eq!(model.windows_on(&ws), [id]);
+}
+
+#[test]
+fn moving_a_window_emits_one_changed_with_the_new_workspace() {
+    let (mut model, one, _two, spare) = two_windows_and_a_spare_workspace();
+    model.move_to_workspace(&one, &spare);
+    let events = check_all(&mut model);
+    assert_eq!(kinds(&events.window), [WindowKind::Changed]);
+    let window = events.window[0].window.clone().unwrap();
+    assert_eq!(window.id, one);
+    assert_eq!(window.workspace_id.as_deref(), Some(&*spare));
+    assert_eq!(model.workspace_of(&one), Some(&*spare));
+}
+
+#[test]
+fn moving_the_focused_window_focuses_the_next_one_on_the_old_workspace() {
+    let (mut model, one, two, spare) = two_windows_and_a_spare_workspace();
+    model.move_to_workspace(&two, &spare);
+    let events = check_all(&mut model);
+    assert_eq!(events.window.len(), 2);
+    assert_eq!(events.window[0], WindowEvent::focused(Some(one.clone())));
+    assert_eq!(events.window[1].kind, WindowKind::Changed);
+    assert_eq!(model.focused_window(), Some(&*one));
+
+    // The last window on a workspace leaves: nothing is focused.
+    model.move_to_workspace(&one, &spare);
+    let events = check_all(&mut model);
+    assert_eq!(events.window[0], WindowEvent::focused(None));
+    assert_eq!(model.focused_window(), None);
+}
+
+#[test]
+fn moving_a_window_where_it_already_is_emits_nothing() {
+    let (mut model, one, _two, _spare) = two_windows_and_a_spare_workspace();
+    model.move_to_workspace(&one, "ws-1");
+    model.move_to_workspace(&one, "ws-9");
+    model.move_to_workspace("win-9", "ws-1");
+    assert_eq!(model.flush().window, []);
+}
+
+#[test]
+fn a_placement_change_emits_one_changed_and_a_no_op_nothing() {
+    let (mut model, one, _two, _spare) = two_windows_and_a_spare_workspace();
+    model.set_placement(&one, Placement::Tiled);
+    assert_eq!(model.flush().window, []);
+    model.set_placement(&one, Placement::Floating);
+    model.update(&one, WindowUpdate::title("late"));
+    let events = check_all(&mut model);
+    assert_eq!(kinds(&events.window), [WindowKind::Changed]);
+    let window = events.window[0].window.clone().unwrap();
+    assert_eq!(window.placement, Placement::Floating);
+    assert_eq!(window.title.as_deref(), Some("late"));
+}
+
+#[test]
+fn switching_workspace_activates_focuses_it_and_the_window_on_top() {
+    let (mut model, one, two, spare) = two_windows_and_a_spare_workspace();
+    model.move_to_workspace(&two, &spare);
+    model.flush();
+
+    model.focus_workspace(&spare);
+    let events = check_all(&mut model);
+    assert_eq!(
+        events.workspace,
+        [
+            WorkspaceEvent::activated(Some(spare.clone()), "out-1"),
+            WorkspaceEvent::focused(Some(spare.clone())),
+        ]
+    );
+    assert_eq!(events.window, [WindowEvent::focused(Some(two.clone()))]);
+
+    // Back: the most recently focused window of ws-1 gets the focus.
+    model.focus_workspace("ws-1");
+    let events = check_all(&mut model);
+    assert_eq!(events.window, [WindowEvent::focused(Some(one))]);
+}
+
+#[test]
+fn switching_to_an_empty_workspace_focuses_no_window() {
+    let (mut model, _one, two, spare) = two_windows_and_a_spare_workspace();
+    assert_eq!(model.focused_window(), Some(&*two));
+    model.focus_workspace(&spare);
+    let events = check_all(&mut model);
+    assert_eq!(events.window, [WindowEvent::focused(None)]);
+    assert_eq!(model.windows_snapshot().focused_id, None);
+}
+
+#[test]
+fn switching_to_the_focused_workspace_again_emits_nothing() {
+    let (mut model, _one, _two, _spare) = two_windows_and_a_spare_workspace();
+    model.focus_workspace("ws-1");
+    let events = model.flush();
+    assert_eq!(events.window, []);
+    assert_eq!(events.workspace, []);
+}
