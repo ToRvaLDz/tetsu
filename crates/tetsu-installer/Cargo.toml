@@ -24,4 +24,5 @@ tetsu-tx = { path = "../tetsu-tx" }
 toml = "1.1.8"
 
 [dev-dependencies]
+rustix = { version = "1.1.5", features = ["termios", "stdio", "pty"] }
 tempfile = "3.27.0"

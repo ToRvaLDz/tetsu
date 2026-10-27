@@ -206,4 +206,43 @@ mod tests {
         assert!(out.lines().count() > 10);
         assert!(!out.contains('\x1b'));
     }
+
+    #[test]
+    fn secrets_are_never_echoed_on_a_terminal() {
+        use std::io::BufReader;
+        use std::os::fd::{AsFd, OwnedFd};
+
+        use rustix::termios::{LocalModes, tcgetattr};
+
+        use crate::tty::testpty;
+
+        let pty = testpty::open();
+        let echo: OwnedFd = pty.slave.as_fd().try_clone_to_owned().unwrap();
+        let input = BufReader::new(pty.slave.try_clone().unwrap());
+        let out = pty.slave.try_clone().unwrap();
+        let mut fe = TextFrontend::new(input, out).secret_terminal(echo);
+        let worker = std::thread::spawn(move || fe.ask_secret("Passphrase"));
+
+        let shown = testpty::read_until(&pty.master, "(not shown): ");
+        // Echo is already off when the prompt appears, so nothing typed
+        // right after it can leak.
+        let modes = tcgetattr(&pty.slave).unwrap().local_modes;
+        assert!(!modes.contains(LocalModes::ECHO));
+        assert!(shown.starts_with("Passphrase (not shown): "));
+
+        use std::io::Write;
+        (&pty.master).write_all(b"s3cret pw\n").unwrap();
+        assert_eq!(worker.join().unwrap().unwrap(), "s3cret pw");
+
+        let after = testpty::drain(&pty.master);
+        assert!(!after.contains("s3cret"), "echoed: {after:?}");
+        assert!(after.trim().is_empty(), "unexpected output: {after:?}");
+        assert!(
+            tcgetattr(&pty.slave)
+                .unwrap()
+                .local_modes
+                .contains(LocalModes::ECHO),
+            "echo not restored"
+        );
+    }
 }
