@@ -6,6 +6,7 @@ mod common;
 use tetsu_bus::window::{Placement, WindowEvent, WindowKind};
 use tetsu_bus::workspace::{WorkspaceEvent, WorkspaceKind};
 use tetsu_comp::bus::Snapshot;
+use tetsu_comp::decor::{Decorations, inset};
 use tetsu_comp::engine::{Action, Engine};
 use tetsu_comp::layout::dwindle::dwindle;
 use tetsu_comp::layout::floating::{MIN_VISIBLE, centered, clamp_into, from_tile};
@@ -34,12 +35,26 @@ fn info(app_id: &str) -> WindowInfo {
 fn settings(layout: LayoutKind) -> Settings {
     Settings {
         layout,
+        decorations: Decorations::NONE,
         ..Settings::default()
     }
 }
 
 fn with_rules(text: &str) -> Settings {
-    parse(text).unwrap()
+    Settings {
+        decorations: Decorations::NONE,
+        ..parse(text).unwrap()
+    }
+}
+
+fn bordered(layout: LayoutKind, width: i32) -> Settings {
+    Settings {
+        decorations: Decorations {
+            width,
+            ..Decorations::NONE
+        },
+        ..settings(layout)
+    }
 }
 
 /// An engine with one output, flushed.
@@ -722,4 +737,57 @@ fn a_rule_naming_a_removed_output_falls_back_to_the_focused_one() {
         engine.model().active_workspace(&second)
     );
     assert_eq!(engine.model().focused_window(), Some(id.as_str()));
+}
+
+#[test]
+fn a_border_insets_every_dwindle_and_master_tile() {
+    for layout in [LayoutKind::Dwindle, LayoutKind::Master] {
+        for n in 1..=3 {
+            let (mut engine, out, views) = started(bordered(layout, 3));
+            let opened = open_n(&mut engine, &views, n);
+            let full = if layout == LayoutKind::Master {
+                master(VIEW, Gaps::NONE, n, 0.55)
+            } else {
+                dwindle(VIEW, Gaps::NONE, n)
+            };
+            let expected: Vec<_> = opened
+                .into_iter()
+                .zip(full.into_iter().map(|tile| inset(tile, 3)))
+                .collect();
+            assert_eq!(engine.arrange(&out, VIEW).tiled, expected, "{layout:?} {n}");
+        }
+    }
+}
+
+#[test]
+fn the_first_configure_is_the_inset_tile() {
+    let (mut engine, _, views) = started(bordered(LayoutKind::Dwindle, 3));
+    open_n(&mut engine, &views, 1);
+    let plan = engine.plan(Some("x"), None, &views);
+    let tile = dwindle(VIEW, Gaps::NONE, 2)[1];
+    let content = inset(tile, 3);
+    assert_eq!(plan.configure_size, Some((content.w, content.h)));
+}
+
+#[test]
+fn a_floating_window_is_not_inset() {
+    let mut settings = with_rules(
+        "[[window_rule]]\napp_id = \"^pavucontrol$\"\nfloating = true\nsize = [640, 480]\n",
+    );
+    settings.decorations.width = 3;
+    let (mut engine, out, views) = started(settings);
+    let id = engine.open(info("pavucontrol"), Some((640, 480)), &views);
+    assert_eq!(
+        engine.arrange(&out, VIEW).floating,
+        [(id, centered(VIEW, (640, 480)))]
+    );
+}
+
+#[test]
+fn width_zero_brings_the_full_tiles_back() {
+    let (mut engine, out, views) = started(bordered(LayoutKind::Dwindle, 3));
+    open_n(&mut engine, &views, 1);
+    assert_eq!(engine.arrange(&out, VIEW).tiled[0].1, inset(VIEW, 3));
+    engine.set_settings(bordered(LayoutKind::Dwindle, 0));
+    assert_eq!(engine.arrange(&out, VIEW).tiled[0].1, VIEW);
 }

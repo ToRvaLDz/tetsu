@@ -18,6 +18,10 @@ pub struct Layers<'a> {
     pub user: Option<&'a str>,
 }
 
+/// The defaults layer of a test that passes none: no border, so the size
+/// fixtures stay exact. A test of the built-in border passes `Some("")`.
+pub const UNDECORATED: &str = "[decorations]\nwidth = 0\n";
+
 /// Points the three layers at paths under `root`, so a test never reads
 /// or writes the developer's own `~/.config/tetsu` or `~/.local/state/tetsu`.
 pub fn isolate(command: &mut Command, root: &Path) {
@@ -90,7 +94,10 @@ impl Comp {
     ) -> Self {
         let runtime = tempfile::tempdir().unwrap();
         for (path, text) in [
-            (runtime.path().join("defaults.toml"), layers.defaults),
+            (
+                runtime.path().join("defaults.toml"),
+                layers.defaults.or(Some(UNDECORATED)),
+            ),
             (managed_path(runtime.path()), layers.managed),
             (user_path(runtime.path()), layers.user),
         ] {
