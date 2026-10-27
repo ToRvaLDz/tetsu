@@ -94,6 +94,10 @@ impl Handler for Service {
                 "org.tetsu.tx.v1.PermissionDenied",
                 json!({}),
             )),
+            ROLLBACK if request.parameters["id"] == "big" => Response::Error(ErrorReply::new(
+                &format!("org.tetsu.tx.v1.Bad\u{7}{}", "N".repeat(1000)),
+                json!({ "blob": "x".repeat(100 * 1024) }),
+            )),
             ROLLBACK => Response::Error(ErrorReply::new(
                 "org.tetsu.tx.v1.SnapshotNotFound",
                 json!({ "id": "x" }),
@@ -523,5 +527,58 @@ fn the_log_names_the_tool_and_the_outcome_and_nothing_else() {
         assert!(logs.contains(REVIEW) && logs.contains("ok"), "{logs}");
         assert!(logs.contains(REMOVE) && logs.contains("denied"), "{logs}");
         assert!(logs.contains(ROLLBACK) && logs.contains("error"), "{logs}");
+    });
+}
+
+// 13. Bounded errors and reasons.
+
+#[test]
+fn an_error_is_bounded_and_clean_like_a_result() {
+    run(true, false, |env| async move {
+        let outcome = within(env.runner.run(&tool(ROLLBACK), json!({ "id": "big" }))).await;
+        let Outcome::Error { error, parameters } = outcome else {
+            panic!("{outcome:?}")
+        };
+        assert!(error.len() <= 256, "{}", error.len());
+        assert!(error.starts_with("org.tetsu.tx.v1.Bad"));
+        assert!(!error.chars().any(char::is_control), "{error:?}");
+        assert_eq!(parameters["truncated"], true);
+        assert!(serde_json::to_vec(&parameters).unwrap().len() < 64 * 1024);
+    });
+}
+
+#[test]
+fn an_unavailable_text_is_cut_and_clean() {
+    run(true, false, |env| async move {
+        let gone = env.dir.join(format!("no-\u{7}{}", "d".repeat(1000)));
+        let routes = BTreeMap::from([("org.tetsu.tx.v1".to_owned(), Route::Scanned(gone))]);
+        let sink: LogSink = Rc::new(|_| {});
+        let runner = BusRunner::new(
+            routes,
+            Endpoint::new("/nonexistent", ExpectedServer::Cgroup(own_cgroup())),
+            sink,
+        );
+        let outcome = within(runner.run(&tool(GET_STATUS), json!({}))).await;
+        let Outcome::Unavailable(text) = outcome else {
+            panic!("{outcome:?}")
+        };
+        assert!(text.len() <= 256, "{}", text.len());
+        assert!(!text.chars().any(char::is_control), "{text:?}");
+    });
+}
+
+#[test]
+fn a_long_reason_is_cut_to_a_kilobyte_at_a_char_boundary() {
+    run(true, false, |env| async move {
+        // 3-byte chars: 1024 is not a multiple of 3.
+        let reason = "\u{20ac}".repeat(2000);
+        let input = json!({ "packages": ["a"], "_reason": reason });
+        within(env.runner.run(&tool(INSTALL), input)).await;
+        let events = events(&env);
+        let sent = events[0]
+            .strip_prefix(&format!("Intent:{INSTALL}:"))
+            .unwrap();
+        assert!(sent.len() <= 1024 && sent.len() > 1000, "{}", sent.len());
+        assert!(sent.chars().all(|c| c == '\u{20ac}'));
     });
 }

@@ -410,3 +410,20 @@ fn the_pinned_server_of_the_right_cgroup_is_found_and_a_wrong_one_is_absent() {
         assert!(calls.borrow().is_empty(), "a wrong server got a call");
     });
 }
+
+#[test]
+fn the_pinned_endpoint_own_path_is_not_reported_but_a_planted_twin_is() {
+    run(|world| async move {
+        world.serve("runtime/tetsu/registry/org.tetsu.cap.v1", &[CAP], false);
+        let real = Endpoint::new(
+            world.path("runtime/tetsu/org.tetsu.cap.v1"),
+            ExpectedServer::Cgroup(own_cgroup()),
+        );
+        world.serve("runtime/tetsu/org.tetsu.cap.v1", &[CAP], false);
+        let pinned = Pinned::new(vec![(CAP.to_owned(), real)]);
+        let catalog = discover(&world, &pinned).await;
+        let subjects: Vec<&str> = catalog.skipped.iter().map(|s| s.subject.as_str()).collect();
+        assert_eq!(subjects.len(), 1, "{subjects:?}");
+        assert!(subjects[0].contains("registry"), "{subjects:?}");
+    });
+}
