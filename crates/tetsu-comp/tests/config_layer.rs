@@ -5,13 +5,16 @@ use tetsu_comp::config::layer::parse;
 
 #[test]
 fn every_key_is_known_with_its_writable_flag_and_method() {
-    let expected: [(&str, bool, Option<&str>); 10] = [
+    let expected: [(&str, bool, Option<&str>); 13] = [
         ("layout.default", true, None),
         ("layout.gaps_inner", true, None),
         ("layout.gaps_outer", true, None),
         ("layout.master_ratio", true, None),
         ("render.wait_for_frame_completion", true, None),
         ("window_rule", true, None),
+        ("decorations.width", true, None),
+        ("decorations.active_color", true, None),
+        ("decorations.inactive_color", true, None),
         (
             "render.device",
             false,
@@ -257,4 +260,64 @@ fn an_output_key_is_looked_up_and_is_not_writable() {
     assert!(lookup("output.DP-1.nope").is_none());
     assert!(lookup("output.DP.1.scale").is_none());
     assert!(lookup("output.scale").is_none());
+}
+
+#[test]
+fn a_bad_decoration_colour_keeps_the_valid_width() {
+    let parsed = parse("[decorations]\nwidth = 4\ninactive_color = \"grey\"\n");
+    assert_eq!(parsed.values.len(), 1);
+    assert_eq!(parsed.values["decorations.width"], toml::Value::Integer(4));
+    assert_eq!(parsed.diagnostics.len(), 1);
+    let d = &parsed.diagnostics[0];
+    assert_eq!(
+        (d.line, d.key.as_deref()),
+        (Some(3), Some("decorations.inactive_color"))
+    );
+}
+
+#[test]
+fn settings_read_the_decoration_keys_and_fall_back_on_bad_ones() {
+    use std::collections::BTreeMap;
+    use tetsu_comp::decor::{ACTIVE_COLOR, Color};
+    use tetsu_comp::settings::Settings;
+
+    let mut values = BTreeMap::new();
+    values.insert("decorations.width".to_owned(), toml::Value::Integer(6));
+    values.insert(
+        "decorations.active_color".to_owned(),
+        toml::Value::String("#ff000080".into()),
+    );
+    values.insert(
+        "decorations.inactive_color".to_owned(),
+        toml::Value::String("#101010".into()),
+    );
+    let d = Settings::from_values(&values).decorations;
+    assert_eq!(d.width, 6);
+    assert_eq!(
+        d.active,
+        Color {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 0x80
+        }
+    );
+    assert_eq!(
+        d.inactive,
+        Color {
+            r: 16,
+            g: 16,
+            b: 16,
+            a: 255
+        }
+    );
+
+    values.insert("decorations.width".to_owned(), toml::Value::Integer(99));
+    values.insert(
+        "decorations.active_color".to_owned(),
+        toml::Value::String("blue".into()),
+    );
+    let d = Settings::from_values(&values).decorations;
+    assert_eq!(d.width, 2);
+    assert_eq!(d.active, ACTIVE_COLOR);
 }

@@ -268,3 +268,58 @@ fn unknown_lock_and_trust_keys_are_refused() {
     assert!(err("[lock]\nidle = 5\n").contains("idle"));
     assert!(err("[trust]\nall = true\n").contains("all"));
 }
+
+#[test]
+fn the_decoration_defaults_are_two_pixels_and_the_two_constants() {
+    use tetsu_comp::decor::{ACTIVE_COLOR, INACTIVE_COLOR};
+    let d = parse("").unwrap().decorations;
+    assert_eq!(d.width, 2);
+    assert_eq!((d.active, d.inactive), (ACTIVE_COLOR, INACTIVE_COLOR));
+}
+
+#[test]
+fn a_decorations_table_parses() {
+    let d = parse("[decorations]\nwidth = 4\nactive_color = \"#ff0000\"\n")
+        .unwrap()
+        .decorations;
+    assert_eq!(d.width, 4);
+    assert_eq!(
+        (d.active.r, d.active.g, d.active.b, d.active.a),
+        (255, 0, 0, 255)
+    );
+}
+
+#[test]
+fn a_border_width_outside_zero_to_thirty_two_is_refused() {
+    assert!(err("[decorations]\nwidth = -1\n").starts_with("decorations.width:"));
+    assert!(err("[decorations]\nwidth = 33\n").starts_with("decorations.width:"));
+    assert_eq!(
+        parse("[decorations]\nwidth = 0\n")
+            .unwrap()
+            .decorations
+            .width,
+        0
+    );
+    assert_eq!(
+        parse("[decorations]\nwidth = 32\n")
+            .unwrap()
+            .decorations
+            .width,
+        32
+    );
+}
+
+#[test]
+fn a_bad_decoration_colour_names_the_key() {
+    assert!(
+        err("[decorations]\nactive_color = \"blue\"\n").starts_with("decorations.active_color:")
+    );
+    assert!(
+        err("[decorations]\ninactive_color = \"#12\"\n").starts_with("decorations.inactive_color:")
+    );
+}
+
+#[test]
+fn an_unknown_decorations_key_is_refused() {
+    assert!(err("[decorations]\ntitle = true\n").contains("title"));
+}
