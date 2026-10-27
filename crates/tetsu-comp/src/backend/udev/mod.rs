@@ -63,8 +63,8 @@ type TtyRenderer<'a> = MultiRenderer<'a, 'a, Backend, Backend>;
 
 type Allocator = GbmAllocator<DrmDeviceFd>;
 type Exporter = GbmFramebufferExporter<DrmDeviceFd>;
-type Manager = DrmOutputManager<Allocator, Exporter, (), DrmDeviceFd>;
-type Lit = DrmOutput<Allocator, Exporter, (), DrmDeviceFd>;
+type Manager = DrmOutputManager<Allocator, Exporter, bool, DrmDeviceFd>;
+type Lit = DrmOutput<Allocator, Exporter, bool, DrmDeviceFd>;
 
 /// One card.
 struct Device {
@@ -88,9 +88,6 @@ struct Head {
     /// Where this output's buffers are scanned out from.
     target: DrmNode,
     feedback: Option<SurfaceDmabufFeedback>,
-    /// Whether each queued, not yet presented frame was rendered in the
-    /// locked scene; the next vblank presents the first.
-    in_flight: std::collections::VecDeque<bool>,
 }
 
 /// The tty backend's state.
@@ -197,13 +194,11 @@ impl State {
         {
             match head.drm_output.frame_submitted() {
                 // A frame reached the screen: it counts for the lock only if
-                // it was rendered in the locked scene.
-                Ok(_) => {
-                    presented = Some((
-                        head.output.clone(),
-                        head.in_flight.pop_front().unwrap_or(false),
-                    ));
-                }
+                // it was rendered in the locked scene (the flag travels with
+                // the frame as its user data).
+                Ok(Some(locked)) => presented = Some((head.output.clone(), locked)),
+                // Nothing was pending: nothing was presented.
+                Ok(None) => {}
                 Err(e) => eprintln!("tetsu-comp: frame_submitted: {e}"),
             }
         }
@@ -285,15 +280,8 @@ impl State {
                 for device in &mut tty.devices {
                     device.manager.pause();
                 }
-                // Queued frames never reach the screen now.
-                for head in &mut tty.heads {
-                    head.in_flight.clear();
-                }
             }
             SessionEvent::ActivateSession => {
-                for head in &mut tty.heads {
-                    head.in_flight.clear();
-                }
                 if tty.libinput.resume().is_err() {
                     eprintln!("tetsu-comp: cannot resume libinput");
                 }

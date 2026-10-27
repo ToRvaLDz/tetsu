@@ -139,9 +139,9 @@ impl Tty {
         let states = frame.states.clone();
         drop(frame);
         if rendered {
-            head.drm_output.queue_frame(())?;
-            // The vblank that follows presents this frame.
-            head.in_flight.push_back(locked);
+            // The flag rides with the frame: a replaced queued frame takes
+            // its flag with it.
+            head.drm_output.queue_frame(locked)?;
             Ok(Some(states))
         } else {
             Ok(None)

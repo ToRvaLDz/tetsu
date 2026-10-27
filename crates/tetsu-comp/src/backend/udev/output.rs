@@ -221,7 +221,6 @@ fn light_head(
         drm_output,
         target,
         feedback,
-        in_flight: std::collections::VecDeque::new(),
     });
     Ok(())
 }
