@@ -152,6 +152,37 @@ impl Model {
         self.workspaces.focused()
     }
 
+    /// The workspace of an output at an index, if it exists (nothing is
+    /// created).
+    pub fn find_workspace(&self, output_id: &str, index: i64) -> Option<String> {
+        self.workspaces.find(output_id, index)
+    }
+
+    /// A workspace's index on its output.
+    pub fn workspace_index(&self, workspace_id: &str) -> Option<i64> {
+        self.workspaces.index_of(workspace_id)
+    }
+
+    /// The output a workspace is on.
+    pub fn output_of(&self, workspace_id: &str) -> Option<&str> {
+        self.workspaces.output_of(workspace_id)
+    }
+
+    /// The output of the focused workspace.
+    pub fn focused_output(&self) -> Option<&str> {
+        self.output_of(self.focused_workspace()?)
+    }
+
+    /// The workspaces of an output, in the order they were created.
+    pub fn workspaces_of(&self, output_id: &str) -> Vec<String> {
+        self.workspaces.of_output(output_id)
+    }
+
+    /// The id of the output added with `name`.
+    pub fn output_named(&self, name: &str) -> Option<String> {
+        self.workspaces.output_named(name)
+    }
+
     /// The name an output was added with.
     pub fn output_name(&self, output_id: &str) -> Option<&str> {
         self.workspaces.output_name(output_id)

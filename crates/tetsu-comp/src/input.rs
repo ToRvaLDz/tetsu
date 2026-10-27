@@ -2,7 +2,8 @@
 //! to the surface under it, and a click focuses the window under it.
 //!
 //! Compositor binds: Ctrl+Alt+Backspace quits; Ctrl+Alt+F1..F12 switch VT
-//! (tty only). Super combos are avoided, the host compositor grabs them.
+//! (tty only); the layout binds use Super on a VT and in tests, and
+//! Ctrl+Alt nested, because the host compositor grabs Super.
 
 use smithay::backend::input::{
     AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
@@ -15,33 +16,88 @@ use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 
+use crate::engine::Action as EngineAction;
 use crate::state::State;
 
 /// Wheel clicks are 120 units; a click scrolls this many pixels.
 const PIXELS_PER_CLICK: f64 = 15.0;
 const CLICK_UNITS: f64 = 120.0;
 
+/// The modifier of the layout binds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModKey {
+    /// Super (tty and headless).
+    Super,
+    /// Ctrl+Alt (nested: the host compositor grabs Super).
+    CtrlAlt,
+}
+
+impl ModKey {
+    fn held(self, modifiers: &ModifiersState) -> bool {
+        match self {
+            Self::Super => modifiers.logo && !modifiers.ctrl && !modifiers.alt,
+            Self::CtrlAlt => modifiers.ctrl && modifiers.alt && !modifiers.logo,
+        }
+    }
+}
+
 /// What a compositor bind does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
+pub enum Bound {
     /// Stop the compositor.
     Quit,
     /// Switch to this VT.
     SwitchVt(i32),
+    /// An action of the layout engine.
+    Engine(EngineAction),
+}
+
+/// The layout bind of a key (without the modifier check). Shifted letters
+/// arrive upper-case; digits arrive unshifted, the glue passes the raw
+/// keysyms of the key.
+fn engine_bind(shift: bool, raw: u32) -> Option<EngineAction> {
+    let lower = if (keysyms::KEY_A..=keysyms::KEY_Z).contains(&raw) {
+        raw + (keysyms::KEY_a - keysyms::KEY_A)
+    } else {
+        raw
+    };
+    let digit = || {
+        (keysyms::KEY_1..=keysyms::KEY_9)
+            .contains(&lower)
+            .then(|| u8::try_from(lower - keysyms::KEY_1 + 1).ok())
+            .flatten()
+    };
+    match (shift, lower) {
+        (false, keysyms::KEY_j) => Some(EngineAction::FocusNext),
+        (false, keysyms::KEY_k) => Some(EngineAction::FocusPrev),
+        (true, keysyms::KEY_j) => Some(EngineAction::SwapNext),
+        (true, keysyms::KEY_k) => Some(EngineAction::SwapPrev),
+        (true, keysyms::KEY_Return) => Some(EngineAction::PromoteMaster),
+        (false, keysyms::KEY_h) => Some(EngineAction::RatioDelta(-1)),
+        (false, keysyms::KEY_l) => Some(EngineAction::RatioDelta(1)),
+        (false, keysyms::KEY_space) => Some(EngineAction::CycleLayout),
+        (false, keysyms::KEY_f) => Some(EngineAction::ToggleFloating),
+        (false, keysyms::KEY_q) => Some(EngineAction::Close),
+        (false, _) => digit().map(EngineAction::FocusWorkspace),
+        (true, _) => digit().map(EngineAction::MoveToWorkspace),
+    }
 }
 
 /// The action bound to a key, if any.
-pub fn bound_action(modifiers: &ModifiersState, keysym: Keysym) -> Option<Action> {
+pub fn bound_action(mod_key: ModKey, modifiers: &ModifiersState, keysym: Keysym) -> Option<Bound> {
     if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace {
-        return Some(Action::Quit);
+        return Some(Bound::Quit);
     }
     // xkb turns Ctrl+Alt+F<n> into the XF86Switch_VT_<n> keysyms.
     let raw = keysym.raw();
     if (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&raw) {
         let vt = raw - keysyms::KEY_XF86Switch_VT_1 + 1;
-        return i32::try_from(vt).ok().map(Action::SwitchVt);
+        return i32::try_from(vt).ok().map(Bound::SwitchVt);
     }
-    None
+    if !mod_key.held(modifiers) {
+        return None;
+    }
+    engine_bind(modifiers.shift, raw).map(Bound::Engine)
 }
 
 impl State {
@@ -140,27 +196,37 @@ impl State {
             return;
         };
         let key_state = event.state();
-        let action = keyboard.input::<Action, _>(
+        let mod_key = self.mod_key;
+        let action = keyboard.input::<Bound, _>(
             self,
             event.key_code(),
             key_state,
             SERIAL_COUNTER.next_serial(),
             event.time(),
             |_, modifiers, handle| {
+                // The raw syms of the key (digits unshifted), then the modified one
+                // (xkb's VT keysyms only exist there).
                 let bound = (key_state == KeyState::Pressed)
-                    .then(|| bound_action(modifiers, handle.modified_sym()))
+                    .then(|| {
+                        handle
+                            .raw_syms()
+                            .iter()
+                            .copied()
+                            .chain([handle.modified_sym()])
+                            .find_map(|sym| bound_action(mod_key, modifiers, sym))
+                    })
                     .flatten();
                 bound.map_or(FilterResult::Forward, FilterResult::Intercept)
             },
         );
         match action {
-            Some(Action::Quit) => self.loop_signal.stop(),
-            Some(Action::SwitchVt(vt)) => {
+            Some(Bound::Quit) => self.loop_signal.stop(),
+            Some(Bound::SwitchVt(vt)) => {
                 if let Some(switch) = self.vt_switch.as_mut() {
                     switch(vt);
                 }
             }
-            None => {}
+            Some(Bound::Engine(_)) | None => {}
         }
     }
 

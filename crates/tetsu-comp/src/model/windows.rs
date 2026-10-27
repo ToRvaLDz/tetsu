@@ -1,6 +1,6 @@
 //! The windows: their state, the focus stack and the events they emit.
 
-use tetsu_bus::window::{ListWindowsReply, Placement, Window, WindowEvent};
+use tetsu_bus::window::{ListWindowsReply, Placement, Window, WindowEvent, WindowKind};
 
 /// What the compositor knows about a window when it maps.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -122,9 +122,18 @@ impl Windows {
         let Some(window) = self.list.iter_mut().find(|w| w.id == id) else {
             return;
         };
-        if window.placement != placement {
-            window.placement = placement;
-            self.mark_dirty(id);
+        if window.placement == placement {
+            return;
+        }
+        window.placement = placement;
+        let current = window.clone();
+        // A window that has not been flushed yet opens with its placement.
+        let pending = self.events.iter_mut().find(|e| {
+            e.kind == WindowKind::Opened && e.window.as_ref().is_some_and(|w| w.id == id)
+        });
+        match pending {
+            Some(event) => event.window = Some(current),
+            None => self.mark_dirty(id),
         }
     }
 

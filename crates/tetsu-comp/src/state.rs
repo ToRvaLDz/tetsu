@@ -26,6 +26,7 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 
 use crate::bus::{Publisher, Snapshot};
+use crate::input::ModKey;
 use crate::layout::dwindle::dwindle;
 use crate::layout::{Gaps, Rect};
 use crate::model::{Model, WindowInfo};
@@ -100,6 +101,8 @@ pub struct State {
     pub mapped: Vec<Mapped>,
     /// The bus thread, once bound.
     pub publisher: Option<Publisher>,
+    /// The modifier of the layout binds.
+    pub mod_key: ModKey,
     /// The tty backend, once started.
     pub tty: Option<crate::backend::udev::Tty>,
     /// Switches to a VT (tty only).
@@ -139,6 +142,7 @@ impl State {
             unmapped: Vec::new(),
             mapped: Vec::new(),
             publisher: None,
+            mod_key: ModKey::CtrlAlt,
             tty: None,
             vt_switch: None,
         })

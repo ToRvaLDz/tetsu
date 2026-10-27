@@ -59,12 +59,8 @@ impl Workspaces {
         if !self.outputs.iter().any(|o| o.id == output_id) {
             return None;
         }
-        let found = self
-            .list
-            .iter()
-            .find(|w| w.output_id.as_deref() == Some(output_id) && w.index == index);
-        if let Some(workspace) = found {
-            return Some(workspace.id.clone());
+        if let Some(found) = self.find(output_id, index) {
+            return Some(found);
         }
         self.next_workspace += 1;
         let workspace = Workspace {
@@ -77,6 +73,38 @@ impl Workspaces {
         self.events.push(WorkspaceEvent::added(workspace.clone()));
         self.list.push(workspace);
         Some(id)
+    }
+
+    /// The workspace of an output at an index, if it exists.
+    pub(super) fn find(&self, output_id: &str, index: i64) -> Option<String> {
+        self.list
+            .iter()
+            .find(|w| w.output_id.as_deref() == Some(output_id) && w.index == index)
+            .map(|w| w.id.clone())
+    }
+
+    pub(super) fn index_of(&self, id: &str) -> Option<i64> {
+        self.list.iter().find(|w| w.id == id).map(|w| w.index)
+    }
+
+    pub(super) fn output_of(&self, id: &str) -> Option<&str> {
+        let workspace = self.list.iter().find(|w| w.id == id)?;
+        workspace.output_id.as_deref()
+    }
+
+    pub(super) fn of_output(&self, output_id: &str) -> Vec<String> {
+        self.list
+            .iter()
+            .filter(|w| w.output_id.as_deref() == Some(output_id))
+            .map(|w| w.id.clone())
+            .collect()
+    }
+
+    pub(super) fn output_named(&self, name: &str) -> Option<String> {
+        self.outputs
+            .iter()
+            .find(|o| o.name == name)
+            .map(|o| o.id.clone())
     }
 
     pub(super) fn exists(&self, id: &str) -> bool {
