@@ -3,6 +3,8 @@
 //! client is told the decoration mode is server-side.
 
 mod common;
+#[path = "common/kde.rs"]
+mod kde;
 #[path = "common/wayland.rs"]
 mod wayland;
 
@@ -10,7 +12,9 @@ use std::fs;
 
 use common::Client;
 use common::comp::{Comp, Layers};
+use kde::KdeClient;
 use serde_json::{Value, json};
+use smithay_client_toolkit::shell::xdg::window::{DecorationMode, WindowDecorations};
 use wayland::WlClient;
 
 const GET_CONFIG: &str = "org.tetsu.comp.config.v1.GetConfig";
@@ -126,4 +130,67 @@ fn decorations_reload_live_and_bad_values_are_diagnosed() {
     );
     assert_eq!(name, "org.tetsu.comp.config.v1.InvalidValue");
     assert_eq!(params["key"], "decorations.width");
+}
+
+#[test]
+fn the_decoration_globals_are_advertised() {
+    let comp = Comp::start();
+    let globals = wayland::globals(&comp.wayland_socket());
+    for name in [
+        "zxdg_decoration_manager_v1",
+        "org_kde_kwin_server_decoration_manager",
+    ] {
+        assert!(globals.iter().any(|g| g == name), "{name} in {globals:?}");
+    }
+}
+
+#[test]
+fn xdg_decoration_is_always_server_side() {
+    let comp = Comp::start();
+    let mut wl = WlClient::connect(&comp.wayland_socket());
+
+    // sctk starts a window in Client mode: Server from the very first
+    // configure proves the compositor sent it.
+    let top = wl.map_decorated("org.tetsu.test", "one", WindowDecorations::RequestClient);
+    assert_eq!(wl.decoration_modes(&top)[0], DecorationMode::Server);
+
+    let before = wl.configures(&top);
+    wl.request_decoration(&top, Some(DecorationMode::Client));
+    wl.wait_for_configure_after(&top, before);
+    let before = wl.configures(&top);
+    wl.request_decoration(&top, None);
+    wl.wait_for_configure_after(&top, before);
+    let modes = wl.decoration_modes(&top);
+    assert!(modes.len() >= 3, "{modes:?}");
+    assert!(
+        modes.iter().all(|m| *m == DecorationMode::Server),
+        "{modes:?}"
+    );
+
+    let server = wl.map_decorated("org.tetsu.test", "two", WindowDecorations::RequestServer);
+    assert!(
+        wl.decoration_modes(&server)
+            .iter()
+            .all(|m| *m == DecorationMode::Server)
+    );
+}
+
+#[test]
+fn kde_server_decoration_answers_server() {
+    let comp = Comp::start();
+    let mut kde = KdeClient::connect(&comp.wayland_socket());
+    assert!(matches!(
+        kde.default_mode(),
+        Some(wayland_client::WEnum::Value(
+            wayland_protocols_misc::server_decoration::client::org_kde_kwin_server_decoration_manager::Mode::Server
+        ))
+    ));
+    let modes = kde.ask_for_client_side();
+    assert!(
+        modes
+            .iter()
+            .all(|m| matches!(m, wayland_client::WEnum::Value(kde::Mode::Server))),
+        "{modes:?}"
+    );
+    assert!(!modes.is_empty());
 }

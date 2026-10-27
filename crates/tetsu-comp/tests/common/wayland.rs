@@ -25,7 +25,7 @@ use smithay_client_toolkit::shell::wlr_layer::{
 };
 use smithay_client_toolkit::shell::xdg::XdgShell;
 use smithay_client_toolkit::shell::xdg::window::{
-    Window, WindowConfigure, WindowDecorations, WindowHandler,
+    DecorationMode, Window, WindowConfigure, WindowDecorations, WindowHandler,
 };
 use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::shm::slot::SlotPool;
@@ -43,6 +43,8 @@ struct App {
     compositor: CompositorState,
     layer_shell: Option<LayerShell>,
     configures: Vec<(ObjectId, Size, bool)>,
+    /// The decoration mode of each toplevel configure.
+    modes: Vec<(ObjectId, DecorationMode)>,
     /// Whether to put a bar on every `wl_output`, as tetsu-bar does.
     mimic_bar: bool,
     layers: Vec<LayerRec>,
@@ -246,6 +248,7 @@ impl WindowHandler for App {
     ) {
         let id = window.wl_surface().id();
         let tiled = configure.is_tiled_left();
+        self.modes.push((id.clone(), configure.decoration_mode));
         self.configures.push((id, configure.new_size, tiled));
     }
 }
@@ -322,6 +325,7 @@ impl WlClient {
             compositor: CompositorState::bind(&globals, &qh).unwrap(),
             layer_shell: LayerShell::bind(&globals, &qh).ok(),
             configures: Vec::new(),
+            modes: Vec::new(),
             mimic_bar: false,
             layers: Vec::new(),
             layer_buffers: Vec::new(),
@@ -347,21 +351,35 @@ impl WlClient {
     /// Maps a toplevel: commits it bare, waits for the first configure,
     /// then attaches a buffer of the size it was given.
     pub fn map(&mut self, app_id: &str, title: &str) -> Toplevel {
-        self.map_with(app_id, title, None)
+        self.map_with(app_id, title, None, WindowDecorations::None)
+    }
+
+    /// Like `map`, with the decorations the window is created with.
+    pub fn map_decorated(
+        &mut self,
+        app_id: &str,
+        title: &str,
+        decorations: WindowDecorations,
+    ) -> Toplevel {
+        self.map_with(app_id, title, None, decorations)
     }
 
     /// Like `map`, for a window that may be configured without a size: it
     /// attaches a buffer of `fallback` then.
     pub fn map_floating(&mut self, app_id: &str, title: &str, fallback: (i32, i32)) -> Toplevel {
-        self.map_with(app_id, title, Some(fallback))
+        self.map_with(app_id, title, Some(fallback), WindowDecorations::None)
     }
 
-    fn map_with(&mut self, app_id: &str, title: &str, fallback: Option<(i32, i32)>) -> Toplevel {
+    fn map_with(
+        &mut self,
+        app_id: &str,
+        title: &str,
+        fallback: Option<(i32, i32)>,
+        decorations: WindowDecorations,
+    ) -> Toplevel {
         let qh = self.queue.handle();
         let surface = self.app.compositor.create_surface(&qh);
-        let window = self
-            .xdg
-            .create_window(surface, WindowDecorations::None, &qh);
+        let window = self.xdg.create_window(surface, decorations, &qh);
         window.set_app_id(app_id);
         window.set_title(title);
         window.commit();
@@ -400,6 +418,41 @@ impl WlClient {
             .iter()
             .rfind(|c| c.0 == id)
             .is_some_and(|c| c.2)
+    }
+
+    /// The decoration mode of each configure of the toplevel, in order.
+    pub fn decoration_modes(&self, top: &Toplevel) -> Vec<DecorationMode> {
+        let id = top.window.wl_surface().id();
+        self.app
+            .modes
+            .iter()
+            .filter(|(surface, _)| *surface == id)
+            .map(|(_, mode)| *mode)
+            .collect()
+    }
+
+    /// Asks for a decoration mode (`None`: no preference).
+    pub fn request_decoration(&mut self, top: &Toplevel, mode: Option<DecorationMode>) {
+        top.window.request_decoration_mode(mode);
+        self.queue.roundtrip(&mut self.app).unwrap();
+    }
+
+    /// Dispatches until the toplevel has had more than `n` configures.
+    pub fn wait_for_configure_after(&mut self, top: &Toplevel, n: usize) {
+        let start = Instant::now();
+        while self.configure_count(top) <= n {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "no configure after the {n}th"
+            );
+            self.queue.roundtrip(&mut self.app).unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// How many configures the toplevel has had.
+    pub fn configures(&self, top: &Toplevel) -> usize {
+        self.configure_count(top)
     }
 
     /// Round-trips to the compositor.
