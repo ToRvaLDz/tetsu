@@ -1,4 +1,7 @@
 //! tetsu-comp: the Tetsu compositor.
+//!
+//! Serves `org.tetsu.comp.{window,workspace,output}.v1` through the
+//! `tetsu-bus` facade (output reads only for now) and `zwlr_layer_shell_v1`.
 
 pub mod backend;
 pub mod bus;

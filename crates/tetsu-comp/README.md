@@ -2,13 +2,15 @@
 
 The Tetsu Wayland compositor, on Smithay. It maps xdg-shell windows, lays
 them out (dwindle, master or floating, with window rules) and serves the
-window and workspace interfaces of the bus (`org.tetsu.comp.window.v1`,
-`org.tetsu.comp.workspace.v1`).
+window, workspace and output interfaces of the bus
+(`org.tetsu.comp.window.v1`, `org.tetsu.comp.workspace.v1`,
+`org.tetsu.comp.output.v1`), and `zwlr_layer_shell_v1` for the bar.
 
 ## Running
 
     tetsu-comp [--backend winit|tty|headless] [--config <file>]
-               [--headless-outputs <1..4>] [-- <command>...]
+               [--headless-outputs <1..4>] [--headless-hotplug]
+               [-- <command>...]
 
 `-- <command>` starts a client with `WAYLAND_DISPLAY` and
 `TETSU_COMP_SOCKET` set. Once it listens, `tetsu-comp` prints
@@ -44,9 +46,13 @@ window and workspace interfaces of the bus (`org.tetsu.comp.window.v1`,
       tetsu-comp: render device renderD128 (i915), automatic: only device
       tetsu-comp: output eDP-1 on card0, cross-gpu=false
 
-  There is no hotplug yet: cards and monitors must be connected before
-  start, and plugging an external monitor later does not move the render
-  device.
+  **Hotplug.** Monitors come and go without a restart (see Outputs). The
+  cards are fixed at start: a udev `change` on a known card, and a
+  session resume, look at its connectors again; a card added later is only
+  logged (`card <path> added; restart tetsu-comp to use it`), a card that
+  goes away takes its outputs with it, and losing the render device
+  cannot be survived. The render device is not chosen again when a monitor
+  is plugged.
 
   **Dmabuf and explicit sync.** `zwp_linux_dmabuf_v1` is advertised with
   default and per-output feedback; `wl_drm` is not. With
@@ -60,9 +66,54 @@ window and workspace interfaces of the bus (`org.tetsu.comp.window.v1`,
   `HEADLESS-2`.. to the right of the first output. It exists so that tests
   can exercise the `output` window rule.
 
+- **`--headless-hotplug`** (headless only): reads hotplug commands from
+  stdin, one per line, so tests can plug and unplug outputs:
+  `add [<w>x<h>]` (a new `HEADLESS-<n>`, `n` counting up),
+  `add-named <name> <w>x<h>` (a replug) and `remove <name>`. Sides are 1 to
+  16384. A line that does not parse, or names nothing, is logged and
+  ignored.
+
 Query the bus with `varlinkctl call $TETSU_COMP_SOCKET
 org.tetsu.comp.window.v1.ListWindows '{}'`. The bus socket is
 `$XDG_RUNTIME_DIR/tetsu/comp/<wayland socket name>`, one per instance.
+
+## Outputs
+
+Outputs appear and disappear while the compositor runs (udev on the tty, the
+stdin hook headless). `org.tetsu.comp.output.v1` serves `ListOutputs` and
+`WatchOutputs`: modes, current mode, scale, transform, position and the EDID
+make (the three-letter PNP id, for example `GSM`), model and serial. The EDID
+comes from the display, so control characters are stripped and each field is
+cut to 32 characters. `ConfigureOutputs` answers
+`org.varlink.service.MethodNotImplemented` until #97.
+
+- **Ids.** `out-<n>`, never reused: a monitor plugged in again has a new id.
+  Follow it by `name` or by the EDID fields.
+- **Layout.** Enabled outputs are packed left to right at `y = 0`, in the
+  order they were added, by logical width (mode over scale, swapped for 90
+  and 270 degrees). They are packed again on every add, remove or mode
+  change, so removing an output moves the ones to its right.
+- **Unplug.** The workspaces of the output move to the first remaining
+  output, after its highest index and in their order; each remembers its
+  home (connector name, index, whether it was active). When an output with
+  that name comes back, they return to their old indices and the one that
+  was active is active again; no workspace is created. With no output
+  left, workspaces have `output_id: null` and nothing is focused; the next
+  output adopts them. An output with a new name gets a fresh workspace.
+  `Super+N` does not reach a moved workspace whose index is above 8 until
+  its home returns.
+- **`wl_output`.** The global is disabled at once and destroyed 10 s later.
+
+### Layer shell
+
+`zwlr_layer_shell_v1` is Smithay's `LayerMap`. A layer surface without a
+`wl_output` goes on the focused output. Exclusive zones narrow the layout
+viewport (`layout::usable`), so a bar on top makes the tiles start below it.
+Layers get frame callbacks and pointer input (overlay, top, windows, bottom,
+background). A mapped `exclusive` layer on `top` or `overlay` takes the
+keyboard; `on_demand` gets none yet. When an output goes away its layer
+surfaces get `closed`: a client must make them again when an output appears
+(tetsu-bar does).
 
 ## Build dependencies
 
@@ -140,8 +191,10 @@ map, not on later title changes.
 
 ## Modules
 
-- `model`: windows, workspaces and the events they emit, in the order the
-  contract demands. Pure, tested first.
+- `model`: windows, workspaces, outputs and the events they emit, in the
+  order the contract demands. Pure, tested first. `model/outputs.rs` keeps
+  the output state and its layout.
+- `outputs/`: EDID parsing, mode lists and logical geometry. Pure.
 - `layout/`: the algorithms (`dwindle`, `master`, `floating`). Pure.
 - `rules`: app_id and title patterns to a decision. Pure.
 - `settings`: the config file.
@@ -156,6 +209,7 @@ map, not on later title changes.
   unbounded channel and never waits on it; a watcher that falls 256 events
   behind is disconnected, and a dead thread is restarted.
 - `state`, `handlers`, `input`, `render`, `backend`: the Smithay side.
+  `handlers/layer_shell.rs` is the layer-shell glue.
 
 ## Credits
 
