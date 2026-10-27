@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tetsu_bus::server::bind_system;
+use tetsu_bus::server::listen_system;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::LocalSet;
 
@@ -265,7 +265,7 @@ fn serve_main(options: &Options, proc_cmdline: String, socket: &Path) -> ExitCod
 
 async fn run_server(backend: Arc<HostBackend>, socket: &Path) -> Result<(), String> {
     let listener =
-        bind_system(socket).map_err(|e| format!("cannot listen on {}: {e}", socket.display()))?;
+        listen_system(socket).map_err(|e| format!("cannot listen on {}: {e}", socket.display()))?;
     let stop = |e: std::io::Error| format!("cannot watch for signals: {e}");
     let mut term = signal(SignalKind::terminate()).map_err(stop)?;
     let mut int = signal(SignalKind::interrupt()).map_err(stop)?;

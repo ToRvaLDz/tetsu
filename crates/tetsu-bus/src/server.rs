@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 use zlink::connection::{ReadConnection, WriteConnection};
 use zlink::{Call, Connection, Listener as _, Reply};
 
+use crate::activation;
 use crate::into_io;
 use crate::peer::Peer;
 
@@ -37,10 +38,15 @@ pub struct Listener {
     inner: zlink::tokio::unix::Listener,
     path: PathBuf,
     inode: u64,
+    /// Bound by us. An adopted socket belongs to systemd, which unlinks it.
+    owned: bool,
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
+        if !self.owned {
+            return;
+        }
         let ours = fs::symlink_metadata(&self.path).is_ok_and(|m| m.ino() == self.inode);
         if ours {
             let _ = fs::remove_file(&self.path);
@@ -178,6 +184,33 @@ pub fn bind_system(path: &Path) -> io::Result<Listener> {
     bind_with(path, DirPolicy::System, 0o666)
 }
 
+/// Serves a session socket: the one systemd passes in for `path` (named like
+/// its file, bound to it), otherwise `bind`. An adopted socket keeps the
+/// mode and directory systemd gave it, and is never unlinked here.
+pub fn listen(path: &Path) -> io::Result<Listener> {
+    adopt_or(path, bind)
+}
+
+/// Serves a system socket: the one systemd passes in for `path`, otherwise
+/// `bind_system`. Like `listen`, an adopted socket is left to systemd.
+pub fn listen_system(path: &Path) -> io::Result<Listener> {
+    adopt_or(path, bind_system)
+}
+
+fn adopt_or(path: &Path, bind: fn(&Path) -> io::Result<Listener>) -> io::Result<Listener> {
+    let Some(std_listener) = activation::adopt(path)? else {
+        return bind(path);
+    };
+    let inode = fs::symlink_metadata(path)?.ino();
+    let tokio_listener = tokio::net::UnixListener::from_std(std_listener)?;
+    Ok(Listener {
+        inner: zlink::tokio::unix::Listener::from(tokio_listener),
+        path: path.to_owned(),
+        inode,
+        owned: false,
+    })
+}
+
 /// How the directory of a socket is created and checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirPolicy {
@@ -220,6 +253,7 @@ fn bind_with(path: &Path, dirs: DirPolicy, socket_mode: u32) -> io::Result<Liste
         inner,
         path: path.to_owned(),
         inode,
+        owned: true,
     })
 }
 

@@ -69,17 +69,13 @@ fn serve_adopts_the_socket_systemd_passes_and_leaves_it() {
         .unwrap_or_else(|| panic!("no interfaces in {info}"));
     assert!(interfaces.iter().any(|i| i == NAME), "{info}");
 
-    // SIGTERM to the activator and to the service it started.
-    let status = Command::new("pkill")
-        .args(["-TERM", "-P", &child.id().to_string()])
-        .status()
-        .expect("pkill");
-    assert!(status.success(), "the service was not running");
-    std::thread::sleep(Duration::from_millis(300));
-    let _ = Command::new("kill")
+    // Without --accept the activator execs the service in its own process.
+    let status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
-        .status();
-    let _ = child.wait();
+        .status()
+        .expect("kill");
+    assert!(status.success(), "the service was not running");
+    child.wait().expect("wait for the service");
     assert!(
         socket.exists(),
         "the adopted socket must not be unlinked by the service"
