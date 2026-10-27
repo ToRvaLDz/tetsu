@@ -3,7 +3,9 @@
 //! Serves `org.tetsu.comp.{window,workspace,output,session,config}.v1`
 //! through the `tetsu-bus` facade, behind the capability gate (`output` reads
 //! and `ConfigureOutputs`; `config` is the three-layer config), `zwlr_layer_shell_v1` and
-//! `ext-session-lock-v1`. Trust (`trust`) is decided when a client connects:
+//! `ext-session-lock-v1`. Windows get server-side decorations (`decor`): the
+//! mode is always server-side and the compositor draws a border, never on a
+//! locked output. Trust (`trust`) is decided when a client connects:
 //! only clients the compositor starts see the virtual input protocols or may
 //! take over a dead lock (`lock`).
 

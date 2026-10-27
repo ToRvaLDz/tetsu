@@ -231,6 +231,29 @@ size, capped to 3/4 of the output, and reuses its last floating place.
 Floating windows stay above the tiles. Workspaces 1 to 9 exist per output
 once used; they are never removed yet.
 
+## Decorations
+
+The compositor draws the window decorations (server-side). It answers
+`server_side` on `xdg-decoration` (`zxdg_decoration_manager_v1`) whatever
+the client asks, and `Server` on `org_kde_kwin_server_decoration_manager`
+(GTK3 and Qt), once per decoration object. The mode is sent inside a
+configure, so a client is never told twice.
+
+The decoration is a border: `decorations.width` pixels (2 by default, 0 for
+none) around the content, in `decorations.active_color` for the focused
+window and `decorations.inactive_color` for the others. A tile is inset by
+the border width, so the border sits inside the tile and the gaps are
+unchanged; a floating window keeps its size and the border is drawn outside
+it. The border is drawn on winit and tty, just behind its window in
+stacking order, so a floating window's border is above the tile under it,
+and the bar and notifications stay above it.
+
+Never while the session is locked: the locked scene has no borders.
+
+Not yet: GTK4 apps stay client-side (they bind neither protocol), there
+are no title bars (they need text rendering), and the border cannot be
+dragged to resize.
+
 ## Binds
 
 The modifier (Mod) is **Super** on a VT and headless, and **Ctrl+Alt**
@@ -265,7 +288,7 @@ The config has three layers; the nearest wins, key by key:
 
 A missing file is an empty layer. The built-in values and the defaults file
 both report `origin: default`. Built-in: dwindle, no gaps, master ratio
-0.55, no rules. `--config <file>` replaces the user layer path.
+0.55, no rules, a 2 px border (blue when active, grey otherwise). `--config <file>` replaces the user layer path.
 
 The three files are looked at every 500 ms (a new, edited, renamed-over or
 deleted file is seen) and changes apply live. A bad key costs only itself:
@@ -288,6 +311,7 @@ agent's `SetManaged` (and `ConfigureOutputs`) ask `tetsu-capd` first.
 | Key | writable | otherwise |
 |---|---|---|
 | `layout.default`, `layout.gaps_inner`, `layout.gaps_outer`, `layout.master_ratio` | yes | |
+| `decorations.width` (0 to 32), `decorations.active_color`, `decorations.inactive_color` (`"#rrggbb"` or `"#rrggbbaa"`) | yes | |
 | `render.wait_for_frame_completion` | yes | |
 | `window_rule` (the whole array is one value: a higher layer replaces all lower rules, and one bad rule drops the array of its layer) | yes | |
 | `render.device` | no | `org.tetsu.comp.render.v1.SetRenderDevice` |
@@ -309,7 +333,7 @@ returns to automatic. A user-file value wins field by field.
     transform = "normal"
     position  = { x = 0, y = 0 }
 
-Live now: the gaps, the rules (for windows that open from then on),
+Live now: the gaps, the decorations, the rules (for windows that open from then on),
 `layout.default` and `layout.master_ratio` (for workspaces that have no
 layout state yet) and `lock.command` (the next launch). At the next start:
 `render.*` and `trust.input`.
@@ -330,6 +354,11 @@ The user file schema:
     size     = [640, 480]        # configure size, floating windows
     # workspace = 3              # open on workspace 3 (1..9), unfocused
     # output    = "HEADLESS-2"   # open on that output's active workspace
+
+    [decorations]
+    width          = 2          # 0 to 32 pixels; 0 draws no border
+    active_color   = "#4c8df6"  # "#rrggbb" or "#rrggbbaa"
+    inactive_color = "#59595e"
 
     [render]
     device                    = "auto"  # or "/dev/dri/renderD129" (a node under /dev/dri/)
@@ -357,6 +386,9 @@ map, not on later title changes.
   the `ConfigureOutputs` planner (`configure`), the config's say on an
   output (`prefs`) and the bounds they share (`limits`). Pure. `glue` is
   the apply path on the loop.
+- `decor/`: the border: inset, edge rects, colours and the frames a scene
+  may show (none when locked). Pure; `glue` holds the protocol states and
+  the border buffers.
 - `layout/`: the algorithms (`dwindle`, `master`, `floating`). Pure.
 - `rules`: app_id and title patterns to a decision. Pure.
 - `settings`: the checks of the config values and the settings they make.
@@ -378,7 +410,7 @@ map, not on later title changes.
   unbounded channel and never waits on it; a watcher that falls 256 events
   behind is disconnected, and a dead thread is restarted.
 - `state`, `handlers`, `input`, `render`, `backend`: the Smithay side.
-  `handlers/layer_shell.rs` is the layer-shell glue, `handlers/session_lock.rs`
+  `handlers/layer_shell.rs` is the layer-shell glue, `handlers/decoration.rs` the decoration modes, `handlers/session_lock.rs`
   and `handlers/virtual_input.rs` the lock and virtual input glue.
 
 ## Credits
