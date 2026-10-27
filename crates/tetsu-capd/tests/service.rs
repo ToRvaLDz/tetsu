@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tetsu_bus::cap::{self, EventKind};
+use tetsu_bus::endpoint::{Endpoint, ExpectedServer};
 use tetsu_bus::notify::NotifyReply;
 use tetsu_bus::peer::Peer;
 use tetsu_bus::server::{self, ErrorReply, Handler, Request, Response, StreamItem};
@@ -405,8 +406,19 @@ struct Wired {
     answer: Option<oneshot::Sender<&'static str>>,
 }
 
+/// The cgroup of this test process, where the fake notifyd runs.
+fn own_cgroup() -> String {
+    let proc = std::fs::read_to_string("/proc/self/cgroup").unwrap();
+    tetsu_bus::peer::parse_proc_cgroup(&proc).expect("a unified cgroup")
+}
+
 /// Serves capd and a fake notifyd in a fresh tempdir.
 fn wire() -> Wired {
+    wire_expecting(ExpectedServer::Cgroup(own_cgroup()))
+}
+
+/// Like [`wire`], with capd expecting `expected` behind the notify socket.
+fn wire_expecting(expected: ExpectedServer) -> Wired {
     let dir = tempfile::tempdir().unwrap();
     let cap_path = dir.path().join("run/org.tetsu.cap.v1");
     let notify_path = dir.path().join("run/org.tetsu.notify.v1");
@@ -423,7 +435,7 @@ fn wire() -> Wired {
         Rc::new(fake),
     ));
     let engine = Engine::new(
-        BusNotify::new(notify_path),
+        BusNotify::new(Endpoint::new(notify_path, expected)),
         SystemClock,
         Rc::new(RecordingSink::default()),
         Store::new(layers(&dir)),
@@ -552,5 +564,25 @@ fn closing_a_pending_check_withdraws_the_notification() {
             .await
             .expect("notifyd sees its Show connection close")
             .unwrap();
+    });
+}
+
+#[test]
+fn an_ask_goes_only_to_the_expected_notify_server() {
+    run(async {
+        let mut w = wire_expecting(ExpectedServer::Cgroup(
+            "/system.slice/impostor.service".to_owned(),
+        ));
+        let mut raw = Raw::connect(&w.cap_path).await;
+        raw.send(check_call()).await;
+        // Every re-show is refused before a byte is sent: the ask ends
+        // unavailable.
+        let reply = raw.recv().await;
+        assert_eq!(
+            reply["parameters"],
+            json!({ "decision": "deny", "denied_by": "unavailable" })
+        );
+        valid_reply("org.tetsu.cap.v1.Check", &reply["parameters"]);
+        assert!(w.shows.try_recv().is_err(), "a Show reached the impostor");
     });
 }
