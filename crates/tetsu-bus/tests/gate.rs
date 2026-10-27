@@ -628,6 +628,51 @@ fn a_real_connection_is_answered_with_the_refusal() {
     });
 }
 
+#[test]
+fn a_denied_oneway_call_never_runs_and_writes_nothing_back() {
+    run(|env| async move {
+        env.set(Answer::Reply(
+            serde_json::to_value(CheckReply::deny(DeniedBy::User)).unwrap(),
+        ));
+        let uid = rustix::process::geteuid().as_raw();
+        let socket = env.socket.with_file_name("org.example.v1");
+        let capd = env.socket.clone();
+        let gate = Gated::with(
+            Inner {
+                events: env.events.clone(),
+            },
+            GateConfig {
+                scope: Scope::Session,
+                own_uid: uid,
+                capd: Box::new(move |_| {
+                    Endpoint::new(capd.clone(), ExpectedServer::Cgroup(own_cgroup()))
+                }),
+                groups: Wheel(vec![]),
+                authority: RootOnly,
+                log: Box::new(|_| {}),
+            },
+        );
+        let listener = server::bind(&socket).unwrap();
+        tokio::task::spawn_local(server::serve(listener, Rc::new(AsAgent(gate))));
+
+        let mut client = UnixStream::connect(&socket).await.unwrap();
+        let mut bytes =
+            serde_json::to_vec(&json!({ "method": DO, "parameters": {}, "oneway": true })).unwrap();
+        bytes.push(0);
+        client.write_all(&bytes).await.unwrap();
+
+        // capd decides; then give a wrongly written reply time to appear.
+        tokio::time::sleep(QUIET).await;
+        assert_eq!(env.events(), ["check"], "the call must never run");
+        let mut chunk = [0u8; 1024];
+        match tokio::time::timeout(QUIET, client.read(&mut chunk)).await {
+            Err(_) | Ok(Ok(0)) => {}
+            other => panic!("a oneway call gets no reply bytes, got {other:?}"),
+        }
+        assert_eq!(env.events(), ["check"]);
+    });
+}
+
 // 8. One log line per refusal.
 
 #[test]
