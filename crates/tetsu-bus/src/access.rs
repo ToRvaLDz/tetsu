@@ -121,9 +121,10 @@ pub fn permission_denied(method: &str) -> ErrorReply {
     ErrorReply::new(&format!("{interface}.PermissionDenied"), json!({}))
 }
 
-/// One log line for a refusal. The method comes from the caller, so control
-/// characters are dropped and a long name is cut: the line cannot be forged
-/// or inflated.
+/// One log line for a refusal. The method comes from the caller, and the
+/// reason may quote what a server answered, so control characters are
+/// dropped and a long method name is cut: the line cannot be forged or
+/// inflated.
 pub fn log_line(method: &str, peer: &Peer, why: &str) -> String {
     let method = clean(method);
     let method = if method.chars().count() > LOG_METHOD_LIMIT {
@@ -133,9 +134,10 @@ pub fn log_line(method: &str, peer: &Peer, why: &str) -> String {
         method
     };
     format!(
-        "tetsu-bus: refused {method} from pid {} ({}): {why}",
+        "tetsu-bus: refused {method} from pid {} ({}): {}",
         peer.pid,
-        clean(&peer.sender_name())
+        clean(&peer.sender_name()),
+        clean(why)
     )
 }
 

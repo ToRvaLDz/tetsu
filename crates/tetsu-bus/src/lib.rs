@@ -6,6 +6,7 @@
 pub mod access;
 pub mod cap;
 pub mod endpoint;
+pub mod gate;
 pub mod notify;
 mod nullable;
 pub mod peer;
