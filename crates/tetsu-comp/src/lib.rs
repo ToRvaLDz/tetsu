@@ -1,7 +1,10 @@
 //! tetsu-comp: the Tetsu compositor.
 //!
-//! Serves `org.tetsu.comp.{window,workspace,output}.v1` through the
-//! `tetsu-bus` facade (output reads only for now) and `zwlr_layer_shell_v1`.
+//! Serves `org.tetsu.comp.{window,workspace,output,session}.v1` through the
+//! `tetsu-bus` facade (output reads only for now), `zwlr_layer_shell_v1` and
+//! `ext-session-lock-v1`. Trust (`trust`) is decided when a client connects:
+//! only clients the compositor starts see the virtual input protocols or may
+//! take over a dead lock (`lock`).
 
 pub mod backend;
 pub mod bus;

@@ -2,9 +2,10 @@
 
 The Tetsu Wayland compositor, on Smithay. It maps xdg-shell windows, lays
 them out (dwindle, master or floating, with window rules) and serves the
-window, workspace and output interfaces of the bus
+window, workspace, output and session interfaces of the bus
 (`org.tetsu.comp.window.v1`, `org.tetsu.comp.workspace.v1`,
-`org.tetsu.comp.output.v1`), and `zwlr_layer_shell_v1` for the bar.
+`org.tetsu.comp.output.v1`, `org.tetsu.comp.session.v1`),
+`zwlr_layer_shell_v1` for the bar and `ext-session-lock-v1` for the lock.
 
 ## Running
 
@@ -118,6 +119,43 @@ keyboard; `on_demand` gets none yet. When an output goes away its layer
 surfaces get `closed`: a client must make them again when an output appears
 (tetsu-bar does).
 
+## Session lock and trust
+
+`ext-session-lock-v1` is open to every client; the decision is the lock
+state machine's (`lock/`, pure, no Smithay types). It fails closed:
+
+- The first lock request is accepted from anyone. A request while locking or
+  locked is refused (`finished`).
+- `locked` is sent only when every output presented a frame rendered in the
+  locked scene (a solid colour plus the owner's lock surface, nothing else:
+  no window, popup or layer). A frame rendered before the lock never counts.
+  An output plugged in while locked shows the solid colour at once, and the
+  lock waits for its first locked frame. On the tty a head that never
+  presents never confirms: the scene is locked, the locker waits.
+- If the locker dies, the session stays locked on the solid colour. Only a
+  client the compositor started as the locker can take it over. The compositor
+  starts `[lock] command` itself, at most 3 times per 60 s and 1 s apart;
+  after that only Mod+Shift+L starts it. With `command = []` nothing takes
+  over: switch to another VT and stop the compositor.
+- While locked the keyboard is the lock surface's and the pointer sees only
+  the lock surface. Windows, layer surfaces and focus changes cannot take
+  them. Only the VT switch and Mod+Shift+L binds work; Ctrl+Alt+Backspace
+  does not.
+- The bus says `locked` when locking begins (so notifyd shows no actions
+  even before the lock is confirmed) and `unlocked` at the owner's unlock.
+  There is no unlock method on the bus.
+
+Trust is decided when a client connects and does not change. The compositor
+starts the clients it trusts over a socket pair and hands the child end over
+as `WAYLAND_SOCKET`; everything that comes through `WAYLAND_DISPLAY` is
+untrusted, including the children of a trusted client. `[lock] command` runs
+as the locker, `[trust] input` helpers as input clients. Only input clients
+see and bind `zwp_virtual_keyboard_manager_v1` and
+`zwlr_virtual_pointer_manager_v1`; virtual keys go to the keyboard focus and
+never match a compositor bind. A trusted input client can type into the lock
+surface. A service started by systemd cannot be trusted yet. A virtual
+keyboard's own keymap and `modifiers` requests are not applied.
+
 ## Build dependencies
 
 Arch: `libinput seatd libxkbcommon xkeyboard-config mesa libdrm wayland`.
@@ -158,6 +196,7 @@ configurable yet.
 | Mod+1..9 | show workspace N |
 | Mod+Shift+1..9 | send the focused window to workspace N (stay here) |
 | Mod+Q | close the focused window |
+| Mod+Shift+L | start the session locker (`[lock] command`) |
 | Mod+left-drag | move a floating window |
 | Ctrl+Alt+Backspace | quit |
 | Ctrl+Alt+F1..F12 | switch VT (tty) |
@@ -188,6 +227,14 @@ values stop the start with a message naming the key (exit code 2).
     explicit_sync             = "auto"  # auto | on | off; "on" cannot force an unsupported device
     wait_for_frame_completion = false   # wait for each frame before queueing it
 
+    [lock]
+    command = ["swaylock"]   # started by Mod+Shift+L and again when the locker dies; [] = never
+
+    [trust]
+    # Started once at startup, with the right to bind the virtual input
+    # protocols (zwp_virtual_keyboard_v1, zwlr_virtual_pointer_v1).
+    input = []               # for example [["wtype"], ["wayvnc"]]
+
 A window that opens on another workspace or output than the focused one
 does not take the focus. Rules are evaluated at the first configure and at
 map, not on later title changes.
@@ -201,6 +248,8 @@ map, not on later title changes.
 - `layout/`: the algorithms (`dwindle`, `master`, `floating`). Pure.
 - `rules`: app_id and title patterns to a decision. Pure.
 - `settings`: the config file.
+- `lock/`: the session lock state machine (pure) and its Smithay glue;
+  `trust`: who a client is, and how trusted helpers are started.
 - `gpu/`: the tty backend's decisions, pure and tested first. `select`
   (the render device), `assign` (how each output is served), `formats`
   (CCS filter, color formats, scanout tranches) and `sync` (explicit sync
@@ -212,7 +261,8 @@ map, not on later title changes.
   unbounded channel and never waits on it; a watcher that falls 256 events
   behind is disconnected, and a dead thread is restarted.
 - `state`, `handlers`, `input`, `render`, `backend`: the Smithay side.
-  `handlers/layer_shell.rs` is the layer-shell glue.
+  `handlers/layer_shell.rs` is the layer-shell glue, `handlers/session_lock.rs`
+  and `handlers/virtual_input.rs` the lock and virtual input glue.
 
 ## Credits
 
