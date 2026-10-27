@@ -308,14 +308,11 @@ pub async fn serve<H: Handler>(mut listener: Listener, handler: Rc<H>) -> io::Re
 async fn identify(connection: &mut Connection<Socket>) -> io::Result<Peer> {
     let credentials = connection.peer_credentials().await?.clone();
     // A kernel without SO_PEERPIDFD (< 6.5) gives no pidfd: fail closed.
-    let pidfd = credentials
-        .process_fd()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "no peer pidfd"))?;
-    Peer::resolve(
+    Peer::from_credentials(
         credentials.unix_user_id().as_raw(),
         credentials.unix_primary_group_id().as_raw(),
         credentials.process_id().as_raw_nonzero().get(),
-        pidfd,
+        credentials.process_fd(),
     )
 }
 
