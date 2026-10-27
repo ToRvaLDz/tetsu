@@ -87,6 +87,9 @@ pub enum Action {
     /// Stage the API key in the owner's home (API backends only).
     StageApiKey,
     WriteUnlockLevel,
+    /// Make the target's pacman keyring (`pacman-key --init` and
+    /// `--populate`) so the first `tetsu-tx update` finds one.
+    InitKeyring,
     BuildInitrd,
     // Stage 2: boot.
     GenerateKey(KeyKind),
@@ -175,7 +178,7 @@ impl Action {
             Self::ExtractPayload => &["tar"],
             Self::HashPassword | Self::GenerateKey(_) => &["openssl"],
             Self::WriteUser | Self::StageApiKey => &["chown"],
-            Self::BuildInitrd => &["systemd-nspawn"],
+            Self::InitKeyring | Self::BuildInitrd => &["systemd-nspawn"],
             Self::BuildUki => &["ukify", "sbsign"],
             Self::InstallBootloader => &["sbsign"],
             Self::VerifySignatures => &["sbverify"],
@@ -226,6 +229,7 @@ impl Action {
             Self::WriteAgentBackend => "write the agent backend choice",
             Self::StageApiKey => "stage the agent API key in the user's home",
             Self::WriteUnlockLevel => "write the unlock level",
+            Self::InitKeyring => "initialise the pacman keyring",
             Self::BuildInitrd => "build the initrd",
             Self::GenerateKey(KeyKind::Pk) => "generate the Secure Boot platform key",
             Self::GenerateKey(KeyKind::Kek) => "generate the Secure Boot key exchange key",
@@ -295,10 +299,10 @@ impl InstallPlan {
 
 fn stage_disk(answers: &Answers) -> Vec<Action> {
     use Action::{
-        BuildInitrd, ExtractPayload, FormatEsp, FormatRoot, HashPassword, InitLayout, LockRoot,
-        LuksAddRecoveryKey, LuksFormat, LuksOpen, MountEsp, MountTop, Partition, SettleDevices,
-        StageApiKey, WipeSignatures, WriteAgentBackend, WriteCmdline, WriteFstab, WriteHostname,
-        WriteLocale, WriteUnlockLevel, WriteUser,
+        BuildInitrd, ExtractPayload, FormatEsp, FormatRoot, HashPassword, InitKeyring, InitLayout,
+        LockRoot, LuksAddRecoveryKey, LuksFormat, LuksOpen, MountEsp, MountTop, Partition,
+        SettleDevices, StageApiKey, WipeSignatures, WriteAgentBackend, WriteCmdline, WriteFstab,
+        WriteHostname, WriteLocale, WriteUnlockLevel, WriteUser,
     };
     let mut actions = vec![
         WipeSignatures,
@@ -331,7 +335,7 @@ fn stage_disk(answers: &Answers) -> Vec<Action> {
             actions.push(StageApiKey);
         }
     }
-    actions.extend([WriteUnlockLevel, BuildInitrd]);
+    actions.extend([WriteUnlockLevel, InitKeyring, BuildInitrd]);
     actions
 }
 

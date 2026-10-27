@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tetsu_tx::store::snapshot::FIRST_COUNTER;
-use tetsu_tx::tx::nspawn::Nspawn;
+use tetsu_tx::tx::nspawn::{Network, Nspawn};
 use tetsu_tx::tx::steps::{build_initrd, kernel_version};
 
 use crate::agent::AgentBackend;
@@ -79,6 +79,7 @@ impl Executor<'_> {
             Action::WriteAgentBackend => self.write_agent_backend(),
             Action::StageApiKey => self.stage_api_key(),
             Action::WriteUnlockLevel => self.write_unlock_level(),
+            Action::InitKeyring => self.init_keyring(),
             Action::BuildInitrd => self.build_initrd(),
             other => Err(InstallError::Failed(format!(
                 "{other:?} is not implemented yet"
@@ -264,6 +265,33 @@ impl Executor<'_> {
             &config::unlock_level(self.answers.unlock.level),
             0o644,
         )
+    }
+
+    /// Make the pacman keyring with the target's own `pacman-key`, offline,
+    /// so the first `tetsu-tx update` finds it. Each device gets a local
+    /// signing key made here; the payload ships no keyring secrets.
+    fn init_keyring(&mut self) -> Result<(), InstallError> {
+        let root = self.snapshot_root();
+        let scratch = self.run.subdir("keyring-var")?;
+        fs::create_dir_all(&self.target.cache_dir)
+            .map_err(|e| InstallError::io(&self.target.cache_dir, e))?;
+        let ns = Nspawn::new(&root, &scratch, &self.target.cache_dir);
+        let steps: [&[&str]; 2] = [
+            &["pacman-key", "--init"],
+            &["pacman-key", "--populate", "archlinux"],
+        ];
+        for command in steps {
+            let args = ns.args(Network::Offline, command);
+            self.deps.runner.run("systemd-nspawn", &args)?;
+        }
+        let trustdb = self.etc().join("pacman.d/gnupg/trustdb.gpg");
+        if !trustdb.is_file() {
+            return Err(InstallError::Failed(format!(
+                "pacman-key did not write {}",
+                trustdb.display()
+            )));
+        }
+        Ok(())
     }
 
     /// Build the initrd offline in a container over snapshot 1.

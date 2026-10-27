@@ -91,10 +91,12 @@ set is defined in one place; `image/tests/tetsu-base.sh` pins that shape.
 - The pacman database is at `/usr/lib/pacman` and `/var/lib/pacman` links to it
   (the layout `tetsu-tx` expects, with `@var` mounted over `/var`).
 - Nothing machine-specific: no `/etc/machine-id`, no SSH host keys (no sshd), no
-  `/etc/pacman.d/gnupg`. The keyring is made at the first boot by
-  `tetsu-keyring-init.service` (`pacman-key --init` and `--populate archlinux`),
-  so each device has its own local signing key and the payload holds public
-  keys only.
+  `/etc/pacman.d/gnupg`. The installer makes the keyring at install time, in an
+  offline container over snapshot 1 (`pacman-key --init` and `--populate
+  archlinux`), so the first `tetsu-tx update` finds it. Each device has its own
+  local signing key, made on that device, and the payload holds public keys
+  only. `tetsu-keyring-init.service` stays as a fallback: it does nothing while
+  `/etc/pacman.d/gnupg/trustdb.gpg` exists.
 - `%wheel ALL=(ALL:ALL) ALL` in `/etc/sudoers.d/10-wheel` (0440).
 - `systemd-firstboot` is masked: the installer writes keyboard, language,
   timezone and hostname. systemd-networkd (DHCP on `en*`/`eth*`),
