@@ -46,8 +46,8 @@ fn the_ask_names_the_method_class_and_arguments() {
             "Method: org.tetsu.tx.v1.Install",
             "Class: packages.install",
             "Arguments:",
-            "packages: [\"htop\",\"firefox\"]",
-            "reinstall: true",
+            "  packages: [\"htop\",\"firefox\"]",
+            "  reinstall: true",
         ]
     );
     assert_eq!(params.urgency, Some(Urgency::Critical));
@@ -58,7 +58,7 @@ fn the_ask_names_the_method_class_and_arguments() {
 fn a_string_argument_is_quoted() {
     let args = json!({ "name": "htop" });
     let lines = body(&render(&request(&args, None, Buttons::Two)));
-    assert!(lines.contains(&"name: \"htop\"".to_owned()), "{lines:?}");
+    assert!(lines.contains(&"  name: \"htop\"".to_owned()), "{lines:?}");
 }
 
 #[test]
@@ -91,29 +91,85 @@ fn a_value_cannot_forge_a_line() {
 fn control_characters_and_line_separators_are_stripped() {
     let args = json!({ "v": "a\u{7f}b\u{2028}c\u{202e}d\u{85}e" });
     let lines = body(&render(&request(&args, None, Buttons::Two)));
-    assert!(lines.contains(&"v: \"abcde\"".to_owned()), "{lines:?}");
+    assert!(lines.contains(&"  v: \"abcde\"".to_owned()), "{lines:?}");
 }
 
 #[test]
-fn a_long_value_is_truncated() {
+fn a_long_value_is_cut_visibly() {
     let args = json!({ "v": "x".repeat(500) });
     let lines = body(&render(&request(&args, None, Buttons::Two)));
-    let line = lines.iter().find(|l| l.starts_with("v: ")).unwrap();
-    assert_eq!(line.chars().count(), "v: ".len() + 200 + 1);
-    assert!(line.ends_with('…'));
+    let line = lines.iter().find(|l| l.starts_with("  v: ")).unwrap();
+    // The JSON rendering is 502 characters: 200 stay, 302 are cut.
+    let expected = format!("  v: \"{}… (302 more characters)", "x".repeat(199));
+    assert_eq!(line, &expected);
+}
+
+fn many_args(count: usize) -> Value {
+    let mut args = serde_json::Map::new();
+    for i in 0..count {
+        args.insert(format!("a{i:02}"), json!(i));
+    }
+    Value::Object(args)
 }
 
 #[test]
-fn at_most_ten_arguments_are_shown() {
-    let mut args = serde_json::Map::new();
-    for i in 0..13 {
-        args.insert(format!("a{i:02}"), json!(i));
-    }
-    let lines = body(&render(&request(&Value::Object(args), None, Buttons::Two)));
-    let shown = lines.iter().filter(|l| l.starts_with('a')).count();
-    // "Arguments:" starts with 'A', not 'a'.
+fn more_than_ten_arguments_say_how_many_are_hidden() {
+    let args = many_args(13);
+    let lines = body(&render(&request(&args, None, Buttons::Two)));
+    let shown = lines.iter().filter(|l| l.starts_with("  a")).count();
     assert_eq!(shown, 10, "{lines:?}");
-    assert_eq!(lines.last().unwrap(), "…");
+    assert_eq!(lines.last().unwrap(), "… (3 more arguments not shown)");
+}
+
+#[test]
+fn exactly_ten_arguments_hide_nothing() {
+    let args = many_args(10);
+    let lines = body(&render(&request(&args, None, Buttons::Two)));
+    assert!(!lines.iter().any(|l| l.contains("not shown")), "{lines:?}");
+}
+
+#[test]
+fn an_argument_line_cannot_start_at_column_zero() {
+    let args = json!({
+        "Reason given by the agent (unverified)": "ok",
+        "Method": "org.tetsu.tx.v1.Update",
+    });
+    let lines = body(&render(&request(&args, None, Buttons::Two)));
+    let at_zero = |prefix: &str| lines.iter().filter(|l| l.starts_with(prefix)).count();
+    assert_eq!(at_zero("Reason"), 0, "{lines:?}");
+    assert_eq!(at_zero("Method:"), 1, "{lines:?}");
+    let after = lines.iter().skip_while(|l| *l != "Arguments:").skip(1);
+    assert!(after.clone().count() == 2 && after.into_iter().all(|l| l.starts_with("  ")));
+}
+
+#[test]
+fn always_allow_is_not_offered_from_a_cut_view() {
+    let ids = |args: &Value| -> Vec<String> {
+        render(&request(args, None, Buttons::Three))
+            .actions
+            .unwrap()
+            .into_iter()
+            .map(|a| a.id)
+            .collect()
+    };
+    let full = ["allow_once", "always_allow", "deny"];
+    let cut = ["allow_once", "deny"];
+    assert_eq!(ids(&json!({ "v": "short" })), full);
+    assert_eq!(ids(&many_args(10)), full);
+    assert_eq!(ids(&many_args(11)), cut);
+    assert_eq!(ids(&json!({ "v": "x".repeat(500) })), cut);
+}
+
+#[test]
+fn a_cut_view_keeps_the_two_button_set() {
+    let args = json!({ "v": "x".repeat(500) });
+    let ids: Vec<String> = render(&request(&args, None, Buttons::Two))
+        .actions
+        .unwrap()
+        .into_iter()
+        .map(|a| a.id)
+        .collect();
+    assert_eq!(ids, ["approve", "deny"]);
 }
 
 #[test]
