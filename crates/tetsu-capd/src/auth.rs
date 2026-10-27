@@ -27,8 +27,25 @@ pub enum Call {
 
 /// Whether `peer` may make the call. `own_uid` is the user capd runs as.
 pub fn allowed(peer: &Peer, own_uid: u32, call: Call) -> bool {
-    let _ = (peer, own_uid, call);
-    unimplemented!()
+    match call {
+        Call::Set => !peer.agent,
+        Call::Check => is_tx(peer) || is_session_daemon(peer, own_uid),
+    }
+}
+
+fn is_tx(peer: &Peer) -> bool {
+    peer.uid == 0 && !peer.agent && peer.cgroup == TX_CGROUP
+}
+
+fn is_session_daemon(peer: &Peer, own_uid: u32) -> bool {
+    if peer.agent || peer.uid != own_uid {
+        return false;
+    }
+    let manager = format!("user@{own_uid}.service");
+    let under_manager = peer.cgroup.split('/').any(|segment| segment == manager);
+    // The innermost unit is the process's own: a child scope is not the
+    // daemon.
+    under_manager && unit_name(&peer.cgroup).is_some_and(|unit| SESSION_UNITS.contains(&unit))
 }
 
 #[cfg(test)]
