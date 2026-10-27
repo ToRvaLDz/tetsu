@@ -10,5 +10,6 @@ pub mod decide;
 pub mod engine;
 pub mod intent;
 pub mod notify;
+pub mod paths;
 pub mod service;
 pub mod store;
