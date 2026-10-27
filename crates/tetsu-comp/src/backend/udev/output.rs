@@ -308,13 +308,16 @@ impl State {
                 return;
             };
             let device = tty.devices.remove(index);
-            if device.render_node == Some(tty.render_node) {
+            let lost_render = device.render_node == Some(tty.render_node);
+            if lost_render {
                 eprintln!(
                     "tetsu-comp: the render device {} went away; the outputs it served cannot be drawn until a restart",
                     device.node
                 );
             }
-            drop_heads(state, tty, |h| h.node == device.node);
+            // Without the render device no head can be drawn: drop them
+            // all, or each would retry and log every frame.
+            drop_heads(state, tty, |h| lost_render || h.node == device.node);
             state.loop_handle.remove(device.events);
             if let Some(render) = device.render_node {
                 tty.gpus.as_mut().remove_node(&render);
