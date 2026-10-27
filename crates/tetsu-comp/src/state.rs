@@ -1,6 +1,7 @@
 //! The compositor state: Smithay's protocol states, the space, and the
 //! model the bus reports.
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io;
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, LoopSignal, Mode as PollMode, PostAction,
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+use smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as KdeDefaultMode;
 use smithay::reexports::wayland_server::backend::{
     ClientData, ClientId, DisconnectReason, GlobalId,
 };
@@ -26,9 +28,11 @@ use smithay::wayland::drm_syncobj::DrmSyncobjState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::session_lock::SessionLockManagerState;
+use smithay::wayland::shell::kde::decoration::KdeDecorationState;
 use smithay::wayland::shell::wlr_layer::{
     KeyboardInteractivity, Layer as WlrLayer, WlrLayerShellState,
 };
+use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgShellState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
@@ -38,6 +42,7 @@ use smithay::wayland::virtual_pointer::VirtualPointerManagerState;
 use crate::bus::{Publisher, Snapshot};
 use crate::config::glue::config_reply;
 use crate::config::store::Store;
+use crate::decor::glue::DecorStates;
 use crate::engine::{Arrangement, Engine};
 use crate::gpu::sync::ExplicitSync;
 use crate::input::ModKey;
@@ -121,6 +126,8 @@ pub struct State {
     pub(crate) compositor_state: CompositorState,
     pub(crate) xdg_shell_state: XdgShellState,
     pub(crate) layer_shell_state: WlrLayerShellState,
+    /// The two decoration protocols (always server-side).
+    pub(crate) decorations: DecorStates,
     pub(crate) shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub(crate) seat_state: SeatState<State>,
@@ -212,6 +219,11 @@ impl State {
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             layer_shell_state: WlrLayerShellState::new::<Self>(&dh),
+            decorations: DecorStates {
+                xdg: XdgDecorationState::new::<Self>(&dh),
+                kde: KdeDecorationState::new::<Self>(&dh, KdeDefaultMode::Server),
+                answered: HashSet::new(),
+            },
             shm_state: ShmState::new::<Self>(&dh, vec![]),
             output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(&dh),
             seat_state,

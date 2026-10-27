@@ -1,6 +1,7 @@
 //! Smithay's protocol handlers on `State`.
 
 mod compositor;
+mod decoration;
 mod dmabuf;
 mod layer_shell;
 mod session_lock;
