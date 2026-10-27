@@ -249,23 +249,28 @@ impl Store {
 const HEADER: &str = "# Written by tetsu-comp (SetManaged). Your own settings go in\n\
                       # ~/.config/tetsu/comp.toml, which wins over this file.\n";
 
+/// Puts `value` at the dotted `path`, nesting a table for each segment.
+fn nest(table: &mut toml::Table, path: &str, value: &Value) {
+    match path.split_once('.') {
+        Some((head, rest)) => {
+            let sub = table
+                .entry(head.to_owned())
+                .or_insert_with(|| Value::Table(toml::Table::new()));
+            if let Value::Table(sub) = sub {
+                nest(sub, rest, value);
+            }
+        }
+        None => {
+            table.insert(path.to_owned(), value.clone());
+        }
+    }
+}
+
 /// The TOML text of a layer.
 fn render(values: &Values) -> Result<String, toml::ser::Error> {
     let mut root = toml::Table::new();
     for (key, value) in values {
-        match key.split_once('.') {
-            Some((table, name)) => {
-                if let Value::Table(sub) = root
-                    .entry(table.to_owned())
-                    .or_insert_with(|| Value::Table(toml::Table::new()))
-                {
-                    sub.insert(name.to_owned(), value.clone());
-                }
-            }
-            None => {
-                root.insert(key.clone(), value.clone());
-            }
-        }
+        nest(&mut root, key, value);
     }
     Ok(format!("{HEADER}{}", toml::to_string(&root)?))
 }
