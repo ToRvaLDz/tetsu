@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use crate::error::InstallError;
 use crate::frontend::{Frontend, ask_valid, choose_from};
+use crate::locales::Supported;
 
 /// Locale used when the layout is not in the table.
 pub const FALLBACK_LOCALE: &str = "en_US.UTF-8";
@@ -252,7 +253,12 @@ pub fn run(fe: &mut dyn Frontend) -> Result<Locale, InstallError> {
 }
 
 /// Redo language and timezone only, from the summary.
-pub fn edit_regional(fe: &mut dyn Frontend, current: &Locale) -> Result<Locale, InstallError> {
+pub fn edit_regional(
+    fe: &mut dyn Frontend,
+    current: &Locale,
+    supported: Result<&Supported, &String>,
+) -> Result<Locale, InstallError> {
+    let _ = supported;
     let language = ask_valid(fe, "Language (locale)", &validate_locale)?;
     let timezone = ask_valid(fe, "Timezone (Area/City)", &validate_timezone)?;
     Ok(Locale {
@@ -329,7 +335,8 @@ mod tests {
             rtc_utc: true,
         };
         let mut fe = Script::new().text("en_GB.UTF-8").text("Europe/London");
-        let l = edit_regional(&mut fe, &cur).unwrap();
+        let none = String::new();
+        let l = edit_regional(&mut fe, &cur, Err(&none)).unwrap();
         assert_eq!(
             (l.keyboard.as_str(), l.language.as_str()),
             ("it", "en_GB.UTF-8")

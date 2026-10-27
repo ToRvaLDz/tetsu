@@ -56,7 +56,7 @@ pub fn redo(
             ..current
         },
         Step::Regional => Answers {
-            locale: keyboard::edit_regional(fe, &current.locale)?,
+            locale: keyboard::edit_regional(fe, &current.locale, Err(&String::new()))?,
             ..current
         },
         Step::Disk => Answers {
@@ -214,6 +214,51 @@ mod tests {
         assert_eq!(a.locale.timezone, "Europe/London");
         assert_eq!(a.user.username, "anna");
         assert_eq!(a.disk.name, "sdb");
+        script.assert_done();
+    }
+
+    /// A `SUPPORTED` list on the medium, as `image/build` ships glibc's.
+    fn supported(root: &Path) {
+        let file = root.join(crate::locales::SUPPORTED);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, "es_MX.UTF-8 UTF-8\nes_MX ISO-8859-1\n").unwrap();
+    }
+
+    #[test]
+    fn a_supported_language_outside_the_generated_ones_is_accepted() {
+        let t = tempfile::tempdir().unwrap();
+        machine(t.path(), true, true, 0);
+        supported(t.path());
+        let mut script = happy_path()
+            .pick(2) // Change: language and timezone
+            .text("es_MX.UTF-8")
+            .text("America/Mexico_City")
+            .pick(0)
+            .yes(true);
+        let a = run_with(t.path(), &mut script).unwrap();
+        assert_eq!(a.locale.language, "es_MX.UTF-8");
+        script.assert_done();
+    }
+
+    #[test]
+    fn an_unsupported_language_is_asked_again() {
+        let t = tempfile::tempdir().unwrap();
+        machine(t.path(), true, true, 0);
+        supported(t.path());
+        let mut script = happy_path()
+            .pick(2)
+            .text("xx_YY.UTF-8")
+            .text("es_MX.UTF-8")
+            .text("America/Mexico_City")
+            .pick(0)
+            .yes(true);
+        let a = run_with(t.path(), &mut script).unwrap();
+        assert_eq!(a.locale.language, "es_MX.UTF-8");
+        assert!(
+            script.messages.iter().any(|m| m.contains("SUPPORTED")),
+            "{:?}",
+            script.messages
+        );
         script.assert_done();
     }
 
