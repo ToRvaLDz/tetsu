@@ -180,6 +180,18 @@ fn hotplug_commands_parse() {
 }
 
 #[test]
+fn focus_control_lines_parse() {
+    assert_eq!(parse_command("focus-next"), Ok(HotplugCommand::FocusNext));
+    assert_eq!(
+        parse_command("focus-prev\r\n"),
+        Ok(HotplugCommand::FocusPrev)
+    );
+    for bad in ["focus-next x", "focus", "focus-sideways"] {
+        assert!(parse_command(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
 fn hotplug_sides_are_one_to_sixteen_thousand_three_hundred_eighty_four() {
     for ok in ["1x1", "16384x16384", "1x16384"] {
         assert!(parse_command(&format!("add {ok}")).is_ok(), "{ok}");
