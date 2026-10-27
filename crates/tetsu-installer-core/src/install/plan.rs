@@ -10,6 +10,7 @@
 
 use crate::agent::AgentBackend;
 use crate::answers::Answers;
+use crate::keyboard;
 use crate::preflight::SecureBoot;
 use crate::user::Password;
 
@@ -303,10 +304,10 @@ impl InstallPlan {
 
 fn stage_disk(answers: &Answers) -> Vec<Action> {
     use Action::{
-        BuildInitrd, ExtractPayload, FormatEsp, FormatRoot, HashPassword, InitKeyring, InitLayout,
-        LockRoot, LuksAddRecoveryKey, LuksFormat, LuksOpen, MountEsp, MountTop, Partition,
-        SettleDevices, StageApiKey, WipeSignatures, WriteAgentBackend, WriteCmdline, WriteFstab,
-        WriteHostname, WriteLocale, WriteUnlockLevel, WriteUser,
+        BuildInitrd, ExtractPayload, FormatEsp, FormatRoot, GenerateLocale, HashPassword,
+        InitKeyring, InitLayout, LockRoot, LuksAddRecoveryKey, LuksFormat, LuksOpen, MountEsp,
+        MountTop, Partition, SettleDevices, StageApiKey, WipeSignatures, WriteAgentBackend,
+        WriteCmdline, WriteFstab, WriteHostname, WriteLocale, WriteUnlockLevel, WriteUser,
     };
     let mut actions = vec![
         WipeSignatures,
@@ -325,14 +326,11 @@ fn stage_disk(answers: &Answers) -> Vec<Action> {
     if matches!(answers.user.password, Password::Plain(_)) {
         actions.push(HashPassword);
     }
-    actions.extend([
-        WriteUser,
-        LockRoot,
-        WriteLocale,
-        WriteHostname,
-        WriteFstab,
-        WriteCmdline,
-    ]);
+    actions.extend([WriteUser, LockRoot, WriteLocale]);
+    if !keyboard::is_pregenerated(&answers.locale.language) {
+        actions.push(GenerateLocale);
+    }
+    actions.extend([WriteHostname, WriteFstab, WriteCmdline]);
     if let Some(backend) = &answers.agent {
         actions.push(WriteAgentBackend);
         if matches!(backend, AgentBackend::Api { .. }) {
