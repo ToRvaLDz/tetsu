@@ -49,6 +49,20 @@ impl Handler for Test {
                 });
                 Response::Stream(rx)
             }
+            "org.example.Bounded" => {
+                // One reply, then the sender is dropped without a final
+                // one: the way a slow consumer is cut off.
+                let (tx, rx) = mpsc::channel(4);
+                tx.try_send(StreamItem::Reply(json!({ "i": 1 }))).unwrap();
+                drop(tx);
+                Response::BoundedStream(rx)
+            }
+            "org.example.BoundedLast" => {
+                let (tx, rx) = mpsc::channel(4);
+                tx.try_send(StreamItem::Reply(json!({ "i": 1 }))).unwrap();
+                tx.try_send(StreamItem::Last(json!({ "i": 2 }))).unwrap();
+                Response::BoundedStream(rx)
+            }
             "org.example.Fail" => Response::Error(ErrorReply::new(
                 "org.example.Broken",
                 json!({ "why": "asked to" }),
@@ -211,6 +225,55 @@ fn a_stream_continues_then_ends() {
             .send(json!({ "method": "org.example.Echo", "parameters": { "value": 9 } }))
             .await;
         assert_eq!(client.recv().await["parameters"]["value"], 9);
+    });
+}
+
+#[test]
+fn a_bounded_stream_whose_sender_is_dropped_ends_the_connection() {
+    with_server(|path, _| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.Bounded", "more": true }))
+            .await;
+        let reply = client.recv().await;
+        assert_eq!(reply["parameters"]["i"], 1);
+        assert_eq!(reply["continues"], true);
+        // End of file on the socket, not a final reply.
+        let mut rest = Vec::new();
+        let read = tokio::time::timeout(TIMEOUT, client.0.read_to_end(&mut rest))
+            .await
+            .expect("the server closes the connection");
+        assert_eq!(read.unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_bounded_stream_with_a_final_reply_keeps_the_connection() {
+    with_server(|path, _| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.BoundedLast", "more": true }))
+            .await;
+        assert_eq!(client.recv().await["parameters"]["i"], 1);
+        assert_eq!(client.recv().await["parameters"]["i"], 2);
+        client
+            .send(json!({ "method": "org.example.Echo", "parameters": { "value": 5 } }))
+            .await;
+        assert_eq!(client.recv().await["parameters"]["value"], 5);
+    });
+}
+
+#[test]
+fn a_bounded_stream_for_a_call_without_more_is_refused() {
+    with_server(|path, _| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.BoundedLast" }))
+            .await;
+        assert_eq!(
+            client.recv().await["error"],
+            "org.varlink.service.ExpectedMore"
+        );
     });
 }
 
