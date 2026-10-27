@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tetsu_bus::output::{
-    ConfigureOutputsParams, INVALID_CONFIGURATION, ListOutputsReply, Mode, ModeSpec, OUTPUT_NOT_FOUND,
-    OVERRIDDEN_BY_USER, Output, OutputConfig, OutputEvent, OutputKind, Transform,
+    ConfigureOutputsParams, INVALID_CONFIGURATION, ListOutputsReply, Mode, ModeSpec,
+    OUTPUT_NOT_FOUND, OVERRIDDEN_BY_USER, Output, OutputConfig, OutputEvent, OutputKind, Transform,
 };
 use tetsu_bus_contract::{Contract, check_error, check_reply, load_dir};
 

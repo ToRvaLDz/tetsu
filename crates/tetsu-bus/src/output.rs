@@ -1,6 +1,6 @@
 //! `org.tetsu.comp.output.v1`: the wire types, shaped exactly as the IDL.
 //!
-//! Only the read side: `ListOutputs` and `WatchOutputs`.
+//! The reads (`ListOutputs`, `WatchOutputs`) and `ConfigureOutputs`.
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +10,12 @@ pub const INTERFACE: &str = "org.tetsu.comp.output.v1";
 pub const IDL: &str = include_str!("../idl/org.tetsu.comp.output.v1.varlink");
 /// `PermissionDenied ()`.
 pub const PERMISSION_DENIED: &str = "org.tetsu.comp.output.v1.PermissionDenied";
+/// `OutputNotFound (id)`.
+pub const OUTPUT_NOT_FOUND: &str = "org.tetsu.comp.output.v1.OutputNotFound";
+/// `InvalidConfiguration (id, reason)`.
+pub const INVALID_CONFIGURATION: &str = "org.tetsu.comp.output.v1.InvalidConfiguration";
+/// `OverriddenByUser (keys)`.
+pub const OVERRIDDEN_BY_USER: &str = "org.tetsu.comp.output.v1.OverriddenByUser";
 
 /// `Mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,4 +175,45 @@ impl OutputEvent {
 pub struct ListOutputsReply {
     /// Every output.
     pub outputs: Vec<Output>,
+}
+
+/// `ModeSpec`: a mode named by its values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeSpec {
+    /// Pixels.
+    pub width: i64,
+    /// Pixels.
+    pub height: i64,
+    /// Millihertz.
+    pub refresh_mhz: i64,
+}
+
+/// `OutputConfig`. A field left null (or absent) keeps its current value.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OutputConfig {
+    /// Light or darken the output.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Must match one of the output's modes.
+    #[serde(default)]
+    pub mode: Option<ModeSpec>,
+    /// Scale factor.
+    #[serde(default)]
+    pub scale: Option<f64>,
+    /// Rotation and mirroring.
+    #[serde(default)]
+    pub transform: Option<Transform>,
+    /// Position in the global logical space.
+    #[serde(default)]
+    pub x: Option<i64>,
+    /// Position in the global logical space.
+    #[serde(default)]
+    pub y: Option<i64>,
+}
+
+/// The parameters of `ConfigureOutputs`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ConfigureOutputsParams {
+    /// output_id -> the configuration to apply to that output.
+    pub configs: std::collections::BTreeMap<String, OutputConfig>,
 }
