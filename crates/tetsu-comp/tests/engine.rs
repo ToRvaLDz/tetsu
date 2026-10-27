@@ -622,3 +622,102 @@ fn floating_rects_are_clamped_into_a_shrunk_viewport() {
     assert_eq!(floating[0].1.x, 800 - MIN_VISIBLE);
     assert_eq!(floating[0].1.y, 600 - MIN_VISIBLE);
 }
+
+// ---- unplugging an output ----
+
+/// Two outputs of 1920x1080 side by side, flushed.
+fn two_outputs(settings: Settings) -> (Engine, String, String, Views) {
+    let mut engine = Engine::new(settings);
+    let first = engine.add_output("HEADLESS-1");
+    let second = engine.add_output("HEADLESS-2");
+    engine.flush();
+    let views = vec![
+        (first.clone(), VIEW),
+        (second.clone(), Rect { x: 1920, ..VIEW }),
+    ];
+    (engine, first, second, views)
+}
+
+#[test]
+fn after_an_unplug_the_moved_windows_are_hidden_and_the_target_keeps_its_tiles() {
+    let (mut engine, first, second, views) = two_outputs(settings(LayoutKind::Dwindle));
+    let on_first = engine.open(info("a"), None, &views);
+    engine.focus(Some(&on_first));
+    let on_second = engine.open(info("b"), None, &views);
+    let before = engine.arrange(&second, views[1].1);
+    assert_eq!(ids(&before.tiled), [on_second.as_str()]);
+
+    engine.remove_output(&first);
+    let view = Rect { x: 0, ..views[1].1 };
+    let after = engine.arrange(&second, view);
+    assert_eq!(ids(&after.tiled), [on_second.as_str()]);
+    assert_eq!(after.hidden, [on_first.clone()]);
+    assert_eq!(after.tiled[0].1, view);
+    checked(&mut engine);
+}
+
+#[test]
+fn showing_a_moved_workspace_tiles_its_windows_in_the_target_viewport() {
+    let (mut engine, first, second, views) = two_outputs(settings(LayoutKind::Dwindle));
+    let moved = engine.open(info("a"), None, &views);
+    engine.remove_output(&first);
+    let small = Rect {
+        x: 0,
+        y: 0,
+        w: 1280,
+        h: 720,
+    };
+    let views = vec![(second.clone(), small)];
+    // The moved workspace has index 1 on the target: Super+2.
+    let effect = engine.apply(Action::FocusWorkspace(2), &views);
+    assert!(effect.relayout);
+    let arrangement = engine.arrange(&second, small);
+    assert_eq!(arrangement.tiled, [(moved, small)]);
+    checked(&mut engine);
+}
+
+#[test]
+fn a_floating_window_from_a_larger_output_is_clamped_into_a_smaller_target() {
+    let mut engine = Engine::new(settings(LayoutKind::Floating));
+    let big = engine.add_output("DP-1");
+    engine.add_output("eDP-1");
+    engine.flush();
+    let small = Rect {
+        x: 0,
+        y: 0,
+        w: 800,
+        h: 600,
+    };
+    let views = vec![(big.clone(), VIEW)];
+    let id = engine.open(info("a"), Some((400, 300)), &views);
+    engine.move_floating(&id, (1500, 800), VIEW).unwrap();
+
+    engine.remove_output(&big);
+    let target = engine.model().output_named("eDP-1").unwrap();
+    let views = vec![(target.clone(), small)];
+    engine.apply(Action::FocusWorkspace(2), &views);
+    let floating = engine.arrange(&target, small).floating;
+    assert_eq!(floating.len(), 1);
+    let rect = floating[0].1;
+    assert!(rect.x < small.w && rect.y < small.h, "{rect:?}");
+    assert_eq!(rect, clamp_into(small, rect));
+}
+
+#[test]
+fn a_rule_naming_a_removed_output_falls_back_to_the_focused_one() {
+    let (mut engine, first, second, views) = two_outputs(with_rules(
+        "[[window_rule]]\napp_id = \"^side$\"\noutput = \"HEADLESS-1\"\n",
+    ));
+    let plan = engine.plan(Some("side"), None, &views);
+    assert_eq!(plan.output_id, first);
+    engine.remove_output(&first);
+    let views = vec![(second.clone(), Rect { x: 0, ..VIEW })];
+    let plan = engine.plan(Some("side"), None, &views);
+    assert_eq!(plan.output_id, second);
+    let id = engine.open(info("side"), None, &views);
+    assert_eq!(
+        engine.model().workspace_of(&id),
+        engine.model().active_workspace(&second)
+    );
+    assert_eq!(engine.model().focused_window(), Some(id.as_str()));
+}
