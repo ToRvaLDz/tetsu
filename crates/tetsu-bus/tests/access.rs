@@ -448,3 +448,10 @@ mod servers {
         );
     }
 }
+
+#[test]
+fn control_characters_of_the_reason_cannot_forge_a_line_either() {
+    let line = log_line("x.Y", &peer(OWN, true), "no\nFORGED\x1b[0m");
+    assert!(!line.contains(char::is_control), "{line:?}");
+    assert!(line.ends_with(": noFORGED[0m"), "{line:?}");
+}
