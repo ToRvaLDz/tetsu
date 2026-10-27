@@ -1,15 +1,91 @@
 //! What `tetsu comp config` prints.
 
-use tetsu_bus::config::GetConfigReply;
+use std::fmt::Write as _;
+
+use tetsu_bus::config::{ConfigEntry, Diagnostic, GetConfigReply, Origin};
+
+const HEADER: [&str; 4] = ["KEY", "VALUE", "ORIGIN", "WRITE"];
+/// The columns before the last are padded to the widest cell.
+const SEPARATOR: &str = "  ";
+
+/// The effective value, in full, on one line.
+fn value(entry: &ConfigEntry) -> String {
+    serde_json::to_string(&entry.value).unwrap_or_else(|e| format!("<{e}>"))
+}
+
+/// The layer the value comes from, saying so when it hides a managed one.
+fn origin(entry: &ConfigEntry) -> &'static str {
+    match entry.origin {
+        Origin::Default => "default",
+        Origin::Managed => "managed",
+        Origin::User if entry.managed_value.as_ref().is_some_and(|v| !v.is_null()) => {
+            "user (overrides managed)"
+        }
+        Origin::User => "user",
+    }
+}
+
+/// Whether `SetManaged` takes the key, else what writes it.
+fn writable(entry: &ConfigEntry) -> String {
+    if entry.writable {
+        "yes".to_owned()
+    } else {
+        entry
+            .method
+            .clone()
+            .unwrap_or_else(|| "user file only".to_owned())
+    }
+}
+
+fn diagnostic(d: &Diagnostic) -> String {
+    let mut line = String::from("  ");
+    if let Some(n) = d.line {
+        let _ = write!(line, "line {n}: ");
+    }
+    if let Some(key) = &d.key {
+        let _ = write!(line, "{key}: ");
+    }
+    line.push_str(&d.message);
+    line
+}
 
 /// The table of keys, then the diagnostics of the user file if any.
-pub fn table(_reply: &GetConfigReply) -> String {
-    todo!()
+pub fn table(reply: &GetConfigReply) -> String {
+    let mut rows: Vec<[String; 4]> = vec![HEADER.map(str::to_owned)];
+    rows.extend(
+        reply
+            .entries
+            .iter()
+            .map(|e| [e.key.clone(), value(e), origin(e).to_owned(), writable(e)]),
+    );
+    let width = |column: usize| rows.iter().map(|r| r[column].chars().count()).max();
+    let widths = [width(0), width(1), width(2), Some(0)].map(Option::unwrap_or_default);
+    let mut out = String::new();
+    for row in &rows {
+        let mut line = String::new();
+        for (cell, width) in row.iter().zip(widths) {
+            let _ = write!(line, "{cell:<width$}{SEPARATOR}");
+        }
+        // The last column is not padded, and nothing trails.
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    if !reply.diagnostics.is_empty() {
+        out.push_str("\ndiagnostics of the user file:\n");
+        for d in &reply.diagnostics {
+            out.push_str(&diagnostic(d));
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// The reply in its wire shape, pretty-printed.
-pub fn json(_reply: &GetConfigReply) -> String {
-    todo!()
+pub fn json(reply: &GetConfigReply) -> String {
+    let mut text =
+        serde_json::to_string_pretty(reply).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+    text.push('\n');
+    text
 }
 
 #[cfg(test)]
