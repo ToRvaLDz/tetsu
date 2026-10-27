@@ -1,0 +1,10 @@
+#!/bin/sh
+# First client of tetsu-comp (`-- <cmd>`): the compositor has bound its
+# sockets, so publish them to the user manager and tell systemd it is ready.
+set -eu
+
+: "${WAYLAND_DISPLAY:?tetsu-comp-ready: WAYLAND_DISPLAY is not set}"
+: "${TETSU_COMP_SOCKET:?tetsu-comp-ready: TETSU_COMP_SOCKET is not set}"
+
+systemctl --user import-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE
+exec systemd-notify --ready

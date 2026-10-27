@@ -1,0 +1,28 @@
+#!/bin/sh
+# Session command of greetd (agreety --cmd /usr/bin/tetsu-session): run the
+# compositor as the user unit tetsu-comp.service and wait for it to end.
+# greetd shows the greeter again when this exits.
+set -eu
+
+if [ -z "${XDG_SESSION_ID:-}" ]; then
+  echo "tetsu-session: no XDG_SESSION_ID; start it from greetd" >&2
+  exit 1
+fi
+
+# One compositor per user: a second login must not take over the first.
+if systemctl --user -q is-active tetsu-comp.service; then
+  echo "tetsu-session: tetsu-comp.service is already running" >&2
+  exit 1
+fi
+
+# libseat (logind backend) finds the session through XDG_SESSION_ID.
+systemctl --user reset-failed
+systemctl --user import-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR
+
+status=0
+systemctl --user --wait start tetsu-comp.service || status=$?
+
+# Leave no stale session variables for the next login.
+systemctl --user unset-environment \
+  XDG_SESSION_ID XDG_SEAT XDG_VTNR WAYLAND_DISPLAY TETSU_COMP_SOCKET || true
+exit "$status"
