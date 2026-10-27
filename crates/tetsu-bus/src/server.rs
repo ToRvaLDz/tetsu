@@ -122,6 +122,15 @@ pub enum Response {
     /// the handler drops the sender without an answer, the connection is
     /// dropped: the caller sees end of file.
     Pending(oneshot::Receiver<Result<Value, ErrorReply>>),
+    /// The whole response, sent later from a task of the handler's own: a
+    /// reply, an error or a stream. While it is pending the connection
+    /// keeps being read, as with `Pending`: if the caller goes away the
+    /// receiver is dropped, so the handler sees its sender close and can
+    /// cancel. A oneway call is waited for too, so the handler can gate
+    /// its effect on the decision; no reply is written for it. If the
+    /// handler drops the sender, or answers with another `Deferred`, the
+    /// connection is dropped.
+    Deferred(oneshot::Receiver<Response>),
 }
 
 /// How a pending reply ended.
@@ -333,6 +342,15 @@ async fn run_connection<H: Handler>(
             },
         };
         let response = handler.call(peer.clone(), call.clone()).await;
+        let response = match response {
+            Response::Deferred(deferred) => {
+                match wait_answer(deferred, &mut read, &mut queued).await {
+                    Some(Response::Deferred(_)) | None => return Ok(()),
+                    Some(response) => response,
+                }
+            }
+            response => response,
+        };
         if call.oneway {
             continue;
         }
@@ -343,6 +361,8 @@ async fn run_connection<H: Handler>(
                 let error = ErrorReply::new("org.varlink.service.ExpectedMore", json!({}));
                 send_error(&mut write, &error).await?;
             }
+            // Resolved above; a second level is refused there.
+            Response::Deferred(_) => return Ok(()),
             Response::Pending(pending) => {
                 match wait_pending(pending, &mut read, &mut queued).await {
                     Pended::Answer(Ok(value)) => send_reply(&mut write, value, false).await?,
@@ -403,19 +423,30 @@ async fn relay(
 /// file drops `pending` on return, which the handler sees as its sender
 /// closing.
 async fn wait_pending(
-    mut pending: oneshot::Receiver<Result<Value, ErrorReply>>,
+    pending: oneshot::Receiver<Result<Value, ErrorReply>>,
     read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
     queued: &mut VecDeque<Request>,
 ) -> Pended {
+    wait_answer(pending, read, queued)
+        .await
+        .map_or(Pended::Drop, Pended::Answer)
+}
+
+/// Waits for `pending` while still reading the connection. `None` when the
+/// handler dropped its sender, or the caller went away or pipelined without
+/// end: the connection must be dropped, and `pending` with it.
+async fn wait_answer<T>(
+    mut pending: oneshot::Receiver<T>,
+    read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
+    queued: &mut VecDeque<Request>,
+) -> Option<T> {
     loop {
         tokio::select! {
-            answer = &mut pending => {
-                return answer.map_or(Pended::Drop, Pended::Answer);
-            }
+            answer = &mut pending => return answer.ok(),
             call = receive(read) => match call {
                 Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
                 // Gone, or pipelining without end: drop the connection.
-                _ => return Pended::Drop,
+                _ => return None,
             },
         }
     }

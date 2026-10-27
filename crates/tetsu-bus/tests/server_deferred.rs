@@ -40,7 +40,7 @@ impl Handler for Test {
         match request.method.as_str() {
             "org.example.Echo" => Response::Reply(json!({ "value": request.parameters["value"] })),
             "org.example.Later" => {
-                let (tx, rx) = oneshot::channel();
+                let (mut tx, rx) = oneshot::channel();
                 let how = request.parameters["how"]
                     .as_str()
                     .unwrap_or("reply")
