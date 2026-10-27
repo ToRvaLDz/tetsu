@@ -1,7 +1,12 @@
 //! `org.tetsu.comp.window.v1`: the wire types, shaped exactly as the IDL.
 
-use serde::{Deserialize, Serialize};
+use std::io;
+use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+use zlink::{Call, Connection};
+
+use crate::into_io;
 use crate::nullable::present;
 
 /// The interface name.
@@ -153,4 +158,75 @@ pub struct ListWindowsReply {
     /// The focused window, null when nothing is focused.
     #[serde(default)]
     pub focused_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WatchCall {
+    method: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchReply {
+    event: WindowEvent,
+}
+
+/// A Varlink error reply; `error` is required, so a reply never matches it.
+#[derive(Debug, Deserialize)]
+struct RemoteError {
+    error: String,
+}
+
+/// An open `WatchWindows` stream.
+#[derive(Debug)]
+pub struct WindowWatch {
+    connection: Connection<zlink::tokio::unix::Stream>,
+    ended: bool,
+}
+
+/// Connects to the compositor socket and starts `WatchWindows`.
+pub async fn watch(path: &Path) -> io::Result<WindowWatch> {
+    let mut connection = zlink::tokio::unix::connect(path).await.map_err(into_io)?;
+    let call = Call::new(WatchCall {
+        method: "org.tetsu.comp.window.v1.WatchWindows",
+    })
+    .set_more(true);
+    connection
+        .send_call(&call, Vec::new())
+        .await
+        .map_err(into_io)?;
+    Ok(WindowWatch {
+        connection,
+        ended: false,
+    })
+}
+
+impl WindowWatch {
+    /// The next event. After the final reply, or once the compositor went
+    /// away, an `UnexpectedEof` error.
+    pub async fn next(&mut self) -> io::Result<WindowEvent> {
+        if self.ended {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "WatchWindows ended",
+            ));
+        }
+        let (reply, _fds) = self
+            .connection
+            .receive_reply::<WatchReply, RemoteError>()
+            .await
+            .map_err(into_io)?;
+        match reply {
+            Ok(reply) => {
+                self.ended = reply.continues() != Some(true);
+                reply
+                    .into_parameters()
+                    .map(|parameters| parameters.event)
+                    .ok_or_else(|| io::Error::other("WatchWindows reply without parameters"))
+            }
+            Err(error) => Err(io::Error::other(format!(
+                "WatchWindows failed: {}",
+                error.error
+            ))),
+        }
+    }
 }
