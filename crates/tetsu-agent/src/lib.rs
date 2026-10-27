@@ -5,4 +5,5 @@
 //! behind the `Backend` boundary, implemented elsewhere.
 
 pub mod contract;
+pub mod discovery;
 pub mod tools;
