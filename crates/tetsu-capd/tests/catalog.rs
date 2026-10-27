@@ -46,7 +46,11 @@ fn the_table_has_every_method_of_the_idl_and_nothing_more() {
     let table = table_rows();
     assert_eq!(table.len(), ENTRIES.len(), "no method is listed twice");
     for (method, row) in &idl {
-        assert_eq!(table.get(method), Some(row), "{method} differs or is missing");
+        assert_eq!(
+            table.get(method),
+            Some(row),
+            "{method} differs or is missing"
+        );
     }
     for method in table.keys() {
         assert!(idl.contains_key(method), "{method} is not in the IDL");
