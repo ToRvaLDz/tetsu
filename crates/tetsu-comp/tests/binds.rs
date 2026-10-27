@@ -184,3 +184,33 @@ fn unbound_keys_give_nothing() {
         None
     );
 }
+
+#[test]
+fn shift_l_with_the_modifier_is_the_lock_bind() {
+    for mod_key in [ModKey::Super, ModKey::CtrlAlt] {
+        assert_eq!(
+            bound(mod_key, true, keysyms::KEY_l),
+            Some(Bound::Lock),
+            "{mod_key:?}"
+        );
+        assert_eq!(
+            bound(mod_key, true, keysyms::KEY_L),
+            Some(Bound::Lock),
+            "{mod_key:?}"
+        );
+        // Without Shift the same key stays the ratio bind.
+        assert_eq!(
+            bound(mod_key, false, keysyms::KEY_l),
+            engine(Action::RatioDelta(1))
+        );
+    }
+    // Shift+L alone binds nothing.
+    assert_eq!(
+        bound_action(
+            ModKey::Super,
+            &mods(false, false, true, false),
+            sym(keysyms::KEY_L)
+        ),
+        None
+    );
+}

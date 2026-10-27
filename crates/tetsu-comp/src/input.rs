@@ -51,8 +51,17 @@ pub enum Bound {
     Quit,
     /// Switch to this VT.
     SwitchVt(i32),
+    /// Start the session locker.
+    Lock,
     /// An action of the layout engine.
     Engine(EngineAction),
+}
+
+/// Whether a bind still works while the session is locked: only the ones
+/// that cannot hurt the owner. Quit does not, a bystander must not be able
+/// to kill the owner's session.
+pub fn allowed_while_locked(bound: Bound) -> bool {
+    matches!(bound, Bound::SwitchVt(_) | Bound::Lock)
 }
 
 /// The layout bind of a key (without the modifier check). Shifted letters
@@ -99,6 +108,9 @@ pub fn bound_action(mod_key: ModKey, modifiers: &ModifiersState, keysym: Keysym)
     }
     if !mod_key.held(modifiers) {
         return None;
+    }
+    if modifiers.shift && (raw == keysyms::KEY_l || raw == keysyms::KEY_L) {
+        return Some(Bound::Lock);
     }
     engine_bind(modifiers.shift, raw).map(Bound::Engine)
 }
@@ -261,6 +273,7 @@ impl State {
                     switch(vt);
                 }
             }
+            Some(Bound::Lock) => {}
             Some(Bound::Engine(action)) => self.run_action(action),
             None => {}
         }

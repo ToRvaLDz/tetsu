@@ -11,6 +11,7 @@ pub mod gpu;
 pub mod grab;
 pub mod input;
 pub mod layout;
+pub mod lock;
 pub mod model;
 pub mod outputs;
 pub mod render;
@@ -19,5 +20,6 @@ pub mod run;
 pub mod settings;
 pub mod socket;
 pub mod state;
+pub mod trust;
 
 mod handlers;

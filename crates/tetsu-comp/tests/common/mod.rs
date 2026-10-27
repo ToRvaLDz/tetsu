@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Value, json};
 use tetsu_bus::output::{ListOutputsReply, OutputEvent};
+use tetsu_bus::session::SessionEvent;
 use tetsu_bus::window::{ListWindowsReply, WindowEvent};
 use tetsu_bus::workspace::{ListWorkspacesReply, WorkspaceEvent};
 use tetsu_bus_contract::{Contract, check_reply, load_dir};
@@ -47,6 +48,11 @@ pub fn check_workspace_event(contract: &Contract, event: &WorkspaceEvent) {
 pub fn check_output_event(contract: &Contract, event: &OutputEvent) {
     let reply = json!({ "event": wire(event) });
     check(contract, "org.tetsu.comp.output.v1.WatchOutputs", &reply);
+}
+
+pub fn check_session_event(contract: &Contract, event: &SessionEvent) {
+    let reply = json!({ "event": wire(event) });
+    check(contract, "org.tetsu.comp.session.v1.WatchSession", &reply);
 }
 
 pub fn check_outputs_list(contract: &Contract, list: &ListOutputsReply) {
