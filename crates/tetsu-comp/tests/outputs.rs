@@ -2,7 +2,7 @@
 
 use tetsu_bus::output::{Mode, Transform};
 use tetsu_comp::outputs::edid::{self, EdidInfo};
-use tetsu_comp::outputs::geometry::{logical_size, pack};
+use tetsu_comp::outputs::geometry::{PlaceIn, logical_size, pack, place};
 use tetsu_comp::outputs::modes::from_list;
 
 /// A 128-byte EDID with the PNP id `GSM`, the product name "LG HDR 4K" and
@@ -193,4 +193,103 @@ fn outputs_are_packed_left_to_right_and_disabled_ones_skipped() {
         [("out-1".to_owned(), 0, 0), ("out-3".to_owned(), 1920, 0)]
     );
     assert_eq!(pack(&[]), []);
+}
+
+fn input(id: &str, w: i64, h: i64, enabled: bool, pin: Option<(i64, i64)>) -> PlaceIn<'_> {
+    PlaceIn {
+        id,
+        w,
+        h,
+        enabled,
+        pin,
+    }
+}
+
+fn at(id: &str, x: i64, y: i64) -> (String, i64, i64) {
+    (id.to_owned(), x, y)
+}
+
+#[test]
+fn with_no_pins_place_is_pack() {
+    let (placed, fell) = place(&[
+        input("out-1", 1920, 1080, true, None),
+        input("out-2", 1280, 720, false, None),
+        input("out-3", 2560, 1440, true, None),
+    ]);
+    assert_eq!(
+        placed,
+        pack(&[
+            ("out-1", 1920, true),
+            ("out-2", 1280, false),
+            ("out-3", 2560, true)
+        ])
+    );
+    assert!(fell.is_empty());
+}
+
+#[test]
+fn pins_are_honoured_negative_ones_included() {
+    let (placed, fell) = place(&[
+        input("out-1", 1920, 1080, true, Some((-1920, 100))),
+        input("out-2", 1920, 1080, true, Some((0, -50))),
+    ]);
+    assert_eq!(placed, [at("out-1", -1920, 100), at("out-2", 0, -50)]);
+    assert!(fell.is_empty());
+}
+
+#[test]
+fn automatic_outputs_start_right_of_the_rightmost_pin() {
+    let (placed, _) = place(&[
+        input("out-1", 1000, 500, true, None),
+        input("out-2", 2000, 500, true, Some((300, 40))),
+        input("out-3", 800, 500, true, None),
+        input("out-4", 1920, 1080, true, Some((0, 600))),
+    ]);
+    assert_eq!(
+        placed,
+        [
+            at("out-1", 2300, 0),
+            at("out-2", 300, 40),
+            at("out-3", 3300, 0),
+            at("out-4", 0, 600),
+        ]
+    );
+}
+
+#[test]
+fn a_pin_over_an_earlier_pin_falls_back_and_is_reported() {
+    let (placed, fell) = place(&[
+        input("out-1", 1920, 1080, true, Some((0, 0))),
+        input("out-2", 1920, 1080, true, Some((1000, 500))),
+    ]);
+    assert_eq!(placed, [at("out-1", 0, 0), at("out-2", 1920, 0)]);
+    assert_eq!(fell, ["out-2"]);
+}
+
+#[test]
+fn outputs_that_only_touch_at_an_edge_do_not_overlap() {
+    let (placed, fell) = place(&[
+        input("out-1", 1920, 1080, true, Some((0, 0))),
+        input("out-2", 1920, 1080, true, Some((1920, 0))),
+        input("out-3", 1920, 1080, true, Some((0, 1080))),
+    ]);
+    assert_eq!(
+        placed,
+        [
+            at("out-1", 0, 0),
+            at("out-2", 1920, 0),
+            at("out-3", 0, 1080)
+        ]
+    );
+    assert!(fell.is_empty());
+}
+
+#[test]
+fn a_disabled_output_is_left_out_and_its_pin_does_not_block() {
+    let (placed, fell) = place(&[
+        input("out-1", 1920, 1080, false, Some((0, 0))),
+        input("out-2", 1920, 1080, true, Some((0, 0))),
+    ]);
+    assert_eq!(placed, [at("out-2", 0, 0)]);
+    assert!(fell.is_empty());
 }
