@@ -3,6 +3,7 @@
 mod compositor;
 mod dmabuf;
 mod layer_shell;
+mod session_lock;
 mod shell_misc;
 mod syncobj;
 mod virtual_input;

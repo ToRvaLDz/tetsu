@@ -26,6 +26,7 @@ use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::drm_syncobj::DrmSyncobjState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
+use smithay::wayland::session_lock::SessionLockManagerState;
 use smithay::wayland::shell::wlr_layer::{
     KeyboardInteractivity, Layer as WlrLayer, WlrLayerShellState,
 };
@@ -40,6 +41,8 @@ use crate::engine::{Arrangement, Engine};
 use crate::gpu::sync::ExplicitSync;
 use crate::input::ModKey;
 use crate::layout::{Rect, usable};
+use crate::lock::LockMachine;
+use crate::lock::glue::LockGlue;
 use crate::model::{OutputInfo, WindowInfo};
 use crate::outputs::geometry::to_smithay_transform;
 use crate::settings::{RenderSettings, Settings};
@@ -144,6 +147,10 @@ pub struct State {
     pub mapped: Vec<Mapped>,
     /// The bus thread, once bound.
     pub publisher: Option<Publisher>,
+    /// The session lock decisions.
+    pub lock: LockMachine,
+    pub(crate) lock_glue: LockGlue,
+    pub(crate) session_lock_state: SessionLockManagerState,
     /// The bus socket, passed to the clients the compositor starts.
     pub comp_socket: Option<std::path::PathBuf>,
     /// The `[trust] input` commands, started once the bus is up.
@@ -183,6 +190,9 @@ impl State {
             trust_of(client) == Trust::Input
         });
         let trusted_input = settings.trust.input.clone();
+        let lock_command = settings.lock.command.clone();
+        // Any client may ask for the lock; the machine decides.
+        let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |_| true);
         Ok(Self {
             start_time: Instant::now(),
             loop_handle: event_loop.handle(),
@@ -208,6 +218,9 @@ impl State {
             unmapped: Vec::new(),
             mapped: Vec::new(),
             publisher: None,
+            lock: LockMachine::new(),
+            lock_glue: LockGlue::new(lock_command),
+            session_lock_state,
             comp_socket: None,
             trusted_input,
             virtual_keyboard_state,
@@ -311,6 +324,7 @@ impl State {
             None,
         );
         let id = self.engine.add_output_info(info);
+        self.lock.output_added(&id);
         self.outputs.push(OutputEntry {
             id,
             output: output.clone(),
@@ -341,6 +355,7 @@ impl State {
         }
         self.space.unmap_output(&entry.output);
         self.engine.remove_output(&entry.id);
+        self.lock_output_removed(&entry.id);
         self.display_handle
             .disable_global::<State>(entry.global.clone());
         let global = entry.global;
@@ -396,6 +411,7 @@ impl State {
         }
         self.apply_output_layout();
         self.relayout();
+        self.lock_output_resized(output);
     }
 
     /// The rect each output lays its windows out in: the output narrowed
@@ -563,6 +579,14 @@ impl State {
 
     /// Makes the keyboard focus and the activated state follow the model.
     pub fn sync_focus(&mut self) {
+        // Locked: the keyboard is the lock surface's and nothing else's.
+        if self.lock.is_locked() {
+            let target = self.lock_keyboard_target();
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                keyboard.set_focus(self, target, SERIAL_COUNTER.next_serial());
+            }
+            return;
+        }
         let focused = self.engine.model().focused_window().map(str::to_owned);
         let target = focused
             .as_ref()
@@ -621,15 +645,24 @@ impl State {
     /// Flushes the model's events to the bus thread and restarts it if it
     /// died. Runs on the publish tick.
     pub fn publish_tick(&mut self) {
-        let events = self.engine.flush();
+        self.lock_tick();
+        let mut events = self.engine.flush();
+        events.session.extend(self.lock.flush());
         if let Some(publisher) = self.publisher.as_mut() {
             publisher.publish(events);
-            publisher.supervise(|| Snapshot::of(self.engine.model()));
+            publisher
+                .supervise(|| Snapshot::of(self.engine.model()).with_locked(self.lock.is_locked()));
         }
     }
 
     /// Frame callbacks, popup cleanup and a flush to the clients.
     pub fn send_frames(&mut self, output: &Output) {
+        if self.lock.is_locked() {
+            // Locked: only the lock surface is drawn, so only it is told.
+            self.send_lock_frames(output);
+            let _ = self.display_handle.flush_clients();
+            return;
+        }
         let elapsed = self.start_time.elapsed();
         for window in self.space.elements() {
             window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| {

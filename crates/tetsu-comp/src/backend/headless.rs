@@ -20,6 +20,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::engine::Action as EngineAction;
 use crate::input::ModKey;
+use crate::lock::glue::View;
 use crate::state::State;
 
 /// Its size in pixels.
@@ -162,7 +163,10 @@ fn add_output(
             if !state.outputs.iter().any(|o| o.output == output) {
                 return TimeoutAction::Drop;
             }
+            // No renderer: the tick presents the scene as it is now.
+            let locked = matches!(state.view(&output), View::Locked(_));
             state.send_frames(&output);
+            state.output_presented(&output, locked);
             TimeoutAction::ToDuration(FRAME)
         })
         .map_err(|e| e.to_string())?;

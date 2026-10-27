@@ -1,6 +1,8 @@
 //! The session lock as a pure state machine: no Smithay types, lock objects
 //! are opaque ids and outputs are model ids. See `glue` for the Smithay side.
 
+pub mod glue;
+
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 

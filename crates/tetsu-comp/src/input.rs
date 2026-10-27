@@ -213,6 +213,9 @@ impl State {
         &self,
         location: Point<f64, Logical>,
     ) -> Option<(WlSurface, Point<f64, Logical>)> {
+        if self.lock.is_locked() {
+            return self.lock_surface_under(location);
+        }
         let output = self.space.output_under(location).next().cloned();
         let on_layer = |layer: WlrLayer| {
             let output = output.as_ref()?;
@@ -244,6 +247,7 @@ impl State {
         };
         let key_state = event.state();
         let mod_key = self.mod_key;
+        let locked = self.lock.is_locked();
         let action = keyboard.input::<Bound, _>(
             self,
             event.key_code(),
@@ -262,7 +266,9 @@ impl State {
                             .chain([handle.modified_sym()])
                             .find_map(|sym| bound_action(mod_key, modifiers, sym))
                     })
-                    .flatten();
+                    .flatten()
+                    // Locked: a bind that is not safe is just a key.
+                    .filter(|bound| !locked || allowed_while_locked(*bound));
                 bound.map_or(FilterResult::Forward, FilterResult::Intercept)
             },
         );
@@ -273,7 +279,7 @@ impl State {
                     switch(vt);
                 }
             }
-            Some(Bound::Lock) => {}
+            Some(Bound::Lock) => self.start_locker(),
             Some(Bound::Engine(action)) => self.run_action(action),
             None => {}
         }
@@ -308,7 +314,7 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
-        if button_state == ButtonState::Pressed && !pointer.is_grabbed() {
+        if button_state == ButtonState::Pressed && !pointer.is_grabbed() && !self.lock.is_locked() {
             let id = self
                 .space
                 .element_under(pointer.current_location())
