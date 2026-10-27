@@ -7,8 +7,10 @@
 //! `locale-gen` runs.
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 
+use crate::install::config;
 use crate::keyboard;
 
 /// glibc's list of supported locales, relative to a root.
@@ -23,44 +25,81 @@ pub struct Supported {
 impl Supported {
     /// Entries are `<name> <charset>`; blank lines, comments and lines
     /// without two fields are skipped, a trailing ` \` is tolerated.
-    pub fn parse(_text: &str) -> Self {
-        Self::default()
+    pub fn parse(text: &str) -> Self {
+        let names = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .filter_map(|l| {
+                let mut fields = l.split_whitespace();
+                let (name, charset) = (fields.next()?, fields.next()?);
+                (charset == "UTF-8").then(|| name.to_owned())
+            })
+            .collect();
+        Self { names }
     }
 
     /// Read `<root>/usr/share/i18n/SUPPORTED`.
     pub fn load(root: &Path) -> Result<Self, String> {
-        let _ = root.join(SUPPORTED);
-        Ok(Self::default())
+        let path = root.join(SUPPORTED);
+        fs::read_to_string(&path)
+            .map(|text| Self::parse(&text))
+            .map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// The `locale.gen` line that generates `language`, if glibc has it.
-    pub fn gen_line(&self, _language: &str) -> Option<String> {
-        None
+    pub fn gen_line(&self, language: &str) -> Option<String> {
+        let base = language.strip_suffix(".UTF-8")?;
+        [language, base]
+            .into_iter()
+            .find(|name| self.names.contains(*name))
+            .map(|name| format!("{name} UTF-8"))
     }
 }
 
 /// Whether `language` can be installed: well shaped, then pregenerated or
-/// listed in `supported`.
+/// listed in `supported`. The refusals never repeat the value.
 pub fn check_language(
     language: &str,
-    _supported: Result<&Supported, &String>,
+    supported: Result<&Supported, &String>,
 ) -> Result<(), String> {
-    keyboard::validate_locale(language)
+    keyboard::validate_locale(language)?;
+    if keyboard::is_pregenerated(language) {
+        return Ok(());
+    }
+    match supported {
+        Ok(list) if list.gen_line(language).is_some() => Ok(()),
+        Ok(_) => Err("not a locale glibc supports (see /usr/share/i18n/SUPPORTED)".to_owned()),
+        Err(why) => Err(format!(
+            "cannot check the locale against /usr/share/i18n/SUPPORTED: {why}; \
+             pick one of the generated locales"
+        )),
+    }
 }
 
 /// `text` with `line` active in it; unchanged when it already is.
-pub fn with_locale_gen_entry(text: &str, _line: &str) -> String {
-    text.to_owned()
+pub fn with_locale_gen_entry(text: &str, line: &str) -> String {
+    let present = text
+        .lines()
+        .any(|l| !l.trim_start().starts_with('#') && l.trim() == line);
+    if present {
+        text.to_owned()
+    } else {
+        config::append_line(text, line)
+    }
 }
 
 /// The name `localedef` archives a UTF-8 locale under: `xx_YY.utf8`.
 pub fn archive_name(language: &str) -> String {
-    language.to_owned()
+    match language.strip_suffix(".UTF-8") {
+        Some(base) => format!("{base}.utf8"),
+        None => language.to_owned(),
+    }
 }
 
 /// Whether `localedef --list-archive` output names `language`.
-pub fn archive_lists(_list_output: &str, _language: &str) -> bool {
-    false
+pub fn archive_lists(list_output: &str, language: &str) -> bool {
+    let want = archive_name(language);
+    list_output.lines().any(|l| l.trim() == want)
 }
 
 #[cfg(test)]

@@ -203,7 +203,8 @@ pub fn validate_timezone(tz: &str) -> Result<(), String> {
 
 /// The locales the payload generates: the table's plus the fallback.
 pub fn pregenerated_locales() -> BTreeSet<&'static str> {
-    BTreeSet::new()
+    let table = LAYOUTS.iter().map(|l| l.locale);
+    table.chain([FALLBACK_LOCALE]).collect()
 }
 
 /// Whether the payload already generates `language`.
