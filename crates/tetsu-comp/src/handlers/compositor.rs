@@ -1,17 +1,24 @@
 //! wl_compositor, wl_shm and buffers: the first buffer maps a toplevel.
 
 use smithay::backend::renderer::utils::{RendererSurfaceStateUserData, on_commit_buffer_handler};
-use smithay::reexports::wayland_server::Client;
+use smithay::reexports::calloop::Interest;
 use smithay::reexports::wayland_server::protocol::wl_buffer;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::reexports::wayland_server::{Client, Resource};
 use smithay::wayland::buffer::BufferHandler;
+use smithay::wayland::compositor::{
+    BufferAssignment, SurfaceAttributes, add_blocker, add_pre_commit_hook,
+};
 use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState, get_parent, is_sync_subsurface,
     with_states,
 };
+use smithay::wayland::dmabuf::get_dmabuf;
+use smithay::wayland::drm_syncobj::DrmSyncobjCachedState;
 use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
+use crate::gpu::sync::{BufferKind, Gate, commit_gate};
 use crate::state::{ClientState, State};
 
 impl CompositorHandler for State {
@@ -27,8 +34,15 @@ impl CompositorHandler for State {
         }
     }
 
+    fn new_surface(&mut self, surface: &WlSurface) {
+        add_pre_commit_hook::<Self, _>(surface, gate_commit);
+    }
+
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
+        if let Some(tty) = self.tty.as_mut() {
+            tty.early_import(surface);
+        }
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
             while let Some(parent) = get_parent(&root) {
@@ -40,6 +54,75 @@ impl CompositorHandler for State {
         }
         self.commit_toplevel(surface);
         self.popups.commit(surface);
+    }
+}
+
+/// Holds a commit back until its buffer is ready: the client's explicit
+/// acquire point, else the dmabuf's implicit fence (`gpu::sync::commit_gate`).
+fn gate_commit(
+    state: &mut State,
+    _dh: &smithay::reexports::wayland_server::DisplayHandle,
+    surface: &WlSurface,
+) {
+    let mut acquire_point = None;
+    let dmabuf = with_states(surface, |data| {
+        acquire_point.clone_from(
+            &data
+                .cached_state
+                .get::<DrmSyncobjCachedState>()
+                .pending()
+                .acquire_point,
+        );
+        data.cached_state
+            .get::<SurfaceAttributes>()
+            .pending()
+            .buffer
+            .as_ref()
+            .and_then(|assignment| match assignment {
+                BufferAssignment::NewBuffer(buffer) => Some(get_dmabuf(buffer).ok().cloned()),
+                BufferAssignment::Removed => None,
+            })
+    });
+    let kind = match &dmabuf {
+        None => BufferKind::None,
+        Some(Some(_)) => BufferKind::Dmabuf,
+        Some(None) => BufferKind::Shm,
+    };
+    let syncobj_enabled = state.syncobj_state.is_some();
+    let gate = commit_gate(syncobj_enabled, acquire_point.is_some(), kind);
+    match (gate, acquire_point, dmabuf.flatten()) {
+        (Gate::AcquirePoint, Some(point), _) => {
+            if let Ok((blocker, source)) = point.generate_blocker() {
+                hold(state, surface, blocker, source);
+            }
+        }
+        (Gate::DmabufFence, _, Some(dmabuf)) => {
+            if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ) {
+                hold(state, surface, blocker, source);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Blocks the commit until `source` fires, then lets the client's queue go on.
+fn hold<B, S>(state: &mut State, surface: &WlSurface, blocker: B, source: S)
+where
+    B: smithay::wayland::compositor::Blocker + Send + 'static,
+    S: smithay::reexports::calloop::EventSource<Event = (), Ret = Result<(), std::io::Error>>
+        + 'static,
+{
+    let Some(client) = surface.client() else {
+        return;
+    };
+    let registered = state.loop_handle.insert_source(source, move |(), _, data| {
+        let dh = data.display_handle.clone();
+        data.client_compositor_state(&client)
+            .blocker_cleared(data, &dh);
+        Ok(())
+    });
+    if registered.is_ok() {
+        add_blocker(surface, blocker);
     }
 }
 

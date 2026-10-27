@@ -19,6 +19,8 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Display, DisplayHandle, Resource};
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size, Transform};
 use smithay::wayland::compositor::{CompositorClientState, CompositorState, with_states};
+use smithay::wayland::dmabuf::DmabufState;
+use smithay::wayland::drm_syncobj::DrmSyncobjState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgShellState, XdgToplevelSurfaceData};
@@ -27,10 +29,11 @@ use smithay::wayland::socket::ListeningSocketSource;
 
 use crate::bus::{Publisher, Snapshot};
 use crate::engine::{Arrangement, Engine};
+use crate::gpu::sync::ExplicitSync;
 use crate::input::ModKey;
 use crate::layout::Rect;
 use crate::model::WindowInfo;
-use crate::settings::Settings;
+use crate::settings::{RenderSettings, Settings};
 
 /// Key repeat delay and rate of the seat keyboard.
 const REPEAT_DELAY_MS: i32 = 200;
@@ -89,6 +92,14 @@ pub struct State {
     pub output_manager_state: OutputManagerState,
     pub(crate) seat_state: SeatState<State>,
     pub(crate) data_device_state: DataDeviceState,
+    /// `linux-dmabuf` bookkeeping; the global exists only on the tty backend.
+    pub(crate) dmabuf_state: DmabufState,
+    /// `wp_linux_drm_syncobj_manager_v1`, when explicit sync is enabled.
+    pub(crate) syncobj_state: Option<DrmSyncobjState>,
+    /// The explicit sync decision, once the tty backend made it.
+    pub explicit_sync: Option<ExplicitSync>,
+    /// The `[render]` settings.
+    pub render_settings: RenderSettings,
     /// Popups of the toplevels.
     pub popups: PopupManager,
     /// The one seat.
@@ -138,6 +149,10 @@ impl State {
             output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(&dh),
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(&dh),
+            dmabuf_state: DmabufState::new(),
+            syncobj_state: None,
+            explicit_sync: None,
+            render_settings: settings.render.clone(),
             popups: PopupManager::default(),
             seat,
             display_handle: dh,
