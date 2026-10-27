@@ -3,4 +3,5 @@
 pub mod catalog;
 pub mod clock;
 pub mod decide;
+pub mod intent;
 pub mod store;
