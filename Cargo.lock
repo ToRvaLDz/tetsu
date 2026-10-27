@@ -2093,6 +2093,15 @@ dependencies = [
 [[package]]
 name = "tetsu-agent"
 version = "0.0.0"
+dependencies = [
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tetsu-bus",
+ "tetsu-bus-contract",
+ "tokio",
+]
 
 [[package]]
 name = "tetsu-bar"
