@@ -67,6 +67,13 @@ impl Comp {
         Self::spawn(&all, config, true, &[], Layers::default())
     }
 
+    /// Like `start_hotplug`, with the layer files written first.
+    pub fn start_hotplug_layers(args: &[&str], layers: Layers<'_>) -> Self {
+        let mut all = vec!["--headless-hotplug"];
+        all.extend_from_slice(args);
+        Self::spawn(&all, None, true, &[], layers)
+    }
+
     /// Sends one hotplug command line.
     pub fn control(&mut self, line: &str) {
         let stdin = self.stdin.as_mut().expect("started with start_hotplug");
