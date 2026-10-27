@@ -4,6 +4,7 @@ use crate::answers::{Answers, Step};
 use crate::env::Env;
 use crate::error::InstallError;
 use crate::frontend::Frontend;
+use crate::locales::Supported;
 use crate::preflight::{Preflight, SecureBoot};
 use crate::{agent, disk, keyboard, summary, unlock, user};
 
@@ -55,10 +56,13 @@ pub fn redo(
             locale: keyboard::run(fe)?,
             ..current
         },
-        Step::Regional => Answers {
-            locale: keyboard::edit_regional(fe, &current.locale, Err(&String::new()))?,
-            ..current
-        },
+        Step::Regional => {
+            let supported = Supported::load(&env.root);
+            Answers {
+                locale: keyboard::edit_regional(fe, &current.locale, supported.as_ref())?,
+                ..current
+            }
+        }
         Step::Disk => Answers {
             disk: disk::run(fe, &pf.disks)?,
             ..current

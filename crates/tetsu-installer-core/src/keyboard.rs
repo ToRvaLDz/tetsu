@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use crate::error::InstallError;
 use crate::frontend::{Frontend, ask_valid, choose_from};
-use crate::locales::Supported;
+use crate::locales::{Supported, check_language};
 
 /// Locale used when the layout is not in the table.
 pub const FALLBACK_LOCALE: &str = "en_US.UTF-8";
@@ -258,8 +258,7 @@ pub fn edit_regional(
     current: &Locale,
     supported: Result<&Supported, &String>,
 ) -> Result<Locale, InstallError> {
-    let _ = supported;
-    let language = ask_valid(fe, "Language (locale)", &validate_locale)?;
+    let language = ask_valid(fe, "Language (locale)", &|l| check_language(l, supported))?;
     let timezone = ask_valid(fe, "Timezone (Area/City)", &validate_timezone)?;
     Ok(Locale {
         language,

@@ -13,6 +13,7 @@ use tetsu_installer_core::env::Env;
 use tetsu_installer_core::error::InstallError;
 use tetsu_installer_core::frontend::{Frontend, ask_valid};
 use tetsu_installer_core::keyboard::{self, Locale};
+use tetsu_installer_core::locales::{Supported, check_language};
 use tetsu_installer_core::preflight::{Preflight, SecureBoot};
 use tetsu_installer_core::secret::Secret;
 use tetsu_installer_core::secureboot::foreign;
@@ -88,7 +89,7 @@ pub fn collect(
 
 fn locale(
     fe: &mut dyn Frontend,
-    _env: &Env<'_>,
+    env: &Env<'_>,
     given: Option<&KeyboardAnswer>,
     asked: &mut bool,
 ) -> Result<Locale, InstallError> {
@@ -106,11 +107,18 @@ fn locale(
             }
         },
     };
+    let language = match &k.locale {
+        Some(given) => {
+            let supported = Supported::load(&env.root);
+            // The refusal never repeats the value from the file.
+            check_language(given, supported.as_ref())
+                .map_err(|why| fail(format!("keyboard.locale: {why}")))?;
+            given.clone()
+        }
+        None => keyboard::locale_for(&k.layout).to_owned(),
+    };
     Ok(Locale {
-        language: k
-            .locale
-            .clone()
-            .unwrap_or_else(|| keyboard::locale_for(&k.layout).to_owned()),
+        language,
         keyboard: k.layout.clone(),
         timezone,
         rtc_utc: true,
