@@ -103,7 +103,7 @@ fn focus_reaches_the_bus_client_within_the_budget() {
         let expected = if i % 2 == 0 { &id_a } else { &id_b };
         assert_eq!(&id, expected, "trial {i}: not the event this trial caused");
         if i >= WARMUP {
-            samples.push(t1.saturating_duration_since(t0));
+            samples.push(t1 - t0);
         }
     }
 
