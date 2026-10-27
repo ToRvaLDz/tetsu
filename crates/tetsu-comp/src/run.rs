@@ -13,6 +13,7 @@ use smithay::reexports::wayland_server::Display;
 use crate::backend::{headless, udev, winit};
 use crate::bus::{Publisher, Snapshot};
 use crate::cli::{Backend, Cli};
+use crate::settings::Settings;
 use crate::socket::{COMP_SOCKET_ENV, bus_socket_path};
 use crate::state::State;
 
@@ -20,23 +21,26 @@ use crate::state::State;
 const PUBLISH_TICK: Duration = Duration::from_millis(16);
 
 /// Runs until the loop stops.
-pub fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
+pub fn run(cli: &Cli, settings: Settings) -> Result<(), Box<dyn Error>> {
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from);
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
-    let mut state = State::new(&mut event_loop, display)?;
+    let mut state = State::new(&mut event_loop, display, settings)?;
 
     match cli.backend {
-        Backend::Headless => headless::init(&mut state)?,
+        Backend::Headless => headless::init(&mut state, cli.headless_outputs)?,
         Backend::Winit => winit::init(&mut state)?,
         Backend::Tty => udev::init(&mut state)?,
     }
 
     // The outputs added so far are in the bus thread's first snapshot.
-    let _ = state.model.flush();
+    let _ = state.engine.flush();
     let wayland = state.socket_name.to_string_lossy().into_owned();
     let bus_path = bus_socket_path(runtime_dir.as_deref(), &wayland)?;
-    state.publisher = Some(Publisher::spawn(&bus_path, Snapshot::of(&state.model))?);
+    state.publisher = Some(Publisher::spawn(
+        &bus_path,
+        Snapshot::of(state.engine.model()),
+    )?);
     state
         .loop_handle
         .insert_source(Timer::from_duration(PUBLISH_TICK), |_, (), state| {

@@ -135,6 +135,7 @@ impl Tty {
 /// Opens the session and the GPU, lights every connected connector and
 /// starts reading input.
 pub fn init(state: &mut State) -> Result<(), Box<dyn Error>> {
+    state.mod_key = crate::input::ModKey::Super;
     let (mut session, notifier) = LibSeatSession::new().map_err(|e| format!("libseat: {e}"))?;
     let seat = session.seat();
     let path = match primary_gpu(&seat)? {

@@ -226,7 +226,26 @@ impl State {
                     switch(vt);
                 }
             }
-            Some(Bound::Engine(_)) | None => {}
+            Some(Bound::Engine(action)) => self.run_action(action),
+            None => {}
+        }
+    }
+
+    /// Runs a layout bind and follows it: layout, focus, close request.
+    fn run_action(&mut self, action: EngineAction) {
+        let effect = self.engine.apply(action, &self.viewports());
+        if effect.relayout {
+            self.relayout();
+        }
+        self.sync_focus();
+        let closing = effect.close.and_then(|id| {
+            self.mapped
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.window.toplevel().cloned())
+        });
+        if let Some(toplevel) = closing {
+            toplevel.send_close();
         }
     }
 

@@ -88,6 +88,13 @@ impl Engine {
         &self.settings
     }
 
+    /// Whether a window floats (by its own flag or its workspace's layout).
+    pub fn is_floating(&self, id: &str) -> bool {
+        self.model
+            .workspace_of(id)
+            .is_some_and(|ws| self.state(ws).is_floating(id))
+    }
+
     /// Adds an output with its first workspace; returns the output id.
     pub fn add_output(&mut self, name: &str) -> String {
         self.model.add_output(name)

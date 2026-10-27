@@ -26,10 +26,11 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 
 use crate::bus::{Publisher, Snapshot};
+use crate::engine::{Arrangement, Engine};
 use crate::input::ModKey;
-use crate::layout::dwindle::dwindle;
-use crate::layout::{Gaps, Rect};
-use crate::model::{Model, WindowInfo};
+use crate::layout::Rect;
+use crate::model::WindowInfo;
+use crate::settings::Settings;
 
 /// Key repeat delay and rate of the seat keyboard.
 const REPEAT_DELAY_MS: i32 = 200;
@@ -51,6 +52,8 @@ pub struct Mapped {
     pub id: String,
     /// The window.
     pub window: Window,
+    /// Whether the last layout pass placed it as floating.
+    pub floating: bool,
 }
 
 /// Data attached to each Wayland client.
@@ -91,8 +94,8 @@ pub struct State {
     /// The one seat.
     pub seat: Seat<Self>,
 
-    /// Windows, workspaces and outputs as the bus reports them.
-    pub model: Model,
+    /// The layout engine and the model the bus reports.
+    pub engine: Engine,
     /// The outputs, in the order they were added.
     pub outputs: Vec<OutputEntry>,
     /// Toplevels that have not committed a buffer yet.
@@ -114,6 +117,7 @@ impl State {
     pub fn new(
         event_loop: &mut EventLoop<'static, State>,
         display: Display<State>,
+        settings: Settings,
     ) -> io::Result<Self> {
         let dh = display.handle();
         let mut seat_state = SeatState::new();
@@ -137,12 +141,12 @@ impl State {
             popups: PopupManager::default(),
             seat,
             display_handle: dh,
-            model: Model::default(),
+            engine: Engine::new(settings),
             outputs: Vec::new(),
             unmapped: Vec::new(),
             mapped: Vec::new(),
             publisher: None,
-            mod_key: ModKey::CtrlAlt,
+            mod_key: ModKey::Super,
             tty: None,
             vt_switch: None,
         })
@@ -212,7 +216,7 @@ impl State {
         output.change_current_state(Some(mode), Some(Transform::Normal), None, Some(origin));
         output.set_preferred(mode);
         self.space.map_output(&output, origin);
-        let id = self.model.add_output(name);
+        let id = self.engine.add_output(name);
         self.outputs.push(OutputEntry {
             id,
             output: output.clone(),
@@ -231,7 +235,7 @@ impl State {
         let mode = Mode { size, refresh };
         output.change_current_state(Some(mode), None, None, None);
         output.set_preferred(mode);
-        self.retile();
+        self.relayout();
     }
 
     fn viewport(entry: &OutputEntry) -> Rect {
@@ -247,17 +251,12 @@ impl State {
         }
     }
 
-    /// The tile a window opened now would get, on the focused workspace.
-    fn next_tile(&self) -> Option<Rect> {
-        let workspace = self.model.focused_workspace()?;
-        let entry = self
-            .outputs
+    /// The rect each output lays its windows out in.
+    pub fn viewports(&self) -> Vec<(String, Rect)> {
+        self.outputs
             .iter()
-            .find(|o| self.model.active_workspace(&o.id) == Some(workspace))?;
-        let count = self.model.windows_on(workspace).len() + 1;
-        dwindle(Self::viewport(entry), Gaps::NONE, count)
-            .last()
-            .copied()
+            .map(|o| (o.id.clone(), Self::viewport(o)))
+            .collect()
     }
 
     /// The window of a toplevel's `wl_surface`, mapped or not.
@@ -271,56 +270,107 @@ impl State {
             .cloned()
     }
 
-    /// Answers the first commit of a toplevel with its tile.
+    /// Answers the first commit of a toplevel with its tile, or with no
+    /// size when it floats.
     pub(crate) fn send_initial_configure(&self, toplevel: &ToplevelSurface) {
-        if let Some(rect) = self.next_tile() {
-            apply_tile(toplevel, rect);
+        let (app_id, title) = toplevel_text(toplevel.wl_surface());
+        let plan = self
+            .engine
+            .plan(app_id.as_deref(), title.as_deref(), &self.viewports());
+        if plan.floating {
+            apply_floating(toplevel, plan.configure_size);
+        } else if let Some((w, h)) = plan.configure_size {
+            apply_tile(toplevel, (w, h));
         }
         toplevel.send_configure();
     }
 
-    /// Lays the windows of every output's active workspace out again.
-    pub fn retile(&mut self) {
-        for entry in &self.outputs {
-            let Some(workspace) = self.model.active_workspace(&entry.id) else {
-                continue;
-            };
-            let ids = self.model.windows_on(workspace);
-            let rects = dwindle(Self::viewport(entry), Gaps::NONE, ids.len());
-            for (id, rect) in ids.iter().zip(rects) {
-                let Some(mapped) = self.mapped.iter().find(|m| &m.id == id) else {
+    /// Lays the windows of every output's active workspace out again:
+    /// tiles, then floating windows above them; windows of other
+    /// workspaces are unmapped.
+    pub fn relayout(&mut self) {
+        let arrangements: Vec<(Rect, Arrangement)> = self
+            .outputs
+            .iter()
+            .map(|o| {
+                let view = Self::viewport(o);
+                (view, self.engine.arrange(&o.id, view))
+            })
+            .collect();
+        for (_, arrangement) in &arrangements {
+            for id in &arrangement.hidden {
+                if let Some(mapped) = self.mapped.iter().find(|m| &m.id == id) {
+                    self.space.unmap_elem(&mapped.window);
+                }
+            }
+            for (id, rect) in &arrangement.tiled {
+                let Some(mapped) = self.mapped.iter_mut().find(|m| &m.id == id) else {
                     continue;
                 };
+                mapped.floating = false;
                 self.space
                     .map_element(mapped.window.clone(), (rect.x, rect.y), false);
                 if let Some(toplevel) = mapped.window.toplevel() {
-                    apply_tile(toplevel, rect);
+                    apply_tile(toplevel, (rect.w, rect.h));
                     toplevel.send_pending_configure();
                 }
+            }
+            for (id, rect) in &arrangement.floating {
+                let Some(mapped) = self.mapped.iter_mut().find(|m| &m.id == id) else {
+                    continue;
+                };
+                // A window that just left the tiles takes its floating size;
+                // one that already floated keeps the size its client chose.
+                let size = (!mapped.floating).then_some((rect.w, rect.h));
+                mapped.floating = true;
+                self.space
+                    .map_element(mapped.window.clone(), (rect.x, rect.y), false);
+                if let Some(toplevel) = mapped.window.toplevel() {
+                    apply_floating_pending(toplevel, size);
+                    toplevel.send_pending_configure();
+                }
+            }
+        }
+        self.raise_floating();
+    }
+
+    /// Floating windows above the tiles, the focused one last.
+    fn raise_floating(&mut self) {
+        let focused = self.engine.model().focused_window().map(str::to_owned);
+        let mut order: Vec<String> = Vec::new();
+        for o in &self.outputs {
+            let arrangement = self.engine.arrange(&o.id, Self::viewport(o));
+            order.extend(arrangement.floating.into_iter().map(|(id, _)| id));
+        }
+        order.sort_by_key(|id| focused.as_ref() == Some(id));
+        for id in order {
+            if let Some(mapped) = self.mapped.iter().find(|m| m.id == id) {
+                self.space.raise_element(&mapped.window, false);
             }
         }
     }
 
     /// Maps a toplevel that committed its first buffer: it is opened in the
-    /// model, tiled and focused.
+    /// engine, which places it by the rules, tiled or floating.
     pub fn map_window(&mut self, window: Window, pid: Option<i64>) {
         let Some(toplevel) = window.toplevel() else {
             return;
         };
-        let (app_id, title) = with_states(toplevel.wl_surface(), |states| {
-            let data = states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .map(|d| d.lock().unwrap_or_else(|e| e.into_inner()));
-            data.map_or((None, None), |d| (d.app_id.clone(), d.title.clone()))
-        });
-        let id = self.model.open(WindowInfo { app_id, title, pid });
+        let (app_id, title) = toplevel_text(toplevel.wl_surface());
+        let size = window.geometry().size;
+        let committed = (size.w > 0 && size.h > 0).then_some((size.w, size.h));
+        let id = self.engine.open(
+            WindowInfo { app_id, title, pid },
+            committed,
+            &self.viewports(),
+        );
+        let floating = self.engine.is_floating(&id);
         self.mapped.push(Mapped {
-            id: id.clone(),
+            id,
             window,
+            floating,
         });
-        self.model.focus(Some(&id));
-        self.retile();
+        self.relayout();
         self.sync_focus();
     }
 
@@ -336,28 +386,26 @@ impl State {
             return;
         };
         let mapped = self.mapped.remove(at);
-        self.model.close(&mapped.id);
+        self.engine.close(&mapped.id);
         self.space.unmap_elem(&mapped.window);
-        self.retile();
+        self.relayout();
         self.sync_focus();
     }
 
     /// Focuses a window (by model id) or nothing, and follows it.
     pub fn focus_window(&mut self, id: Option<&str>) {
-        self.model.focus(id);
+        self.engine.focus(id);
         self.sync_focus();
     }
 
     /// Makes the keyboard focus and the activated state follow the model.
     pub fn sync_focus(&mut self) {
-        let focused = self.model.focused_window().map(str::to_owned);
+        let focused = self.engine.model().focused_window().map(str::to_owned);
         let target = focused
             .as_ref()
             .and_then(|id| self.mapped.iter().find(|m| &m.id == id))
             .map(|m| m.window.clone());
-        if let Some(window) = &target {
-            self.space.raise_element(window, false);
-        }
+        self.raise_floating();
         for mapped in &self.mapped {
             let active = focused.as_ref() == Some(&mapped.id);
             mapped.window.set_activated(active);
@@ -384,10 +432,10 @@ impl State {
     /// Flushes the model's events to the bus thread and restarts it if it
     /// died. Runs on the publish tick.
     pub fn publish_tick(&mut self) {
-        let events = self.model.flush();
+        let events = self.engine.flush();
         if let Some(publisher) = self.publisher.as_mut() {
             publisher.publish(events);
-            publisher.supervise(|| Snapshot::of(&self.model));
+            publisher.supervise(|| Snapshot::of(self.engine.model()));
         }
     }
 
@@ -405,17 +453,53 @@ impl State {
     }
 }
 
+/// A toplevel's app_id and title.
+pub(crate) fn toplevel_text(surface: &WlSurface) -> (Option<String>, Option<String>) {
+    with_states(surface, |states| {
+        let data = states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .map(|d| d.lock().unwrap_or_else(|e| e.into_inner()));
+        data.map_or((None, None), |d| (d.app_id.clone(), d.title.clone()))
+    })
+}
+
+const TILED_EDGES: [xdg_toplevel::State; 4] = [
+    xdg_toplevel::State::TiledLeft,
+    xdg_toplevel::State::TiledRight,
+    xdg_toplevel::State::TiledTop,
+    xdg_toplevel::State::TiledBottom,
+];
+
 /// Puts a tile into a toplevel's pending state.
-fn apply_tile(toplevel: &ToplevelSurface, rect: Rect) {
+fn apply_tile(toplevel: &ToplevelSurface, size: (i32, i32)) {
     toplevel.with_pending_state(|state| {
-        state.size = Some((rect.w, rect.h).into());
-        for edge in [
-            xdg_toplevel::State::TiledLeft,
-            xdg_toplevel::State::TiledRight,
-            xdg_toplevel::State::TiledTop,
-            xdg_toplevel::State::TiledBottom,
-        ] {
+        state.size = Some(size.into());
+        for edge in TILED_EDGES {
             state.states.set(edge);
+        }
+    });
+}
+
+/// A floating window: no tiled states; `size` when it has one to take,
+/// else none (the client chooses).
+fn apply_floating(toplevel: &ToplevelSurface, size: Option<(i32, i32)>) {
+    toplevel.with_pending_state(|state| {
+        state.size = size.map(Into::into);
+        for edge in TILED_EDGES {
+            state.states.unset(edge);
+        }
+    });
+}
+
+/// Like `apply_floating`, but leaves the size alone when `size` is `None`.
+fn apply_floating_pending(toplevel: &ToplevelSurface, size: Option<(i32, i32)>) {
+    toplevel.with_pending_state(|state| {
+        if size.is_some() {
+            state.size = size.map(Into::into);
+        }
+        for edge in TILED_EDGES {
+            state.states.unset(edge);
         }
     });
 }

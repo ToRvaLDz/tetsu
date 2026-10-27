@@ -7,6 +7,7 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::{self, WinitEvent};
 use smithay::utils::{Rectangle, Transform};
 
+use crate::input::ModKey;
 use crate::render::CLEAR_COLOR;
 use crate::state::State;
 
@@ -17,6 +18,8 @@ const REFRESH_MHZ: i32 = 60_000;
 
 /// Opens the window, adds its output and starts drawing.
 pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
+    // The host compositor grabs Super.
+    state.mod_key = ModKey::CtrlAlt;
     let (mut backend, winit_events) = winit::init::<GlesRenderer>()?;
     let output = state.add_output(OUTPUT_NAME, backend.window_size(), REFRESH_MHZ);
     // The winit framebuffer is upside down.

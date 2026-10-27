@@ -210,6 +210,20 @@ const VIEW: Rect = Rect {
     h: 1080,
 };
 
+/// Polls `ListWindows` until the bus mirror has `n` windows (it follows the
+/// compositor at the publish tick), and returns that reply.
+fn windows_listed(bus: &mut Client, contract: &tetsu_bus_contract::Contract, n: usize) -> Value {
+    let start = std::time::Instant::now();
+    loop {
+        let listed = bus.call(contract, LIST_WINDOWS);
+        if listed["windows"].as_array().unwrap().len() == n {
+            return listed;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "no {n} windows");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn size(rect: Rect) -> (u32, u32) {
     (rect.w as u32, rect.h as u32)
 }
@@ -246,7 +260,7 @@ fn the_floating_layout_leaves_the_size_to_the_client() {
     let top = wl.map_floating("a", "one", (400, 300));
     assert_eq!(wl.sizes(&top), []);
     assert!(!wl.states(&top));
-    let listed = bus.call(&contract, LIST_WINDOWS);
+    let listed = windows_listed(&mut bus, &contract, 1);
     assert_eq!(listed["windows"][0]["placement"], "floating");
 }
 
@@ -276,7 +290,7 @@ fn a_floating_rule_with_a_size_floats_the_window_and_leaves_the_tiles_alone() {
     assert_eq!(wl.sizes(&tiled).last(), Some(&(1920, 1080)));
     assert!(wl.states(&tiled));
 
-    let listed = bus.call(&contract, LIST_WINDOWS);
+    let listed = windows_listed(&mut bus, &contract, 2);
     let placements: Vec<_> = listed["windows"]
         .as_array()
         .unwrap()
@@ -308,7 +322,7 @@ fn a_workspace_rule_opens_the_window_on_that_workspace_without_the_focus() {
     let before = bus.call(&contract, LIST_WORKSPACES);
     let mut wl = WlClient::connect(&comp.wayland_socket());
     let first = wl.map("foot", "shell");
-    let focused = bus.call(&contract, LIST_WINDOWS)["focused_id"].clone();
+    let focused = windows_listed(&mut bus, &contract, 1)["focused_id"].clone();
 
     let mut watch = Client::connect(&comp.bus);
     watch.send(WATCH_WINDOWS, true);
@@ -344,7 +358,7 @@ fn an_output_rule_opens_the_window_on_the_other_output() {
     let mut wl = WlClient::connect(&comp.wayland_socket());
     let top = wl.map("side", "one");
     wl.wait_for_size(&top, (1920, 1080));
-    let windows = bus.call(&contract, LIST_WINDOWS);
+    let windows = windows_listed(&mut bus, &contract, 1);
     let workspaces = bus.call(&contract, LIST_WORKSPACES);
     assert_eq!(workspaces["active"].as_object().unwrap().len(), 2);
     let second = workspaces["active"]["out-2"].as_str().unwrap();

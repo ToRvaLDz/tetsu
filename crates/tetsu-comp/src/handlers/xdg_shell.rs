@@ -3,14 +3,12 @@
 use smithay::desktop::{PopupKind, Window};
 use smithay::reexports::wayland_server::protocol::{wl_output, wl_seat};
 use smithay::utils::Serial;
-use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-    XdgToplevelSurfaceData,
 };
 
 use crate::model::WindowUpdate;
-use crate::state::State;
+use crate::state::{State, toplevel_text};
 
 impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -83,14 +81,8 @@ impl State {
             // Not mapped yet: the model reads both when it maps.
             return;
         };
-        let (app_id, title) = with_states(surface.wl_surface(), |states| {
-            let data = states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .map(|d| d.lock().unwrap_or_else(|e| e.into_inner()));
-            data.map_or((None, None), |d| (d.app_id.clone(), d.title.clone()))
-        });
-        self.model.update(
+        let (app_id, title) = toplevel_text(surface.wl_surface());
+        self.engine.update(
             &id,
             WindowUpdate {
                 app_id: Some(app_id),

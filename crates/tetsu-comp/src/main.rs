@@ -2,7 +2,8 @@
 
 use std::process::ExitCode;
 
-use tetsu_comp::cli::{self, Parsed, USAGE};
+use tetsu_comp::cli::{self, Cli, Parsed, USAGE};
+use tetsu_comp::settings::{self, Settings};
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -20,12 +21,28 @@ fn main() -> ExitCode {
             eprintln!("tetsu-comp: {e}\n{USAGE}");
             ExitCode::from(2)
         }
-        Ok(Parsed::Run(cli)) => match tetsu_comp::run::run(&cli) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("tetsu-comp: {e}");
-                ExitCode::FAILURE
-            }
-        },
+        Ok(Parsed::Run(cli)) => {
+            let settings = match &cli.config {
+                None => Settings::default(),
+                Some(path) => match settings::load(path) {
+                    Ok(settings) => settings,
+                    Err(e) => {
+                        eprintln!("tetsu-comp: {}: {e}", path.display());
+                        return ExitCode::from(2);
+                    }
+                },
+            };
+            run(cli, settings)
+        }
+    }
+}
+
+fn run(cli: Cli, settings: Settings) -> ExitCode {
+    match tetsu_comp::run::run(&cli, settings) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("tetsu-comp: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
