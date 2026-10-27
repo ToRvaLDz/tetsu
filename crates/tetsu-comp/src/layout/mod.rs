@@ -1,5 +1,5 @@
-//! The layout algorithms. The viewport equals the output for now (#22.6);
-//! the outputs ticket narrows it by layer-shell zones. Each algorithm maps
+//! The layout algorithms. The viewport is the output narrowed by the
+//! exclusive zones of its layer-shell surfaces (`usable`). Each algorithm maps
 //! (viewport, gaps, n, params) to rects and knows nothing else.
 
 pub mod dwindle;
@@ -31,6 +31,22 @@ impl Rect {
             w: (self.w - 2 * gaps.outer).max(1),
             h: (self.h - 2 * gaps.outer).max(1),
         }
+    }
+}
+
+/// The viewport of an output: `zone` is what is left after the exclusive
+/// zones of its layer surfaces, relative to the output (as Smithay's
+/// `LayerMap::non_exclusive_zone` gives it). A zone with no width or height
+/// leaves the whole output, so a greedy panel cannot hide every window.
+pub fn usable(output: Rect, zone: Rect) -> Rect {
+    if zone.w <= 0 || zone.h <= 0 {
+        return output;
+    }
+    Rect {
+        x: output.x + zone.x,
+        y: output.y + zone.y,
+        w: zone.w,
+        h: zone.h,
     }
 }
 
