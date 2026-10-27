@@ -4,7 +4,8 @@
 Description=Tetsu capability daemon
 Documentation=https://github.com/ToRvaLDz/tetsu
 PartOf=graphical-session.target
-After=graphical-session.target
+Wants=tetsu-notifyd.service
+After=graphical-session.target tetsu-notifyd.service
 
 [Service]
 ExecStart=/usr/bin/tetsu-capd
