@@ -2,6 +2,7 @@
 
 use std::process::ExitCode;
 
+pub mod render;
 pub mod socket;
 
 /// Usage of the `comp` group.

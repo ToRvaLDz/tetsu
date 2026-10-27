@@ -2159,7 +2159,9 @@ name = "tetsu-cli"
 version = "0.0.0"
 dependencies = [
  "rustix 1.1.5",
+ "serde_json",
  "tempfile",
+ "tetsu-bus",
  "tetsu-capd",
  "tetsu-installer-core",
  "tetsu-tx",
