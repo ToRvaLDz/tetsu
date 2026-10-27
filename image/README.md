@@ -132,8 +132,8 @@ boots. systemd-boot with the UKI mkosi builds; kernel command line
   `tetsu-installer --medium /usr/share/tetsu/medium` again).
 - `/usr/share/tetsu/secureboot/microsoft/{kek,db}/*.der`: Microsoft KEK CA
   2011 and KEK 2K CA 2023 in `kek/`; UEFI CA 2011, Windows Production PCA 2011,
-  Microsoft UEFI CA 2023 and Windows UEFI CA 2023 in `db/`. The Option ROM UEFI
-  CA 2023 is not included. Sources and SHA-256 pins are in
+  Microsoft UEFI CA 2023, Windows UEFI CA 2023 and Option ROM UEFI CA 2023 in
+  `db/`. Sources and SHA-256 pins are in
   `image/microsoft-certs.sha256`. The payload carries the same files, since
   `tetsu secureboot enroll` on the installed system refuses to run without them
   (unless `--without-microsoft`).
