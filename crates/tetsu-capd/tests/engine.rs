@@ -488,6 +488,17 @@ fn a_stream_that_ends_is_shown_again_up_to_three_times() {
 }
 
 #[test]
+fn a_failed_connect_uses_the_re_show_budget() {
+    run(async {
+        let s = Setup::new();
+        s.notify.script(Script::ConnectFails);
+        s.notify.script(Script::Answer("allow_once"));
+        assert_eq!(s.check(INSTALL, packages()).await.unwrap(), allow());
+        assert_eq!(s.notify.shows(), 2);
+    });
+}
+
+#[test]
 fn four_failures_deny_unavailable_without_a_suppression() {
     run(async {
         let s = Setup::new();

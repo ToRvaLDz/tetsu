@@ -230,6 +230,17 @@ impl Store {
         keys
     }
 
+    /// Refreshes, and says whether a managed value for the key would be
+    /// accepted: no layer malformed and the user file not setting it.
+    pub fn check_settable(&mut self, class: &str, scope: Option<&str>) -> Result<(), StoreError> {
+        self.refresh()?;
+        let key: Key = (class.to_owned(), scope.map(str::to_owned));
+        if self.grants[slot(Layer::User)].contains_key(&key) {
+            return Err(StoreError::OverriddenByUser);
+        }
+        Ok(())
+    }
+
     /// Sets or, with `None`, removes a managed value. Refreshes first and
     /// refuses while any layer is malformed, or when the user file sets the
     /// key. The file is written atomically, 0600 in a 0700 directory.
@@ -239,11 +250,8 @@ impl Store {
         scope: Option<&str>,
         state: Option<Grant>,
     ) -> Result<(), StoreError> {
-        self.refresh()?;
+        self.check_settable(class, scope)?;
         let key: Key = (class.to_owned(), scope.map(str::to_owned));
-        if self.grants[slot(Layer::User)].contains_key(&key) {
-            return Err(StoreError::OverriddenByUser);
-        }
         let mut managed = self.grants[slot(Layer::Managed)].clone();
         match state {
             Some(grant) => managed.insert(key, grant),
