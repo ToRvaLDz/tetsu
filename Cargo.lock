@@ -2138,6 +2138,7 @@ version = "0.0.0"
 dependencies = [
  "rustix 1.1.5",
  "tempfile",
+ "tetsu-capd",
  "tetsu-installer-core",
  "tetsu-tx",
 ]

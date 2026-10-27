@@ -26,6 +26,7 @@ pub fn main(args: impl IntoIterator<Item = String>) -> ExitCode {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
         }
+        Command::Cap(rest) => return tetsu_capd::cli::main(rest),
         Command::Enroll { without_microsoft } => secureboot::enroll(&ctx, without_microsoft),
         Command::Trust(cert) => secureboot::trust(&ctx, &cert),
     };

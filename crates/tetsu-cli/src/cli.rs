@@ -5,6 +5,9 @@ use std::path::PathBuf;
 pub const USAGE: &str = "\
 usage: tetsu secureboot enroll [--without-microsoft]
        tetsu secureboot trust <cert>
+       tetsu cap list
+       tetsu cap set <class> <automatic|notify|ask|off> [--scope <scope>]
+       tetsu cap revoke <class> [--scope <scope>]
 
   secureboot enroll   enroll the Secure Boot keys of /var/lib/tetsu/keys
                       together with the Microsoft certificates (the
@@ -20,6 +23,7 @@ exit status: 0 done, 1 failed, 2 usage error";
 pub enum Command {
     Enroll { without_microsoft: bool },
     Trust(PathBuf),
+    Cap(Vec<String>),
     Help,
 }
 
@@ -37,6 +41,7 @@ pub fn parse(args: &[String]) -> Option<Command> {
         ["secureboot", "trust", cert] if !cert.is_empty() => {
             Some(Command::Trust(PathBuf::from(cert)))
         }
+        ["cap", rest @ ..] => Some(Command::Cap(rest.iter().map(|s| (*s).to_owned()).collect())),
         _ => None,
     }
 }
@@ -69,6 +74,15 @@ mod tests {
         );
         assert_eq!(parse_args(&["--help"]), Some(Command::Help));
         assert_eq!(parse_args(&["secureboot", "-h"]), Some(Command::Help));
+    }
+
+    #[test]
+    fn cap_forwards_its_arguments() {
+        assert_eq!(
+            parse_args(&["cap", "set", "a.b", "ask"]),
+            Some(Command::Cap(vec!["set".into(), "a.b".into(), "ask".into()]))
+        );
+        assert_eq!(parse_args(&["cap"]), Some(Command::Cap(vec![])));
     }
 
     #[test]
