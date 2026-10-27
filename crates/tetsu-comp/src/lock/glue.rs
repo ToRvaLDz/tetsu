@@ -56,6 +56,11 @@ impl LockGlue {
         }
     }
 
+    /// Replaces the locker's argv; it is used from the next launch.
+    pub fn set_command(&mut self, command: Vec<String>) {
+        self.command = command;
+    }
+
     fn next_id(&mut self) -> u64 {
         let id = self.next;
         self.next += 1;

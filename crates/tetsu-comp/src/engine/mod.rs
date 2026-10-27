@@ -89,6 +89,14 @@ impl Engine {
         &self.settings
     }
 
+    /// Replaces the settings (a config reload). Workspaces that already
+    /// have layout state keep it; the gaps, the rules of windows that open
+    /// from now on and the defaults of new workspace state follow. The
+    /// caller lays the windows out again.
+    pub fn set_settings(&mut self, settings: Settings) {
+        self.settings = settings;
+    }
+
     /// Whether a window floats (by its own flag or its workspace's layout).
     pub fn is_floating(&self, id: &str) -> bool {
         self.model

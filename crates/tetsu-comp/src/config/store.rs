@@ -165,6 +165,11 @@ impl Store {
         &self.user.diagnostics
     }
 
+    /// The user file's path, if its home is known.
+    pub fn user_path(&self) -> Option<&Path> {
+        self.user.path.as_deref()
+    }
+
     /// What the managed layer sets.
     pub fn managed_values(&self) -> &Values {
         &self.managed.values

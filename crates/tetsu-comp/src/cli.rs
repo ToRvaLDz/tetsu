@@ -13,8 +13,15 @@ pub const USAGE: &str = "usage: tetsu-comp [--backend winit|tty|headless] [--con
   --backend   winit (nested in the host session), tty (a VT) or headless
               (no output device; for tests). Default: winit when
               WAYLAND_DISPLAY or DISPLAY is set, else tty.
-  --config    a TOML file with [layout] and [[window_rule]]. Default: the
-              built-in defaults (dwindle, no gaps, no rules).
+  --config    a TOML file that replaces the user file
+              ($XDG_CONFIG_HOME/tetsu/comp.toml). Any problem in it stops
+              the start with exit code 2; problems in the XDG user file
+              are logged, published on org.tetsu.comp.config.v1 and the
+              compositor starts. Either way the file is watched and
+              changes apply live. The layers below it: the managed state
+              ($XDG_STATE_HOME/tetsu/comp.toml, written by SetManaged)
+              and /usr/share/tetsu/comp.toml, over the built-in defaults
+              (dwindle, no gaps, no rules).
   --headless-outputs
               headless only: the number of virtual outputs, 1 to 4.
               Default: 1.

@@ -300,7 +300,9 @@ fn a_bad_config_stops_the_start_and_names_the_key() {
     let runtime = tempfile::tempdir().unwrap();
     let path = runtime.path().join("config.toml");
     std::fs::write(&path, "[layout]\nmaster_ratio = 5.0\n").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tetsu-comp"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tetsu-comp"));
+    common::comp::isolate(&mut command, runtime.path());
+    let mut child = command
         .args(["--backend", "headless", "--config"])
         .arg(&path)
         .env("XDG_RUNTIME_DIR", runtime.path())

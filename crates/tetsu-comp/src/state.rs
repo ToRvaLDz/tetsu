@@ -37,6 +37,8 @@ use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::virtual_pointer::VirtualPointerManagerState;
 
 use crate::bus::{Publisher, Snapshot};
+use crate::config::glue::config_reply;
+use crate::config::store::Store;
 use crate::engine::{Arrangement, Engine};
 use crate::gpu::sync::ExplicitSync;
 use crate::input::ModKey;
@@ -147,6 +149,8 @@ pub struct State {
     pub mapped: Vec<Mapped>,
     /// The bus thread, once bound.
     pub publisher: Option<Publisher>,
+    /// The config layers, watched for changes.
+    pub config: Option<Store>,
     /// The session lock decisions.
     pub lock: LockMachine,
     pub(crate) lock_glue: LockGlue,
@@ -218,6 +222,7 @@ impl State {
             unmapped: Vec::new(),
             mapped: Vec::new(),
             publisher: None,
+            config: None,
             lock: LockMachine::new(),
             lock_glue: LockGlue::new(lock_command),
             session_lock_state,
@@ -650,8 +655,11 @@ impl State {
         events.session.extend(self.lock.flush());
         if let Some(publisher) = self.publisher.as_mut() {
             publisher.publish(events);
-            publisher
-                .supervise(|| Snapshot::of(self.engine.model()).with_locked(self.lock.is_locked()));
+            publisher.supervise(|| {
+                Snapshot::of(self.engine.model())
+                    .with_locked(self.lock.is_locked())
+                    .with_config(config_reply(self.config.as_ref()))
+            });
         }
     }
 
