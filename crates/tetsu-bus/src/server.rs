@@ -17,6 +17,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
+use tracing::instrument::WithSubscriber as _;
+use tracing::subscriber::NoSubscriber;
 use zlink::connection::{ReadConnection, WriteConnection};
 use zlink::{Call, Connection, Listener as _, Reply};
 
@@ -254,11 +256,12 @@ pub async fn serve<H: Handler>(mut listener: Listener, handler: Rc<H>) -> io::Re
             }
         };
         let handler = handler.clone();
-        tokio::task::spawn_local(async move {
+        let task = async move {
             if let Err(e) = run_connection(connection, handler).await {
                 eprintln!("tetsu-bus: connection closed: {e}");
             }
-        });
+        };
+        tokio::task::spawn_local(task.with_subscriber(NoSubscriber::default()));
     }
 }
 
