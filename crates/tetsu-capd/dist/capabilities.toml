@@ -1,0 +1,7 @@
+# Installed as /usr/share/tetsu/capabilities.toml: the image defaults of
+# tetsu-capd, the lowest of three layers (image < managed < user). A class
+# named nowhere starts unset and is asked. Values: automatic, notify, ask,
+# off. See the README of tetsu-capd.
+
+[class]
+"notify.send" = "automatic"
