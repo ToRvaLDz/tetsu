@@ -1,6 +1,7 @@
 //! tetsu-capd: the grant store and `org.tetsu.cap.v1`.
 
 pub mod ask;
+pub mod auth;
 pub mod catalog;
 pub mod clock;
 pub mod decide;
