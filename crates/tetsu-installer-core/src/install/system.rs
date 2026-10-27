@@ -13,7 +13,7 @@ use tetsu_tx::tx::steps::{build_initrd, kernel_version};
 
 use crate::agent::AgentBackend;
 use crate::error::InstallError;
-use crate::keyboard::validate_timezone;
+use crate::keyboard::{validate_locale, validate_timezone};
 use crate::user::{Password, validate_full_name, validate_username};
 
 use super::config::{self, OWNER_ID};
@@ -192,6 +192,7 @@ impl Executor<'_> {
 
     fn write_locale(&mut self) -> Result<(), InstallError> {
         let l = &self.answers.locale;
+        validate_locale(&l.language).map_err(|w| invalid("language", w))?;
         validate_timezone(&l.timezone).map_err(|w| invalid("timezone", w))?;
         let etc = self.etc();
         write_file(
