@@ -48,15 +48,28 @@ impl Intents {
     /// to 1 KiB. A newer intent of the same process and method replaces
     /// the older one; expired ones are dropped, and at 64 the oldest goes.
     pub fn record(&mut self, pid: i64, method: &str, reason: &str, now: SystemTime) {
-        let _ = (pid, method, reason, now);
-        unimplemented!()
+        self.entries.retain(|e| Self::fresh(e, now));
+        self.entries
+            .retain(|e| !(e.pid == pid && e.method == method));
+        while self.entries.len() >= MAX_ENTRIES {
+            self.entries.remove(0);
+        }
+        self.entries.push(Entry {
+            pid,
+            method: method.to_owned(),
+            reason: truncate(reason, MAX_REASON),
+            at: now,
+        });
     }
 
     /// The reason for `pid` and `method` if one was recorded at most 5 s
     /// ago. Using it consumes it.
     pub fn take(&mut self, pid: i64, method: &str, now: SystemTime) -> Option<String> {
-        let _ = (pid, method, now);
-        unimplemented!()
+        let found = self
+            .entries
+            .iter()
+            .position(|e| e.pid == pid && e.method == method && Self::fresh(e, now))?;
+        Some(self.entries.remove(found).reason)
     }
 }
 
