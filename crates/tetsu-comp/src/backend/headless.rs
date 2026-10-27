@@ -10,7 +10,7 @@
 //!
 //! A line that does not parse, or names nothing, is logged and ignored.
 
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::time::Duration;
 
 use smithay::reexports::calloop::channel::{self, Event};
@@ -50,6 +50,35 @@ pub enum HotplugCommand {
         /// The connector name.
         name: String,
     },
+}
+
+/// Reads one line, without its newline, converted lossily. Never buffers
+/// more than `MAX_LINE + 1` bytes: a longer line comes back cut there (so
+/// `parse_command` refuses it) and its rest is skipped. `None` at the end.
+pub fn read_command_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
+    let cap = MAX_LINE as u64 + 1;
+    let mut buf = Vec::new();
+    reader.by_ref().take(cap).read_until(b'\n', &mut buf)?;
+    if buf.is_empty() {
+        return Ok(None);
+    }
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+    } else if buf.len() as u64 == cap {
+        // Overlong: skip up to the newline, a bounded chunk at a time.
+        loop {
+            let mut skipped = Vec::new();
+            reader.by_ref().take(cap).read_until(b'\n', &mut skipped)?;
+            if skipped.last() != Some(&b'\n') && skipped.len() as u64 == cap {
+                continue;
+            }
+            break;
+        }
+    }
+    if buf.last() == Some(&b'\r') {
+        buf.pop();
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 /// Parses one hotplug line; a trailing newline is fine.
@@ -138,15 +167,16 @@ fn listen(state: &mut State, mut counter: u32) -> Result<(), Box<dyn std::error:
     std::thread::Builder::new()
         .name("tetsu-comp-hotplug".to_owned())
         .spawn(move || {
-            let stdin = std::io::stdin();
-            for line in stdin.lock().lines() {
-                match line {
-                    Ok(line) => {
+            let mut stdin = std::io::stdin().lock();
+            loop {
+                match read_command_line(&mut stdin) {
+                    Ok(Some(line)) => {
                         if tx.send(line).is_err() {
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Ok(None) => break,
+                    Err(e) => eprintln!("tetsu-comp: hotplug: cannot read stdin: {e}"),
                 }
             }
         })?;

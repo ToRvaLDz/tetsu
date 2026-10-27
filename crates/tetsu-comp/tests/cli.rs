@@ -221,3 +221,30 @@ fn bad_hotplug_lines_are_errors() {
         assert!(parse_command(bad).is_err(), "{bad:?}");
     }
 }
+
+#[test]
+fn a_hotplug_line_is_read_lossily_and_capped() {
+    use std::io::Cursor;
+    use tetsu_comp::backend::headless::read_command_line;
+
+    let mut long = vec![b'a'; 100_000];
+    long.extend_from_slice(b"\nadd\n\xff\xfe\nremove DP-1");
+    let mut reader = Cursor::new(long);
+    // An overlong line is cut at the cap plus one, the rest is skipped.
+    let first = read_command_line(&mut reader).unwrap().unwrap();
+    assert_eq!(first.len(), 257);
+    assert!(parse_command(&first).is_err());
+    assert_eq!(
+        read_command_line(&mut reader).unwrap().as_deref(),
+        Some("add")
+    );
+    // Bytes that are not UTF-8 do not end the stream.
+    let bad = read_command_line(&mut reader).unwrap().unwrap();
+    assert!(parse_command(&bad).is_err());
+    // The last line has no newline.
+    assert_eq!(
+        read_command_line(&mut reader).unwrap().as_deref(),
+        Some("remove DP-1")
+    );
+    assert_eq!(read_command_line(&mut reader).unwrap(), None);
+}

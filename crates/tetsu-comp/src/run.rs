@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use smithay::reexports::calloop::EventLoop;
@@ -75,11 +75,16 @@ fn spawn_client(cli: &Cli, wayland: &str, bus_path: &Path) {
     let Some((program, args)) = cli.command.split_first() else {
         return;
     };
-    let spawned = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .env("WAYLAND_DISPLAY", wayland)
-        .env(COMP_SOCKET_ENV, bus_path)
-        .spawn();
+        .env(COMP_SOCKET_ENV, bus_path);
+    // The hotplug stream is the compositor's: the client must not read it.
+    if cli.headless_hotplug {
+        command.stdin(Stdio::null());
+    }
+    let spawned = command.spawn();
     if let Err(e) = spawned {
         eprintln!("tetsu-comp: cannot run {}: {e}", program.to_string_lossy());
     }
