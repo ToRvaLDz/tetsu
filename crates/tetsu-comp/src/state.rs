@@ -32,6 +32,8 @@ use smithay::wayland::shell::wlr_layer::{
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgShellState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
+use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
+use smithay::wayland::virtual_pointer::VirtualPointerManagerState;
 
 use crate::bus::{Publisher, Snapshot};
 use crate::engine::{Arrangement, Engine};
@@ -41,6 +43,7 @@ use crate::layout::{Rect, usable};
 use crate::model::{OutputInfo, WindowInfo};
 use crate::outputs::geometry::to_smithay_transform;
 use crate::settings::{RenderSettings, Settings};
+use crate::trust::{Trust, trust_of};
 
 /// Key repeat delay and rate of the seat keyboard.
 const REPEAT_DELAY_MS: i32 = 200;
@@ -77,6 +80,18 @@ pub struct Mapped {
 pub struct ClientState {
     /// Smithay's per-client compositor state.
     pub compositor_state: CompositorClientState,
+    /// How much the client is trusted; fixed when it connects.
+    pub trust: Trust,
+}
+
+impl ClientState {
+    /// The data of a client of the given trust.
+    pub fn with_trust(trust: Trust) -> Self {
+        Self {
+            compositor_state: CompositorClientState::default(),
+            trust,
+        }
+    }
 }
 
 impl ClientData for ClientState {
@@ -129,6 +144,15 @@ pub struct State {
     pub mapped: Vec<Mapped>,
     /// The bus thread, once bound.
     pub publisher: Option<Publisher>,
+    /// The bus socket, passed to the clients the compositor starts.
+    pub comp_socket: Option<std::path::PathBuf>,
+    /// The `[trust] input` commands, started once the bus is up.
+    pub trusted_input: Vec<Vec<String>>,
+    /// The virtual input globals; kept for the life of the display.
+    #[allow(dead_code)]
+    pub(crate) virtual_keyboard_state: VirtualKeyboardManagerState,
+    #[allow(dead_code)]
+    pub(crate) virtual_pointer_state: VirtualPointerManagerState,
     /// The modifier of the layout binds.
     pub mod_key: ModKey,
     /// The tty backend, once started.
@@ -151,6 +175,14 @@ impl State {
             .map_err(|e| io::Error::other(format!("keyboard: {e}")))?;
         seat.add_pointer();
         let socket_name = Self::listen(display, event_loop)?;
+        // Only helpers the compositor starts with `Trust::Input` see these.
+        let virtual_keyboard_state = VirtualKeyboardManagerState::new::<Self, _>(&dh, |client| {
+            trust_of(client) == Trust::Input
+        });
+        let virtual_pointer_state = VirtualPointerManagerState::new::<Self, _>(&dh, |client| {
+            trust_of(client) == Trust::Input
+        });
+        let trusted_input = settings.trust.input.clone();
         Ok(Self {
             start_time: Instant::now(),
             loop_handle: event_loop.handle(),
@@ -176,6 +208,10 @@ impl State {
             unmapped: Vec::new(),
             mapped: Vec::new(),
             publisher: None,
+            comp_socket: None,
+            trusted_input,
+            virtual_keyboard_state,
+            virtual_pointer_state,
             mod_key: ModKey::Super,
             tty: None,
             vt_switch: None,

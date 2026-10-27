@@ -5,6 +5,7 @@ mod dmabuf;
 mod layer_shell;
 mod shell_misc;
 mod syncobj;
+mod virtual_input;
 mod xdg_shell;
 
 pub(crate) use compositor::has_buffer;

@@ -16,6 +16,7 @@ use crate::cli::{Backend, Cli};
 use crate::settings::Settings;
 use crate::socket::{COMP_SOCKET_ENV, bus_socket_path};
 use crate::state::State;
+use crate::trust::{Trust, spawn_trusted};
 
 /// The bus publishes at most once per tick (`changed` is coalesced to it).
 const PUBLISH_TICK: Duration = Duration::from_millis(16);
@@ -43,6 +44,8 @@ pub fn run(cli: &Cli, settings: Settings) -> Result<(), Box<dyn Error>> {
         &bus_path,
         Snapshot::of(state.engine.model()),
     )?);
+    state.comp_socket = Some(bus_path.clone());
+    start_trusted_helpers(&mut state);
     state
         .loop_handle
         .insert_source(Timer::from_duration(PUBLISH_TICK), |_, (), state| {
@@ -56,6 +59,17 @@ pub fn run(cli: &Cli, settings: Settings) -> Result<(), Box<dyn Error>> {
         let _ = state.display_handle.flush_clients();
     })?;
     Ok(())
+}
+
+/// Starts the `[trust] input` helpers once, with the trust to bind the
+/// virtual input protocols. One that cannot start is logged.
+fn start_trusted_helpers(state: &mut State) {
+    let helpers = state.trusted_input.clone();
+    for argv in helpers {
+        if let Err(e) = spawn_trusted(state, &argv, Trust::Input) {
+            eprintln!("tetsu-comp: cannot start trusted helper {argv:?}: {e}");
+        }
+    }
 }
 
 /// The readiness line tests and scripts wait for.
