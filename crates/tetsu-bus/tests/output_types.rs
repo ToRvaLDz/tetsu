@@ -4,8 +4,11 @@
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use tetsu_bus::output::{ListOutputsReply, Mode, Output, OutputEvent, OutputKind, Transform};
-use tetsu_bus_contract::{Contract, check_reply, load_dir};
+use tetsu_bus::output::{
+    ConfigureOutputsParams, INVALID_CONFIGURATION, ListOutputsReply, Mode, ModeSpec, OUTPUT_NOT_FOUND,
+    OVERRIDDEN_BY_USER, Output, OutputConfig, OutputEvent, OutputKind, Transform,
+};
+use tetsu_bus_contract::{Contract, check_error, check_reply, load_dir};
 
 const INTERFACE: &str = "org.tetsu.comp.output.v1";
 
@@ -145,5 +148,60 @@ fn the_replies_pass_the_contract() {
     for event in events {
         let reply = json!({ "event": serde_json::to_value(&event).unwrap() });
         check("WatchOutputs", &reply);
+    }
+}
+
+#[test]
+fn configure_params_parse_and_absent_equals_null() {
+    let params: ConfigureOutputsParams = serde_json::from_value(json!({
+        "configs": { "out-1": {
+            "scale": 2, "transform": "rotate_90",
+            "mode": { "width": 1920, "height": 1080, "refresh_mhz": 60000 },
+            "x": 0, "y": null
+        }}
+    }))
+    .unwrap();
+    let config = &params.configs["out-1"];
+    assert_eq!(config.scale, Some(2.0));
+    assert_eq!(config.transform, Some(Transform::Rotate90));
+    assert_eq!(
+        config.mode,
+        Some(ModeSpec {
+            width: 1920,
+            height: 1080,
+            refresh_mhz: 60000
+        })
+    );
+    assert_eq!(config.x, Some(0));
+    assert_eq!(config.y, None);
+    assert_eq!(config.enabled, None);
+
+    let bare: OutputConfig = serde_json::from_value(json!({ "enabled": null })).unwrap();
+    assert_eq!(bare, OutputConfig::default());
+    let absent: OutputConfig = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(absent, bare);
+}
+
+#[test]
+fn an_unknown_transform_becomes_unknown() {
+    let config: OutputConfig = serde_json::from_value(json!({ "transform": "skewed" })).unwrap();
+    assert_eq!(config.transform, Some(Transform::Unknown));
+}
+
+#[test]
+fn the_configure_reply_and_errors_pass_the_contract() {
+    check("ConfigureOutputs", &json!({}));
+    let contract = contract();
+    let errors = [
+        (OUTPUT_NOT_FOUND, json!({ "id": "out-9" })),
+        (
+            INVALID_CONFIGURATION,
+            json!({ "id": "out-1", "reason": "scale 0 is out of range" }),
+        ),
+        (OVERRIDDEN_BY_USER, json!({ "keys": ["output.DP-1.scale"] })),
+    ];
+    for (name, params) in errors {
+        let found = check_error(&contract, name, &params);
+        assert!(found.is_empty(), "{name}: {found:?}");
     }
 }
