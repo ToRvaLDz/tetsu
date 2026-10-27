@@ -27,7 +27,8 @@ pub const USAGE: &str = "usage: tetsu-comp [--backend winit|tty|headless] [--con
               Default: 1.
   --headless-hotplug
               headless only: read hotplug commands from stdin, one per
-              line: `add [<w>x<h>]`, `add-named <name> <w>x<h>` and
+              line: `add [<w>x<h>]`, `add-named <name> <w>x<h>`,
+              `add-modes <name> <w>x<h>[,<w>x<h>...]` and
               `remove <name>`. For tests.
   -- <cmd>    run <cmd> as the first client, with WAYLAND_DISPLAY and
               TETSU_COMP_SOCKET set.";

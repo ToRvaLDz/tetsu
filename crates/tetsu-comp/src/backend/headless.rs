@@ -6,6 +6,8 @@
 //!
 //! - `add [<w>x<h>]`: a new output named `HEADLESS-<n>`, `n` counting up;
 //! - `add-named <name> <w>x<h>`: an output with that name (a replug);
+//! - `add-modes <name> <w>x<h>[,<w>x<h>...]`: an output with several
+//!   modes (at most 16), all at 60 Hz; the first is preferred and current;
 //! - `remove <name>`;
 //! - `focus-next` / `focus-prev`: the Super+J / Super+K bind, run through
 //!   the same path (the focus-to-bar latency test uses it).
@@ -17,10 +19,12 @@ use std::time::Duration;
 
 use smithay::reexports::calloop::channel::{self, Event};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use tetsu_bus::output::Mode;
 
 use crate::engine::Action as EngineAction;
 use crate::input::ModKey;
 use crate::lock::glue::View;
+use crate::model::OutputInfo;
 use crate::state::State;
 
 /// Its size in pixels.
@@ -33,6 +37,8 @@ const FRAME: Duration = Duration::from_millis(16);
 const MAX_SIDE: i32 = 16_384;
 /// The longest hotplug line read.
 const MAX_LINE: usize = 256;
+/// The most modes `add-modes` makes.
+const MAX_MODES: usize = 16;
 
 /// A hotplug command read from stdin.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +54,13 @@ pub enum HotplugCommand {
         name: String,
         /// Its size.
         size: (i32, i32),
+    },
+    /// An output with several modes; the first is preferred and current.
+    AddModes {
+        /// The connector name.
+        name: String,
+        /// The sizes of its modes.
+        sizes: Vec<(i32, i32)>,
     },
     /// Unplugs the output with this name.
     Remove {
@@ -104,6 +117,10 @@ pub fn parse_command(line: &str) -> Result<HotplugCommand, String> {
             name: (*name).to_owned(),
             size: parse_size(size)?,
         }),
+        ["add-modes", name, sizes] => Ok(HotplugCommand::AddModes {
+            name: (*name).to_owned(),
+            sizes: parse_sizes(sizes)?,
+        }),
         ["remove", name] => Ok(HotplugCommand::Remove {
             name: (*name).to_owned(),
         }),
@@ -112,6 +129,18 @@ pub fn parse_command(line: &str) -> Result<HotplugCommand, String> {
         [] => Err("empty line".to_owned()),
         _ => Err(format!("cannot parse {:?}", line.trim_end())),
     }
+}
+
+/// `<w>x<h>[,<w>x<h>...]`, at most 16 sizes.
+fn parse_sizes(text: &str) -> Result<Vec<(i32, i32)>, String> {
+    let sizes = text
+        .split(',')
+        .map(parse_size)
+        .collect::<Result<Vec<_>, _>>()?;
+    if sizes.len() > MAX_MODES {
+        return Err(format!("more than {MAX_MODES} modes"));
+    }
+    Ok(sizes)
 }
 
 /// `<w>x<h>`, each side in `1..=16384`, digits only.
@@ -136,7 +165,7 @@ fn parse_size(text: &str) -> Result<(i32, i32), String> {
 pub fn init(state: &mut State, count: u8, hotplug: bool) -> Result<(), Box<dyn std::error::Error>> {
     state.mod_key = ModKey::Super;
     for n in 1..=count {
-        add_output(state, &output_name(n), OUTPUT_SIZE)?;
+        add_output(state, &output_name(n), &[OUTPUT_SIZE])?;
     }
     if hotplug {
         listen(state, u32::from(count))?;
@@ -154,9 +183,20 @@ pub fn output_name(n: u8) -> String {
 fn add_output(
     state: &mut State,
     name: &str,
-    size: (i32, i32),
+    sizes: &[(i32, i32)],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let output = state.add_virtual_output(name, size.into(), REFRESH_MHZ);
+    let mut info = OutputInfo::named(name);
+    info.modes = sizes
+        .iter()
+        .enumerate()
+        .map(|(at, (w, h))| Mode {
+            width: i64::from(*w),
+            height: i64::from(*h),
+            refresh_mhz: i64::from(REFRESH_MHZ),
+            preferred: at == 0,
+        })
+        .collect();
+    let output = state.add_output(info);
     state
         .loop_handle
         .insert_source(Timer::from_duration(FRAME), move |_, (), state| {
@@ -218,14 +258,21 @@ fn run_command(state: &mut State, command: HotplugCommand, counter: &mut u32) {
                     break name;
                 }
             };
-            add_output(state, &name, size.unwrap_or(OUTPUT_SIZE))
+            add_output(state, &name, &[size.unwrap_or(OUTPUT_SIZE)])
         }
         HotplugCommand::AddNamed { name, size } => {
             if exists(state, &name) {
                 eprintln!("tetsu-comp: hotplug: output {name} exists already");
                 return;
             }
-            add_output(state, &name, size)
+            add_output(state, &name, &[size])
+        }
+        HotplugCommand::AddModes { name, sizes } => {
+            if exists(state, &name) {
+                eprintln!("tetsu-comp: hotplug: output {name} exists already");
+                return;
+            }
+            add_output(state, &name, &sizes)
         }
         HotplugCommand::Remove { name } => {
             let found = state
