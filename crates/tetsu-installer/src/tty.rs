@@ -26,6 +26,15 @@ impl EchoOff {
     /// Turn echo off on the terminal `fd`; `None` when it is not one. The
     /// guard keeps its own copy of the descriptor.
     pub fn on(fd: BorrowedFd<'_>) -> Option<Self> {
+        Self::on_with(fd, || fd.try_clone_to_owned())
+    }
+
+    /// [`EchoOff::on`] with the descriptor copy injected, so a test can make
+    /// it fail.
+    fn on_with(
+        fd: BorrowedFd<'_>,
+        dup: impl FnOnce() -> std::io::Result<OwnedFd>,
+    ) -> Option<Self> {
         let saved = tcgetattr(fd).ok()?;
         let mut quiet = saved.clone();
         quiet.local_modes.remove(LocalModes::ECHO);
@@ -33,7 +42,7 @@ impl EchoOff {
         // next line starts clean.
         quiet.local_modes.insert(LocalModes::ECHONL);
         tcsetattr(fd, OptionalActions::Flush, &quiet).ok()?;
-        let fd = fd.try_clone_to_owned().ok()?;
+        let fd = dup().ok()?;
         Some(Self { fd, saved })
     }
 }
@@ -133,6 +142,15 @@ mod tests {
         assert!(!during.contains(LocalModes::ECHO));
         assert!(during.contains(LocalModes::ECHONL));
         drop(guard);
+        assert_eq!(tcgetattr(&pty.slave).unwrap().local_modes, before);
+    }
+
+    #[test]
+    fn echo_stays_on_when_the_descriptor_copy_fails() {
+        let pty = testpty::open();
+        let before = tcgetattr(&pty.slave).unwrap().local_modes;
+        let failing = || Err(std::io::Error::other("EMFILE"));
+        assert!(EchoOff::on_with(pty.slave.as_fd(), failing).is_none());
         assert_eq!(tcgetattr(&pty.slave).unwrap().local_modes, before);
     }
 
