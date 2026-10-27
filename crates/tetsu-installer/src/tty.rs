@@ -31,10 +31,7 @@ impl EchoOff {
 
     /// [`EchoOff::on`] with the descriptor copy injected, so a test can make
     /// it fail.
-    fn on_with(
-        fd: BorrowedFd<'_>,
-        dup: impl FnOnce() -> std::io::Result<OwnedFd>,
-    ) -> Option<Self> {
+    fn on_with(fd: BorrowedFd<'_>, dup: impl FnOnce() -> std::io::Result<OwnedFd>) -> Option<Self> {
         let saved = tcgetattr(fd).ok()?;
         // Copy first: nothing may fail once echo is off, or it stays off.
         let owned = dup().ok()?;
