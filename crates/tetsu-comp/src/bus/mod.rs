@@ -15,8 +15,8 @@ use std::sync::mpsc as std_mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use tetsu_bus::config::ConfigEvent;
 use tetsu_bus::access::{EtcFiles, Groups};
+use tetsu_bus::config::ConfigEvent;
 use tetsu_bus::gate::{Authority, GateConfig, Gated, RootOnly};
 use tetsu_bus::server;
 use tokio::sync::mpsc;
