@@ -149,14 +149,27 @@ fn light_connector(
         eprintln!("tetsu-comp: no free CRTC for {info}");
         return Ok(None);
     };
-    let drm_mode = *info
+    let preferred = *info
         .modes()
         .iter()
         .find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
         .unwrap_or(&info.modes()[0]);
     let name = connector_name(&info);
-    let described = describe(device, handle, &info, &name, drm_mode);
+    // A dark output stays listed and stays dark: not lit again here.
+    if state.outputs.iter().any(|o| o.output.name() == name) {
+        return Ok(None);
+    }
+    let described = describe(device, handle, &info, &name, preferred);
     let output = state.add_output(described);
+    if !state
+        .outputs
+        .iter()
+        .any(|o| o.output == output && o.enabled)
+    {
+        println!("tetsu-comp: output {name} is disabled by the config");
+        return Ok(None);
+    }
+    let drm_mode = configured_mode(&info, &output).unwrap_or(preferred);
     match light_head(tty, index, handle, crtc, drm_mode, &output) {
         Ok(()) => {
             let node = tty.devices[index].node;
@@ -170,8 +183,21 @@ fn light_connector(
     }
 }
 
+/// The connector's mode that the output is set to (the config's choice
+/// when the connector offers it).
+pub(super) fn configured_mode(
+    info: &connector::Info,
+    output: &smithay::output::Output,
+) -> Option<smithay::reexports::drm::control::Mode> {
+    let wanted = output.current_mode()?;
+    info.modes()
+        .iter()
+        .copied()
+        .find(|m| Mode::from(*m) == wanted)
+}
+
 /// The part of lighting that can fail once the output exists.
-fn light_head(
+pub(super) fn light_head(
     tty: &mut Tty,
     index: usize,
     handle: connector::Handle,
@@ -318,6 +344,7 @@ impl State {
             // Without the render device no head can be drawn: drop them
             // all, or each would retry and log every frame.
             drop_heads(state, tty, |h| lost_render || h.node == device.node);
+            forget_dark(state, tty);
             state.loop_handle.remove(device.events);
             if let Some(render) = device.render_node {
                 tty.gpus.as_mut().remove_node(&render);
@@ -327,7 +354,7 @@ impl State {
     }
 
     /// Runs `f` with the tty backend taken out of the state, then puts it back.
-    fn with_tty(&mut self, f: impl FnOnce(&mut State, &mut Tty)) {
+    pub(super) fn with_tty(&mut self, f: impl FnOnce(&mut State, &mut Tty)) {
         let Some(mut tty) = self.tty.take() else {
             return;
         };
@@ -352,6 +379,37 @@ fn drop_heads(state: &mut State, tty: &mut Tty, gone: impl Fn(&Head) -> bool) {
     }
 }
 
+/// Whether some card has a connected connector called `name`.
+pub(super) fn connected_named(tty: &Tty, name: &str) -> bool {
+    tty.devices.iter().any(|d| {
+        let device = d.manager.device();
+        let Ok(resources) = device.resource_handles() else {
+            return false;
+        };
+        resources.connectors().iter().any(|handle| {
+            device.get_connector(*handle, true).is_ok_and(|info| {
+                info.state() == connector::State::Connected
+                    && !info.modes().is_empty()
+                    && connector_name(&info) == name
+            })
+        })
+    })
+}
+
+/// A dark output has no head: it goes when its connector is unplugged.
+fn forget_dark(state: &mut State, tty: &Tty) {
+    let gone: Vec<_> = state
+        .outputs
+        .iter()
+        .filter(|o| !o.enabled && !connected_named(tty, &o.output.name()))
+        .map(|o| o.output.clone())
+        .collect();
+    for output in gone {
+        println!("tetsu-comp: disabled output {} disconnected", output.name());
+        state.remove_output(&output);
+    }
+}
+
 /// Matches a card's heads with its connectors: unplugged ones go, new ones
 /// light and get their first frame.
 fn rescan(state: &mut State, tty: &mut Tty, index: usize) {
@@ -371,6 +429,7 @@ fn rescan(state: &mut State, tty: &mut Tty, index: usize) {
     drop_heads(state, tty, |h| {
         h.node == node && unplugged.contains(&h.connector)
     });
+    forget_dark(state, tty);
     match light_device(state, tty, index) {
         Ok(lit) => {
             for crtc in lit {
@@ -384,7 +443,7 @@ fn rescan(state: &mut State, tty: &mut Tty, index: usize) {
 }
 
 /// The CRTC a connector already drives, else any free one it can use.
-fn free_crtc(
+pub(super) fn free_crtc(
     device: &DrmDevice,
     resources: &smithay::reexports::drm::control::ResourceHandles,
     info: &connector::Info,
