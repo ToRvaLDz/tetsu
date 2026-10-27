@@ -439,3 +439,16 @@ fn switching_to_the_focused_workspace_again_emits_nothing() {
     assert_eq!(events.window, []);
     assert_eq!(events.workspace, []);
 }
+
+#[test]
+fn a_placement_set_before_the_first_flush_is_in_the_opened_event() {
+    let (mut model, _) = started();
+    let id = model.open(info("a", "one"));
+    model.set_placement(&id, Placement::Floating);
+    let events = check_all(&mut model);
+    assert_eq!(kinds(&events.window), [WindowKind::Opened]);
+    assert_eq!(
+        events.window[0].window.as_ref().unwrap().placement,
+        Placement::Floating
+    );
+}
