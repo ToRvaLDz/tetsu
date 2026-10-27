@@ -281,6 +281,7 @@ fn the_failed_add_is_in_the_journal_too() {
 fn a_wrong_key_on_an_existing_vault_exits_with_an_unlock_failure() {
     let scratch = Scratch::new();
     scratch.set_key(KEY);
+    let journal = Journal::start(&scratch.journal());
     let first = scratch.start();
     let socket = scratch.socket();
     wait_for("the socket", || socket.exists());
@@ -289,26 +290,22 @@ fn a_wrong_key_on_an_existing_vault_exits_with_an_unlock_failure() {
         client.add(&add_params("demo")).await.unwrap();
     });
     terminate(first);
+    let before = journal.texts().len();
 
     scratch.set_key(OTHER_KEY);
-    let journal = Journal::start(&scratch.journal());
-    let second = scratch.start();
-    let out = {
-        let mut second = second;
-        wait_for("the daemon to give up", || {
-            second.try_wait().unwrap().is_some()
-        });
-        second.wait_with_output().unwrap()
-    };
+    let mut second = scratch.start();
+    wait_for("the daemon to give up", || {
+        second.try_wait().unwrap().is_some()
+    });
+    let out = second.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(!scratch.socket().exists());
     let datagrams = journal.finish();
-    assert_eq!(datagrams.len(), 1);
-    assert!(contains(
-        &datagrams[0],
-        &format!("MESSAGE_ID={}\n", Action::Unlock.message_id())
-    ));
-    assert!(contains(&datagrams[0], "TETSU_OUTCOME=failed\n"));
+    let after = &datagrams[before..];
+    assert_eq!(after.len(), 1);
+    let unlock = format!("MESSAGE_ID={}\n", Action::Unlock.message_id());
+    assert!(contains(&after[0], &unlock));
+    assert!(contains(&after[0], "TETSU_OUTCOME=failed\n"));
     for stream in [&out.stdout, &out.stderr] {
         assert!(!contains(stream, SENTINEL));
         assert!(!contains(stream, OTHER_KEY));
