@@ -83,7 +83,8 @@ pub fn select(candidates: &[Candidate], override_id: Option<Option<u64>>) -> Sel
         Some(next) if best.primary != next.primary => "primary gpu",
         Some(_) => "lowest id",
     };
-    let reason = if override_id == Some(None) {
+    // An override that names nothing present: say so instead of why auto won.
+    let reason = if override_id.is_some() {
         "override not found"
     } else {
         reason
