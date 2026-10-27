@@ -1,11 +1,14 @@
 //! `tetsu comp`: talk to the compositor's bus.
 
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use tetsu_bus::cap::ClientError;
+use tetsu_bus::config;
+
+use self::socket::SocketEnv;
 
 pub mod render;
 pub mod socket;
@@ -50,38 +53,123 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One line telling why the call failed, without the `tetsu: ` prefix.
-pub fn describe(_error: &ClientError, _socket: &Path) -> String {
-    todo!()
+pub fn describe(error: &ClientError, socket: &Path) -> String {
+    match error {
+        ClientError::Io(e) => match e.kind() {
+            ErrorKind::NotFound | ErrorKind::ConnectionRefused => format!(
+                "tetsu-comp is not running (no listener at {})",
+                socket.display()
+            ),
+            ErrorKind::PermissionDenied => format!(
+                "permission denied on {}: the socket belongs to another user or session",
+                socket.display()
+            ),
+            _ => format!("cannot talk to tetsu-comp at {}: {e}", socket.display()),
+        },
+        ClientError::Remote { error, .. } => match error.as_str() {
+            config::PERMISSION_DENIED => {
+                "not allowed: tetsu-comp refused to show its config to this process".to_owned()
+            }
+            "org.varlink.service.MethodNotFound" | "org.varlink.service.InterfaceNotFound" => {
+                format!(
+                    "this tetsu-comp does not serve {} (too old?)",
+                    config::INTERFACE
+                )
+            }
+            other => other.to_owned(),
+        },
+    }
+}
+
+/// "5 s", or "200 ms" when it is not a whole number of seconds.
+fn show(timeout: Duration) -> String {
+    if timeout.subsec_nanos() == 0 {
+        format!("{} s", timeout.as_secs())
+    } else {
+        format!("{} ms", timeout.as_millis())
+    }
 }
 
 /// Runs a parsed command against the compositor at `socket`. Returns the
 /// exit status: 0 shown, 1 failed.
 pub async fn run(
-    _command: Command,
-    _socket: &Path,
-    _timeout: Duration,
-    _out: &mut dyn Write,
-    _err: &mut dyn Write,
+    command: Command,
+    socket: &Path,
+    timeout: Duration,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
 ) -> u8 {
-    todo!()
+    let json = match command {
+        Command::Help => return write_out(out, err, &format!("{USAGE}\n")),
+        Command::Config { json } => json,
+    };
+    let reply = match tokio::time::timeout(timeout, config::get_config(socket)).await {
+        Ok(Ok(reply)) => reply,
+        Ok(Err(e)) => return fail(err, &describe(&e, socket)),
+        Err(_) => {
+            let why = format!("tetsu-comp did not answer within {}", show(timeout));
+            return fail(err, &why);
+        }
+    };
+    let text = if json {
+        render::json(&reply)
+    } else {
+        render::table(&reply)
+    };
+    write_out(out, err, &text)
+}
+
+fn write_out(out: &mut dyn Write, err: &mut dyn Write, text: &str) -> u8 {
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Ok(()) => 0,
+        Err(e) => fail(err, &format!("cannot write the output: {e}")),
+    }
+}
+
+fn fail(err: &mut dyn Write, why: &str) -> u8 {
+    // Nothing more can be done if stderr itself is gone.
+    let _ = writeln!(err, "tetsu: {why}");
+    1
 }
 
 /// Entry point of `tetsu comp ...`: exit status 0 shown, 1 failed, 2 usage.
 pub fn main(args: Vec<String>) -> ExitCode {
-    match parse(&args) {
-        Ok(Command::Help) => {
-            println!("{USAGE}");
-            ExitCode::SUCCESS
-        }
-        Ok(Command::Config { .. }) => {
-            eprintln!("tetsu: comp config is not implemented yet");
-            ExitCode::FAILURE
-        }
+    let command = match parse(&args) {
+        Ok(command) => command,
         Err(message) => {
             eprintln!("{message}");
-            ExitCode::from(2)
+            return ExitCode::from(2);
         }
+    };
+    if command == Command::Help {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
     }
+    let socket = match socket::discover(&SocketEnv::from_process()) {
+        Ok(socket) => socket,
+        Err(why) => {
+            eprintln!("tetsu: {why}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("tetsu: cannot start the runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let status = runtime.block_on(run(
+        command,
+        &socket,
+        CALL_TIMEOUT,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    ));
+    ExitCode::from(status)
 }
 
 #[cfg(test)]

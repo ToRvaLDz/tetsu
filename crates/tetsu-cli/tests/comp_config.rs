@@ -234,7 +234,7 @@ fn tetsu(runtime_dir: &Path) -> Process {
 #[test]
 fn the_binary_shows_the_config_found_through_the_environment() {
     let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("fake-comp");
+    let socket = dir.path().join("run").join("comp");
     serve_on_thread(socket.clone());
     let out = tetsu(dir.path())
         .args(["comp", "config"])
