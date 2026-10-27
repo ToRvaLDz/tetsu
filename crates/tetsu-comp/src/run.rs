@@ -10,7 +10,7 @@ use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::Display;
 
-use crate::backend::headless;
+use crate::backend::{headless, winit};
 use crate::bus::{Publisher, Snapshot};
 use crate::cli::{Backend, Cli};
 use crate::socket::{COMP_SOCKET_ENV, bus_socket_path};
@@ -28,7 +28,8 @@ pub fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
 
     match cli.backend {
         Backend::Headless => headless::init(&mut state)?,
-        Backend::Winit | Backend::Tty => {
+        Backend::Winit => winit::init(&mut state)?,
+        Backend::Tty => {
             return Err(format!("the {:?} backend is not available yet", cli.backend).into());
         }
     }
