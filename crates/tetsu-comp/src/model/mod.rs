@@ -10,6 +10,7 @@ mod windows;
 mod workspaces;
 
 use tetsu_bus::output::{ListOutputsReply, Mode, OutputEvent};
+use tetsu_bus::session::SessionEvent;
 use tetsu_bus::window::{ListWindowsReply, Placement, WindowEvent};
 use tetsu_bus::workspace::{ListWorkspacesReply, WorkspaceEvent};
 
@@ -29,12 +30,17 @@ pub struct Events {
     pub workspace: Vec<WorkspaceEvent>,
     /// For `WatchOutputs`.
     pub output: Vec<OutputEvent>,
+    /// For `WatchSession`; the lock machine's, not the model's.
+    pub session: Vec<SessionEvent>,
 }
 
 impl Events {
     /// Nothing changed.
     pub fn is_empty(&self) -> bool {
-        self.window.is_empty() && self.workspace.is_empty() && self.output.is_empty()
+        self.window.is_empty()
+            && self.workspace.is_empty()
+            && self.output.is_empty()
+            && self.session.is_empty()
     }
 }
 
@@ -181,6 +187,7 @@ impl Model {
             window: self.windows.flush(),
             workspace: self.workspaces.flush(),
             output: self.outputs.flush(),
+            session: Vec::new(),
         }
     }
 

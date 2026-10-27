@@ -13,11 +13,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tetsu_bus::output::ListOutputsReply;
+use tetsu_bus::session::{GetSessionReply, SessionEvent};
 use tetsu_bus::window::{ListWindowsReply, Placement, WindowEvent};
 use tetsu_bus::workspace::ListWorkspacesReply;
 use tetsu_bus_contract::{Contract, check_error};
 use tetsu_comp::bus::{Mirror, Publisher, Snapshot, WATCH_QUEUE};
-use tetsu_comp::model::{Model, WindowInfo, WindowUpdate};
+use tetsu_comp::model::{Events, Model, WindowInfo, WindowUpdate};
 use tetsu_comp::socket::{COMP_SOCKET_ENV, bus_socket_path};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -537,6 +538,150 @@ fn a_restarted_bus_thread_serves_the_outputs_of_its_snapshot() {
                     serde_json::from_value(reply["parameters"].clone()).unwrap();
                 assert_eq!(list, model.outputs_snapshot());
                 assert_eq!(list.outputs.len(), 2);
+                break;
+            }
+        }
+        assert!(
+            start.elapsed() < TIMEOUT,
+            "the bus thread was not restarted"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+const GET_SESSION: &str = "org.tetsu.comp.session.v1.GetSession";
+const WATCH_SESSION: &str = "org.tetsu.comp.session.v1.WatchSession";
+
+fn session_events(events: Vec<SessionEvent>) -> Events {
+    Events {
+        session: events,
+        ..Events::default()
+    }
+}
+
+fn get_session(client: &mut Client, contract: &Contract) -> GetSessionReply {
+    serde_json::from_value(client.call(contract, GET_SESSION)).unwrap()
+}
+
+#[test]
+fn get_session_follows_the_snapshot_and_the_deltas() {
+    let contract = common::contract();
+    let dir = tempfile::tempdir().unwrap();
+    let (model, _) = model_with_window();
+    let publisher = Publisher::spawn(&socket(&dir), Snapshot::of(&model)).unwrap();
+    let mut client = Client::connect(&socket(&dir));
+    assert_eq!(
+        get_session(&mut client, &contract),
+        GetSessionReply { locked: false }
+    );
+
+    publisher.publish(session_events(vec![SessionEvent::locked()]));
+    eventually("the lock in GetSession", || {
+        get_session(&mut client, &contract).locked
+    });
+    publisher.publish(session_events(vec![SessionEvent::unlocked()]));
+    eventually("the unlock in GetSession", || {
+        !get_session(&mut client, &contract).locked
+    });
+}
+
+#[test]
+fn watch_session_sends_initial_then_locked_and_unlocked_in_order() {
+    let contract = common::contract();
+    let dir = tempfile::tempdir().unwrap();
+    let (model, _) = model_with_window();
+    let publisher = Publisher::spawn(&socket(&dir), Snapshot::of(&model)).unwrap();
+
+    let mut watch = Client::connect(&socket(&dir));
+    watch.send(WATCH_SESSION, true);
+    let initial = watch.event(&contract, WATCH_SESSION);
+    assert_eq!(
+        serde_json::from_value::<SessionEvent>(initial).unwrap(),
+        SessionEvent::initial(false)
+    );
+
+    publisher.publish(session_events(vec![
+        SessionEvent::locked(),
+        SessionEvent::unlocked(),
+    ]));
+    for expected in [SessionEvent::locked(), SessionEvent::unlocked()] {
+        let event = watch.event(&contract, WATCH_SESSION);
+        assert_eq!(
+            serde_json::from_value::<SessionEvent>(event).unwrap(),
+            expected
+        );
+    }
+
+    // A watcher that joins while locked starts from `initial(true)`.
+    publisher.publish(session_events(vec![SessionEvent::locked()]));
+    watch.event(&contract, WATCH_SESSION);
+    let mut late = Client::connect(&socket(&dir));
+    late.send(WATCH_SESSION, true);
+    let initial = late.event(&contract, WATCH_SESSION);
+    assert_eq!(
+        serde_json::from_value::<SessionEvent>(initial).unwrap(),
+        SessionEvent::initial(true)
+    );
+}
+
+#[test]
+fn watch_session_without_more_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (model, _) = model_with_window();
+    let _publisher = Publisher::spawn(&socket(&dir), Snapshot::of(&model)).unwrap();
+    let mut client = Client::connect(&socket(&dir));
+    client.send(WATCH_SESSION, false);
+    assert_eq!(client.recv()["error"], "org.varlink.service.ExpectedMore");
+}
+
+#[test]
+fn the_service_lists_and_describes_session_v1() {
+    let dir = tempfile::tempdir().unwrap();
+    let (model, _) = model_with_window();
+    let _publisher = Publisher::spawn(&socket(&dir), Snapshot::of(&model)).unwrap();
+    let mut client = Client::connect(&socket(&dir));
+    client.send("org.varlink.service.GetInfo", false);
+    let info = client.recv();
+    assert!(
+        info["parameters"]["interfaces"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("org.tetsu.comp.session.v1"))
+    );
+    let mut call = json!({
+        "method": "org.varlink.service.GetInterfaceDescription",
+        "parameters": { "interface": "org.tetsu.comp.session.v1" },
+    })
+    .to_string()
+    .into_bytes();
+    call.push(0);
+    client.stream.write_all(&call).unwrap();
+    assert_eq!(
+        client.recv()["parameters"]["description"],
+        tetsu_bus::session::IDL
+    );
+}
+
+#[test]
+fn a_restarted_bus_thread_serves_the_lock_of_its_snapshot() {
+    let contract = common::contract();
+    let dir = tempfile::tempdir().unwrap();
+    let (model, _) = model_with_window();
+    let mut publisher = Publisher::spawn(&socket(&dir), Snapshot::of(&model)).unwrap();
+    publisher.crash_for_test();
+    let start = Instant::now();
+    loop {
+        publisher.supervise(|| Snapshot::of(&model).with_locked(true));
+        if let Ok(stream) = UnixStream::connect(socket(&dir)) {
+            let mut client = Client {
+                stream,
+                buffer: Vec::new(),
+            };
+            client.stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+            client.send(GET_SESSION, false);
+            if let Some(reply) = client.try_recv() {
+                common::check(&contract, GET_SESSION, &reply["parameters"]);
+                assert_eq!(reply["parameters"]["locked"], true);
                 break;
             }
         }

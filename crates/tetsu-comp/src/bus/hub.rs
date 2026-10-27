@@ -25,6 +25,8 @@ pub struct Snapshot {
     pub workspaces: ListWorkspacesReply,
     /// For `ListOutputs`.
     pub outputs: ListOutputsReply,
+    /// For `GetSession`.
+    pub locked: bool,
 }
 
 impl Snapshot {
@@ -34,7 +36,14 @@ impl Snapshot {
             windows: model.windows_snapshot(),
             workspaces: model.workspaces_snapshot(),
             outputs: model.outputs_snapshot(),
+            locked: false,
         }
+    }
+
+    /// The same state with the session lock state.
+    #[must_use]
+    pub fn with_locked(self, locked: bool) -> Self {
+        Self { locked, ..self }
     }
 }
 
