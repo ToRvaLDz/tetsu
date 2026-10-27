@@ -1,5 +1,5 @@
-//! The settings: an optional `--config <file>` TOML with `[layout]` and
-//! `[render]` and `[[window_rule]]`. Without a file the defaults apply. The layering of
+//! The settings: an optional `--config <file>` TOML with `[layout]`,
+//! `[render]`, `[lock]`, `[trust]` and `[[window_rule]]`. Without a file the defaults apply. The layering of
 //! default, managed and user files, live reload and config.v1 are #73's;
 //! this schema is the user-file schema it builds on.
 
@@ -135,6 +135,10 @@ pub enum SettingsError {
     BadRenderDevice(String),
     /// `render.explicit_sync` is none of `auto`, `on`, `off`.
     UnknownSyncMode(String),
+    /// `lock.command` starts with a blank program.
+    BlankLockCommand,
+    /// `trust.input[n]` is empty or starts with a blank program.
+    BadTrustCommand(usize),
 }
 
 impl fmt::Display for SettingsError {
@@ -174,6 +178,12 @@ impl fmt::Display for SettingsError {
                 f,
                 "render.explicit_sync: unknown mode {name:?} (auto, on or off)"
             ),
+            Self::BlankLockCommand => {
+                write!(f, "lock.command: the program is blank (use [] for none)")
+            }
+            Self::BadTrustCommand(at) => {
+                write!(f, "trust.input[{at}]: needs a command with a program name")
+            }
         }
     }
 }
@@ -188,7 +198,23 @@ struct RawFile {
     #[serde(default)]
     render: RawRender,
     #[serde(default)]
+    lock: RawLock,
+    #[serde(default)]
+    trust: RawTrust,
+    #[serde(default)]
     window_rule: Vec<RawRule>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawLock {
+    command: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawTrust {
+    input: Option<Vec<Vec<String>>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -298,6 +324,29 @@ fn render(raw: RawRender) -> Result<RenderSettings, SettingsError> {
     })
 }
 
+fn lock(raw: RawLock) -> Result<LockSettings, SettingsError> {
+    let command = raw
+        .command
+        .unwrap_or_else(|| LockSettings::default().command);
+    if command
+        .first()
+        .is_some_and(|program| program.trim().is_empty())
+    {
+        return Err(SettingsError::BlankLockCommand);
+    }
+    Ok(LockSettings { command })
+}
+
+fn trust(raw: RawTrust) -> Result<TrustSettings, SettingsError> {
+    let input = raw.input.unwrap_or_default();
+    for (at, argv) in input.iter().enumerate() {
+        if argv.first().is_none_or(|program| program.trim().is_empty()) {
+            return Err(SettingsError::BadTrustCommand(at));
+        }
+    }
+    Ok(TrustSettings { input })
+}
+
 /// Parses the text of a config file.
 pub fn parse(text: &str) -> Result<Settings, SettingsError> {
     let raw: RawFile = toml::from_str(text).map_err(|e| SettingsError::Toml(e.to_string()))?;
@@ -328,8 +377,8 @@ pub fn parse(text: &str) -> Result<Settings, SettingsError> {
         master_ratio,
         rules,
         render: render(raw.render)?,
-        lock: defaults.lock,
-        trust: defaults.trust,
+        lock: lock(raw.lock)?,
+        trust: trust(raw.trust)?,
     })
 }
 
