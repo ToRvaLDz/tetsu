@@ -18,7 +18,7 @@ fn current_idl_loads() {
 #[test]
 fn baseline_loads() {
     let contract = load_dir(&idl_dir().join("baseline")).expect("baseline loads");
-    assert_eq!(contract.interfaces.len(), 10);
+    assert_eq!(contract.interfaces.len(), 11);
 }
 
 #[cfg(unix)]
