@@ -7,4 +7,5 @@
 //! `fcbc971cf49a987b1e8d5ff1d64da6b1f61a1787` (GPL-3.0-or-later, like this
 //! crate).
 
+pub mod assign;
 pub mod select;
