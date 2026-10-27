@@ -263,7 +263,7 @@ impl From<io::Error> for ClientError {
 
 #[derive(Debug, Serialize)]
 struct CallBody<P> {
-    method: &'static str,
+    method: String,
     parameters: P,
 }
 
@@ -330,6 +330,7 @@ impl Client {
         method: &'static str,
         parameters: P,
     ) -> Result<Value, ClientError> {
+        let method = format!("{INTERFACE}.{method}");
         let call = Call::new(CallBody { method, parameters });
         let sent = self
             .connection

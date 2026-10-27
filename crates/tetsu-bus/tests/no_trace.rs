@@ -7,6 +7,7 @@ use std::sync::{Mutex, Once};
 
 use serde_json::json;
 use tetsu_bus::peer::Peer;
+use tetsu_bus::secrets::{AddParams, Client, SecretKind, Sensitive};
 use tetsu_bus::server::{self, Handler, Request, Response};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -119,6 +120,56 @@ fn the_server_traces_no_message_body() {
         events.iter().any(|e| e.contains("control event")),
         "the capturing subscriber works"
     );
+    let leaked: Vec<_> = events.iter().filter(|e| e.contains(SENTINEL)).collect();
+    assert!(leaked.is_empty(), "a message body was traced: {leaked:#?}");
+}
+
+struct Secrets;
+
+impl Handler for Secrets {
+    async fn call(&self, _: Rc<Peer>, request: Request) -> Response {
+        match request.method.as_str() {
+            "org.tetsu.secrets.v1.Add" => Response::Reply(json!({
+                "secret": {
+                    "id": request.parameters["id"],
+                    "kind": "bearer",
+                    "host": "api.example.com",
+                    "allowed_tools": [],
+                    "created_at": "2026-01-15T09:30:00.000Z",
+                    "use_count": 0
+                }
+            })),
+            other => Response::method_not_found(other),
+        }
+    }
+}
+
+#[test]
+fn the_secrets_client_traces_no_message_body() {
+    install();
+    tracing::trace!("control event");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tetsu").join("org.tetsu.secrets.v1");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    LocalSet::new().block_on(&runtime, async {
+        let listener = server::bind(&path).unwrap();
+        tokio::task::spawn_local(server::serve(listener, Rc::new(Secrets)));
+        let mut client = Client::connect(&path).await.unwrap();
+        let params = AddParams {
+            id: "demo".into(),
+            kind: SecretKind::Bearer,
+            header_name: None,
+            host: "api.example.com".into(),
+            allowed_tools: None,
+            value: Sensitive::new(SENTINEL),
+        };
+        let info = client.add(&params).await.unwrap();
+        assert_eq!(info.id, "demo");
+    });
+    let events = captured();
     let leaked: Vec<_> = events.iter().filter(|e| e.contains(SENTINEL)).collect();
     assert!(leaked.is_empty(), "a message body was traced: {leaked:#?}");
 }
