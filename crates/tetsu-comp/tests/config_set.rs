@@ -215,3 +215,26 @@ fn a_state_write_failure_reply_passes_the_contract() {
     assert!(found.is_empty(), "{found:?}");
     assert_eq!(reply.error, "org.tetsu.comp.config.v1.StateWriteFailed");
 }
+
+#[test]
+fn an_output_key_is_not_writable_through_set_or_remove() {
+    let method = Some("org.tetsu.comp.output.v1.ConfigureOutputs".to_owned());
+    let err = run("", "", &[("output.DP-1.scale", json!(1.5))], &[]).unwrap_err();
+    assert_eq!(
+        err,
+        SetError::KeyNotWritable {
+            key: "output.DP-1.scale".into(),
+            method: method.clone()
+        }
+    );
+    wire(&err);
+    let err = run("", "", &[], &["output.DP-1.scale"]).unwrap_err();
+    assert_eq!(
+        err,
+        SetError::KeyNotWritable {
+            key: "output.DP-1.scale".into(),
+            method
+        }
+    );
+    wire(&err);
+}

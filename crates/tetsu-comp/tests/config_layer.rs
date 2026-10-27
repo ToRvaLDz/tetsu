@@ -164,3 +164,97 @@ fn render_and_command_keys_are_validated() {
     );
     assert!(parsed.values.contains_key("trust.input"));
 }
+
+const CONFIGURE: &str = "org.tetsu.comp.output.v1.ConfigureOutputs";
+
+#[test]
+fn an_output_table_validates_into_per_field_keys() {
+    let parsed = parse(
+        "[output.DP-1]\nenabled = true\nscale = 1.25\ntransform = \"rotate_90\"\n\
+         mode = { width = 3840, height = 2160, refresh_mhz = 60000 }\n\
+         position = { x = -1920, y = 0 }\n",
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let keys: Vec<_> = parsed.values.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        [
+            "output.DP-1.enabled",
+            "output.DP-1.mode",
+            "output.DP-1.position",
+            "output.DP-1.scale",
+            "output.DP-1.transform",
+        ]
+    );
+    assert_eq!(parsed.values["output.DP-1.scale"], toml::Value::Float(1.25));
+}
+
+#[test]
+fn a_bad_output_entry_gives_one_diagnostic_and_keeps_the_rest() {
+    let cases = [
+        (
+            "[output.DP-1]\nbogus = 1\nscale = 2.0\n",
+            "output.DP-1.bogus",
+        ),
+        ("[output.\"DP.1\"]\nscale = 2.0\n", "output.DP.1"),
+        ("[output.\"\"]\nscale = 2.0\n", "output."),
+        (
+            "[output.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]\nscale = 2.0\n",
+            "output.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        ("[output.DP-1]\nscale = 0\n", "output.DP-1.scale"),
+        (
+            "[output.DP-1]\ntransform = \"sideways\"\n",
+            "output.DP-1.transform",
+        ),
+        (
+            "[output.DP-1]\nmode = { width = 1920, height = 1080 }\n",
+            "output.DP-1.mode",
+        ),
+    ];
+    for (text, key) in cases {
+        let parsed = parse(&format!("{text}[layout]\ngaps_outer = 3\n"));
+        assert_eq!(
+            parsed.diagnostics.len(),
+            1,
+            "{text}: {:?}",
+            parsed.diagnostics
+        );
+        let d = &parsed.diagnostics[0];
+        assert_eq!(d.key.as_deref(), Some(key), "{text}");
+        assert!(d.line.is_some(), "{text}");
+        assert!(parsed.values.contains_key("layout.gaps_outer"), "{text}");
+        assert!(
+            !parsed.values.contains_key(key),
+            "{text}: bad value was kept"
+        );
+    }
+}
+
+#[test]
+fn a_bad_output_field_does_not_cost_its_neighbours() {
+    let parsed = parse("[output.DP-1]\nscale = 0\ntransform = \"rotate_90\"\n");
+    assert_eq!(parsed.diagnostics.len(), 1);
+    assert!(parsed.values.contains_key("output.DP-1.transform"));
+}
+
+#[test]
+fn a_non_table_output_is_one_diagnostic() {
+    let parsed = parse("output = 3\n[layout]\ngaps_outer = 3\n");
+    assert_eq!(parsed.diagnostics.len(), 1);
+    assert_eq!(parsed.diagnostics[0].key.as_deref(), Some("output"));
+    assert!(parsed.values.contains_key("layout.gaps_outer"));
+    let parsed = parse("[output]\nDP-1 = 3\n");
+    assert_eq!(parsed.diagnostics.len(), 1);
+}
+
+#[test]
+fn an_output_key_is_looked_up_and_is_not_writable() {
+    let key = lookup("output.DP-1.scale").expect("the key is known");
+    assert!(!key.writable);
+    assert_eq!(key.method, Some(CONFIGURE));
+    assert!(!key.runs_commands);
+    assert!(lookup("output.DP-1.nope").is_none());
+    assert!(lookup("output.DP.1.scale").is_none());
+    assert!(lookup("output.scale").is_none());
+}
