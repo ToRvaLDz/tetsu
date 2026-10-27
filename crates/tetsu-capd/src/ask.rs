@@ -5,10 +5,10 @@ use std::io;
 use std::time::Duration;
 
 use serde_json::Value;
-use tetsu_bus::notify::{NotifyReply, ShowParams};
+use tetsu_bus::notify::{Action, DismissReason, NotifyKind, NotifyReply, ShowParams, Urgency};
 
 pub use crate::decide::Answer;
-use crate::decide::Buttons;
+use crate::decide::{ALLOW_ONCE, ALWAYS_ALLOW, APPROVE, Buttons, DENY};
 
 /// The pauses before the 2nd, 3rd and 4th show.
 pub const BACKOFF: [Duration; 3] = [
@@ -39,8 +39,78 @@ pub struct AskRequest<'a> {
 
 /// The notification of an ask.
 pub fn render(request: &AskRequest<'_>) -> ShowParams {
-    let _ = request;
-    unimplemented!()
+    let mut lines = vec![
+        format!("Method: {}", request.method),
+        format!("Class: {}", request.class),
+    ];
+    lines.extend(argument_lines(request.args));
+    if let Some(reason) = request.reason {
+        lines.push(format!(
+            "Reason given by the agent (unverified): {}",
+            fence(&Value::String(reason.to_owned()))
+        ));
+    }
+    let actions = match request.buttons {
+        Buttons::Three => vec![
+            Action::new(ALLOW_ONCE, "Allow once"),
+            Action::new(ALWAYS_ALLOW, "Always allow"),
+            Action::new(DENY, "Deny"),
+        ],
+        Buttons::Two => vec![Action::new(APPROVE, "Approve"), Action::new(DENY, "Deny")],
+    };
+    ShowParams {
+        title: format!("The agent wants to run {}", request.method),
+        body: Some(lines.join("\n")),
+        urgency: Some(Urgency::Critical),
+        actions: Some(actions),
+        timeout_ms: None,
+    }
+}
+
+/// The `Arguments:` block: one line per top-level argument.
+fn argument_lines(args: &Value) -> Vec<String> {
+    let map = match args {
+        Value::Object(map) if !map.is_empty() => map,
+        Value::Null => return vec!["Arguments: none".to_owned()],
+        Value::Object(_) => return vec!["Arguments: none".to_owned()],
+        other => {
+            return vec!["Arguments:".to_owned(), format!("value: {}", fence(other))];
+        }
+    };
+    let mut lines = vec!["Arguments:".to_owned()];
+    for (name, value) in map.iter().take(MAX_ARGS) {
+        let name = cut(&clean(name));
+        lines.push(format!("{name}: {}", fence(value)));
+    }
+    if map.len() > MAX_ARGS {
+        lines.push("…".to_owned());
+    }
+    lines
+}
+
+/// A value as one safe line: JSON-rendered, so a string is quoted and its
+/// newlines are escapes, then stripped of control characters and cut.
+fn fence(value: &Value) -> String {
+    cut(&clean(&value.to_string()))
+}
+
+/// Drops control characters, line and paragraph separators and the bidi
+/// overrides: nothing that can start a line or reorder the text.
+fn clean(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(*c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
+        .collect()
+}
+
+/// At most `MAX_VALUE` characters, then `…`.
+fn cut(text: &str) -> String {
+    match text.char_indices().nth(MAX_VALUE) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
+    }
 }
 
 /// The replies of one `Show`.
@@ -72,6 +142,27 @@ pub async fn run_ask<C: NotifyChannel>(
     backoff: &[Duration],
     observer: &mut dyn FnMut(usize),
 ) -> Answer {
-    let _ = (channel, params, backoff, observer);
-    unimplemented!()
+    for attempt in 0..=backoff.len() {
+        if attempt > 0 {
+            tokio::time::sleep(backoff[attempt - 1]).await;
+        }
+        observer(attempt);
+        let Ok(mut events) = channel.show(params.clone()).await else {
+            continue;
+        };
+        // An error is the end of the stream: show again.
+        while let Ok(reply) = events.next().await {
+            match reply.kind {
+                NotifyKind::Invoked => {
+                    return Answer::Invoked(reply.action_id.unwrap_or_default());
+                }
+                NotifyKind::Dismissed => {
+                    let reason = reply.reason.unwrap_or(DismissReason::Unknown);
+                    return Answer::Dismissed(reason);
+                }
+                NotifyKind::Shown | NotifyKind::Unknown => {}
+            }
+        }
+    }
+    Answer::Unavailable
 }

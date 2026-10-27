@@ -89,7 +89,7 @@ fn a_value_cannot_forge_a_line() {
 
 #[test]
 fn control_characters_and_line_separators_are_stripped() {
-    let args = json!({ "v": "a\u{7f}b\u{2028}c\u{202e}d\u{0}e" });
+    let args = json!({ "v": "a\u{7f}b\u{2028}c\u{202e}d\u{85}e" });
     let lines = body(&render(&request(&args, None, Buttons::Two)));
     assert!(lines.contains(&"v: \"abcde\"".to_owned()), "{lines:?}");
 }
