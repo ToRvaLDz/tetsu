@@ -27,6 +27,10 @@ use tetsu_bus::access::MethodKind;
 pub const MAX_RESULT_BYTES: usize = 64 * 1024;
 /// How much of an oversized result is kept.
 const HEAD_BYTES: usize = 2048;
+/// The longest error name or unavailable text sent to the model.
+const MAX_TEXT_BYTES: usize = 256;
+/// The longest `_reason` sent to capd.
+const MAX_REASON_BYTES: usize = 1024;
 /// Streams kept open for [`StreamMode::Hold`]; the oldest is dropped first.
 pub const MAX_HELD: usize = 8;
 /// The error of an input the runner refuses before any bus call.
@@ -108,7 +112,7 @@ impl BusRunner {
             Route::Scanned(path) => Client::connect(path).await,
             Route::Pinned(endpoint) => Client::connect_to(endpoint).await,
         };
-        connected.map_err(|e| Outcome::Unavailable(e.to_string()))
+        connected.map_err(|e| Outcome::Unavailable(short_text(&e.to_string())))
     }
 
     /// Tells capd why. A failure is logged and the call goes on: the ask is
@@ -198,7 +202,7 @@ fn split_input(input: Value) -> Result<(Value, Option<String>), Outcome> {
         }
     };
     let reason = match object.remove(REASON) {
-        Some(Value::String(text)) if !text.trim().is_empty() => Some(text),
+        Some(Value::String(text)) if !text.trim().is_empty() => Some(cut(text, MAX_REASON_BYTES)),
         _ => None,
     };
     Ok((Value::Object(object), reason))
@@ -245,10 +249,13 @@ fn outcome_of_error(tool: &Tool, error: ClientError) -> Outcome {
             if error == format!("{}.PermissionDenied", tool.interface) || error == VARLINK_DENIED {
                 Outcome::Denied
             } else {
-                Outcome::Error { error, parameters }
+                Outcome::Error {
+                    error: short_text(&error),
+                    parameters: bounded(parameters),
+                }
             }
         }
-        ClientError::Io(e) => Outcome::Unavailable(e.to_string()),
+        ClientError::Io(e) => Outcome::Unavailable(short_text(&e.to_string())),
     }
 }
 
@@ -264,4 +271,25 @@ fn bounded(value: Value) -> Value {
         end -= 1;
     }
     json!({ "truncated": true, "bytes": text.len(), "head": &text[..end] })
+}
+
+/// `text` cut to at most `max` bytes, at a char boundary.
+fn cut(mut text: String, max: usize) -> String {
+    if text.len() > max {
+        let mut end = max;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
+}
+
+/// Text from a server or the system for the model: control characters
+/// dropped, cut to [`MAX_TEXT_BYTES`].
+fn short_text(text: &str) -> String {
+    cut(
+        text.chars().filter(|c| !c.is_control()).collect(),
+        MAX_TEXT_BYTES,
+    )
 }

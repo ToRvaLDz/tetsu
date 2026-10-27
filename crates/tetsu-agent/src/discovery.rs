@@ -129,6 +129,11 @@ impl Pinned {
         &self.entries
     }
 
+    /// Whether `path` is the own path of one of the endpoints.
+    fn owns(&self, path: &Path) -> bool {
+        self.entries.iter().any(|(_, e)| e.path() == path)
+    }
+
     fn names(&self) -> BTreeSet<&str> {
         self.entries.iter().map(|(i, _)| i.as_str()).collect()
     }
@@ -299,10 +304,11 @@ pub async fn probe_pinned(pinned: &Pinned, timeout: Duration) -> Vec<PinnedProbe
 /// Probes the sockets of the scan directories, in order. A socket named
 /// like a pinned interface is never touched. The same socket seen twice
 /// (a registry link and its directory) is probed once.
-pub async fn scan(dirs: &Dirs, pinned_names: &BTreeSet<&str>) -> (Vec<Probe>, Vec<Skipped>) {
+pub async fn scan(dirs: &Dirs, pinned: &Pinned) -> (Vec<Probe>, Vec<Skipped>) {
     let mut probes = Vec::new();
     let mut left_out = Vec::new();
     let mut seen = BTreeSet::new();
+    let pinned_names = pinned.names();
     for dir in dirs.dirs() {
         // A missing directory is fine; so is one we cannot read.
         let Ok(entries) = fs::read_dir(dir) else {
@@ -314,10 +320,13 @@ pub async fn scan(dirs: &Dirs, pinned_names: &BTreeSet<&str>) -> (Vec<Probe>, Ve
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let shown = path.display().to_string();
             if pinned_names.contains(name) {
-                left_out.push(skipped(
-                    shown,
-                    "named like an interface with a fixed endpoint",
-                ));
+                // The endpoint itself is not news; a twin elsewhere is.
+                if !pinned.owns(&path) {
+                    left_out.push(skipped(
+                        shown,
+                        "named like an interface with a fixed endpoint",
+                    ));
+                }
                 continue;
             }
             // `metadata` follows a link: a dangling one is an error.
@@ -350,7 +359,7 @@ pub async fn scan(dirs: &Dirs, pinned_names: &BTreeSet<&str>) -> (Vec<Probe>, Ve
 
 /// Scans, checks the pinned endpoints and assembles the catalog.
 pub async fn discover(tools: &[Tool], dirs: &Dirs, pinned: &Pinned) -> Catalog {
-    let (probes, mut left_out) = scan(dirs, &pinned.names()).await;
+    let (probes, mut left_out) = scan(dirs, pinned).await;
     let checked = probe_pinned(pinned, dirs.timeout).await;
     let mut catalog = assemble(tools, &probes, &checked);
     left_out.append(&mut catalog.skipped);
