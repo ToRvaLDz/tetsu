@@ -480,6 +480,8 @@ fn output_info(name: &str, w: i64, h: i64) -> OutputInfo {
         current_mode: Some(0),
         scale: 1.0,
         transform: Transform::Normal,
+        enabled: true,
+        position: None,
     }
 }
 

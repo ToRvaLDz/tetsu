@@ -15,6 +15,7 @@ use tetsu_bus::window::{ListWindowsReply, Placement, WindowEvent};
 use tetsu_bus::workspace::{ListWorkspacesReply, WorkspaceEvent};
 
 use crate::layout::Rect;
+use crate::outputs::configure::Target;
 pub use outputs::OutputInfo;
 use outputs::Outputs;
 use windows::Windows;
@@ -61,11 +62,16 @@ impl Model {
     /// Adds an output; returns its id. Workspaces that were on an output
     /// of the same name come back, workspaces left without an output are
     /// adopted, and an output with none gets a fresh one.
-    pub fn add_output_info(&mut self, info: OutputInfo) -> String {
+    pub fn add_output_info(&mut self, mut info: OutputInfo) -> String {
         let name = info.name.clone();
         let before = self.workspaces.focused().map(str::to_owned);
+        // Some output stays lit, whatever the info says.
+        info.enabled |= !self.outputs.any_enabled();
+        let lit = info.enabled;
         let id = self.outputs.add(info);
-        self.workspaces.add_output(&id, &name);
+        if lit {
+            self.workspaces.add_output(&id, &name);
+        }
         // Windows opened while no output existed sit on no workspace.
         if let Some(focused) = self.workspaces.focused().map(str::to_owned) {
             self.windows.adopt_orphans(&focused);
@@ -86,6 +92,31 @@ impl Model {
         let before = self.workspaces.focused().map(str::to_owned);
         self.outputs.remove(id);
         self.workspaces.remove_output(id, target.as_deref());
+        // The last lit output went: a dark one takes over.
+        if target.is_none()
+            && let Some(lit) = self.outputs.light_first()
+        {
+            let name = self.outputs.name_of(&lit).unwrap_or_default();
+            self.workspaces.add_output(&lit, &name);
+        }
+        self.follow_focus(before);
+    }
+
+    /// Applies the target state of the outputs: mode, scale, transform,
+    /// pinned position, lit or dark. Darkening an output is an unplug (its
+    /// workspaces move to the first lit one) and lighting it is a plug
+    /// (they come back), but it stays listed. Unknown ids are ignored.
+    pub fn configure_outputs(&mut self, targets: &[Target]) {
+        let before = self.workspaces.focused().map(str::to_owned);
+        let switched = self.outputs.configure(targets);
+        for id in &switched.lit {
+            let name = self.outputs.name_of(id).unwrap_or_default();
+            self.workspaces.add_output(id, &name);
+        }
+        for id in &switched.dark {
+            let target = self.outputs.first_except(id).map(str::to_owned);
+            self.workspaces.remove_output(id, target.as_deref());
+        }
         self.follow_focus(before);
     }
 

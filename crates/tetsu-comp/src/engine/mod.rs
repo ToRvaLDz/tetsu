@@ -10,6 +10,8 @@ mod workspace;
 use std::collections::BTreeMap;
 
 use tetsu_bus::output::Mode;
+
+use crate::outputs::configure::Target;
 use tetsu_bus::window::Placement;
 
 pub use action::{Action, Effect};
@@ -118,6 +120,11 @@ impl Engine {
     /// another output. Unknown ids are ignored.
     pub fn remove_output(&mut self, id: &str) {
         self.model.remove_output(id);
+    }
+
+    /// Applies the target state of the outputs; see the model.
+    pub fn configure_outputs(&mut self, targets: &[Target]) {
+        self.model.configure_outputs(targets);
     }
 
     /// Replaces an output's modes and current mode.

@@ -194,6 +194,7 @@ fn enabling_it_again_brings_back_the_mode_and_the_workspaces() {
     model.configure_outputs(&[
         Target {
             enabled: false,
+            mode: None,
             ..target("out-1")
         },
         target("out-2"),
