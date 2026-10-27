@@ -5,3 +5,4 @@ pub mod keys;
 pub mod layer;
 pub mod merge;
 pub mod paths;
+pub mod store;

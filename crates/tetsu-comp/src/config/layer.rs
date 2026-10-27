@@ -17,12 +17,20 @@ pub struct LayerParse {
     pub values: BTreeMap<String, Value>,
     /// What was wrong, in file order.
     pub diagnostics: Vec<Diagnostic>,
+    /// The text is not TOML at all: `values` is empty and says nothing
+    /// about the file.
+    pub broken: bool,
 }
 
 impl LayerParse {
     /// The first diagnostic as the strict startup error.
     pub fn first_error(&self) -> Option<&Diagnostic> {
         self.diagnostics.first()
+    }
+
+    fn syntax(&mut self, text: &str, at: usize, message: String) {
+        self.broken = true;
+        self.problem(text, at, None, message);
     }
 
     fn problem(&mut self, text: &str, at: usize, key: Option<&str>, message: String) {
@@ -51,7 +59,7 @@ pub fn parse(text: &str) -> LayerParse {
         Ok(spans) => spans,
         Err(e) => {
             let at = e.span().map_or(0, |span| span.start);
-            out.problem(text, at, None, e.message().to_owned());
+            out.syntax(text, at, e.message().to_owned());
             return out;
         }
     };
@@ -59,7 +67,7 @@ pub fn parse(text: &str) -> LayerParse {
         Ok(table) => table,
         Err(e) => {
             let at = e.span().map_or(0, |span| span.start);
-            out.problem(text, at, None, e.message().to_owned());
+            out.syntax(text, at, e.message().to_owned());
             return out;
         }
     };
