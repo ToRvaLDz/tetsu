@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 
+use tetsu_bus::gate::Gated;
 use tetsu_bus::server;
 use tetsu_notifyd::daemon::{Command, Daemon};
 use tetsu_notifyd::lock::{self, COMP_SOCKET_ENV, LockSource};
@@ -112,7 +113,7 @@ async fn serve(path: &std::path::Path, replace: bool) -> Result<(), String> {
     .await
     .map_err(|e| format!("cannot own {} on the session bus: {e}", fdo::BUS_NAME))?;
 
-    let service = Rc::new(NotifyService::new(commands));
+    let service = Rc::new(Gated::session(NotifyService::new(commands)));
     let mut terminate =
         signal(SignalKind::terminate()).map_err(|e| format!("cannot watch SIGTERM: {e}"))?;
     let mut interrupt =
