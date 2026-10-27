@@ -1,7 +1,9 @@
-//! The settings: an optional `--config <file>` TOML with `[layout]`,
-//! `[render]`, `[lock]`, `[trust]` and `[[window_rule]]`. Without a file the defaults apply. The layering of
-//! default, managed and user files, live reload and config.v1 are #73's;
-//! this schema is the user-file schema it builds on.
+//! The settings: what the engine runs with, and the checks of each config
+//! value. `--config <file>` is a TOML with `[layout]`, `[render]`, `[lock]`,
+//! `[trust]` and `[[window_rule]]`; `parse` and `load` read one file whole
+//! and stop at the first problem. The layers (defaults, managed, user), the
+//! live reload and `config.v1` are in `crate::config`, which reuses these
+//! checks key by key.
 
 use std::fmt;
 use std::path::{Path, PathBuf};

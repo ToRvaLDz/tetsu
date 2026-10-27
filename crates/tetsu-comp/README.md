@@ -2,9 +2,10 @@
 
 The Tetsu Wayland compositor, on Smithay. It maps xdg-shell windows, lays
 them out (dwindle, master or floating, with window rules) and serves the
-window, workspace, output and session interfaces of the bus
+window, workspace, output, session and config interfaces of the bus
 (`org.tetsu.comp.window.v1`, `org.tetsu.comp.workspace.v1`,
-`org.tetsu.comp.output.v1`, `org.tetsu.comp.session.v1`),
+`org.tetsu.comp.output.v1`, `org.tetsu.comp.session.v1`,
+`org.tetsu.comp.config.v1`),
 `zwlr_layer_shell_v1` for the bar and `ext-session-lock-v1` for the lock.
 
 ## Running
@@ -206,9 +207,51 @@ configurable yet.
 
 ## Config
 
-`--config <file>` is an optional TOML file. Without it: dwindle, no gaps,
-master ratio 0.55, no rules. Unknown keys, bad regexes and out-of-range
-values stop the start with a message naming the key (exit code 2).
+The config has three layers; the nearest wins, key by key:
+
+| Layer | File | Written by |
+|---|---|---|
+| defaults | `/usr/share/tetsu/comp.toml` (`TETSU_COMP_DEFAULTS_FILE` overrides it), over the built-in values | the image |
+| managed | `$XDG_STATE_HOME/tetsu/comp.toml` (default `~/.local/state`) | the machine, through `SetManaged` |
+| user | `$XDG_CONFIG_HOME/tetsu/comp.toml` (default `~/.config`) | you; the machine never writes it |
+
+A missing file is an empty layer. The built-in values and the defaults file
+both report `origin: default`. Built-in: dwindle, no gaps, master ratio
+0.55, no rules. `--config <file>` replaces the user layer path.
+
+The three files are looked at every 500 ms (a new, edited, renamed-over or
+deleted file is seen) and changes apply live. A bad key costs only itself:
+the layer below it applies to that key, and the problem is published, with
+its line, as a diagnostic of `org.tetsu.comp.config.v1`. A file that is not
+TOML keeps its last good values. Only the user file's problems are
+published; those of the other two are logged.
+
+At startup an explicit `--config <file>` is strict: any problem stops the
+start with `<path>: <message>` (exit code 2). The XDG user file is lenient:
+the compositor starts, logs the problems to stderr and publishes them. A
+reload is lenient in both cases.
+
+`GetConfig` and `WatchConfig` read the effective config; `SetManaged`
+writes the managed layer (atomically, file 0600 in a directory 0700), all
+or nothing. It is rejected when a key is unknown, not writable, invalid, set
+by the user file, or both set and removed. Behind the capability gate, the
+agent's `SetManaged` (and `ConfigureOutputs`) ask `tetsu-capd` first.
+
+| Key | writable | otherwise |
+|---|---|---|
+| `layout.default`, `layout.gaps_inner`, `layout.gaps_outer`, `layout.master_ratio` | yes | |
+| `render.wait_for_frame_completion` | yes | |
+| `window_rule` (the whole array is one value: a higher layer replaces all lower rules, and one bad rule drops the array of its layer) | yes | |
+| `render.device` | no | `org.tetsu.comp.render.v1.SetRenderDevice` |
+| `render.explicit_sync` | no | `org.tetsu.comp.render.v1.SetExplicitSync` |
+| `lock.command`, `trust.input` | no (they run commands) | user file only; ignored in the managed file |
+
+Live now: the gaps, the rules (for windows that open from then on),
+`layout.default` and `layout.master_ratio` (for workspaces that have no
+layout state yet) and `lock.command` (the next launch). At the next start:
+`render.*` and `trust.input`.
+
+The user file schema:
 
     [layout]
     default      = "dwindle"   # dwindle | master | floating
@@ -250,7 +293,10 @@ map, not on later title changes.
 - `outputs/`: EDID parsing, mode lists and logical geometry. Pure.
 - `layout/`: the algorithms (`dwindle`, `master`, `floating`). Pure.
 - `rules`: app_id and title patterns to a decision. Pure.
-- `settings`: the config file.
+- `settings`: the checks of the config values and the settings they make.
+- `config/`: the layers: `keys` (the registry), `layer` (parse with
+  diagnostics), `merge`, `paths`, `store` (read, poll, write the managed
+  file), `set` (plan a `SetManaged`) and `glue` (the loop side).
 - `lock/`: the session lock state machine (pure) and its Smithay glue;
   `trust`: who a client is, and how trusted helpers are started.
 - `gpu/`: the tty backend's decisions, pure and tested first. `select`
