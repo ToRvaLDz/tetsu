@@ -313,6 +313,20 @@ mod tests {
     }
 
     #[test]
+    fn the_installer_record_is_not_a_transaction() {
+        let installer = Record {
+            kind: Some(TxKind::InitialInstall),
+            ..record(1)
+        };
+        assert_eq!(from_record(&installer), None);
+    }
+
+    #[test]
+    fn the_initial_install_kind_has_no_wire_kind() {
+        assert_eq!(tx_kind(TxKind::InitialInstall), None);
+    }
+
+    #[test]
     fn every_record_kind_has_a_wire_kind() {
         assert_eq!(tx_kind(TxKind::Update), Some(wire::TxKind::Update));
         assert_eq!(tx_kind(TxKind::Install), Some(wire::TxKind::Install));

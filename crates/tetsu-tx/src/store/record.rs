@@ -370,6 +370,37 @@ mod tests {
     }
 
     #[test]
+    fn the_initial_install_kind_round_trips() {
+        let (_d, r) = records();
+        let x = Record {
+            counter: 1,
+            kind: Some(TxKind::InitialInstall),
+            finished_at: Some(1_700_000_000),
+            log: vec!["created by the installer".into()],
+            ..Record::default()
+        };
+        r.write(&x).unwrap();
+        assert_eq!(r.load().unwrap()[&1], x);
+        let text = fs::read_to_string(r.path(1)).unwrap();
+        assert!(text.contains("\"kind\": \"initial_install\""), "{text}");
+    }
+
+    #[test]
+    fn a_snapshot_1_record_written_before_the_kind_still_loads() {
+        let (_d, r) = records();
+        fs::create_dir_all(r.dir()).unwrap();
+        let with_null = r#"{"counter":1,"kind":null,"source":null,"boot":null,"finished_at":1700000000,"log":["created by the installer"]}"#;
+        let without = r#"{"counter":2,"source":null,"boot":null,"finished_at":1700000000,"log":["created by the installer"]}"#;
+        fs::write(r.path(1), with_null).unwrap();
+        fs::write(r.path(2), without).unwrap();
+        let all = r.load().unwrap();
+        for counter in [1, 2] {
+            assert_eq!(all[&counter].kind, None, "{counter}");
+            assert!(!all[&counter].reconstructed, "{counter}");
+        }
+    }
+
+    #[test]
     fn json_uses_contract_names() {
         let (_d, r) = records();
         let mut x = rec(2);

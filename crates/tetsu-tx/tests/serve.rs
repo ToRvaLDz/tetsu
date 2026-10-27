@@ -844,6 +844,7 @@ fn record(counter: u64, id: &str, kind: Option<TxKind>, started: u64) -> Record 
 fn list_merges_committed_and_failed_newest_first_and_honours_the_limit() {
     let rig = Rig::new();
     *rig.backend.records.lock().unwrap() = vec![
+        record(4, "tx-d", Some(TxKind::InitialInstall), 4000),
         record(3, "tx-c", Some(TxKind::Install), 3000),
         record(2, "tx-b", Some(TxKind::Update), 2000),
         record(1, "tx-a", None, 1000),
@@ -873,7 +874,7 @@ fn list_merges_committed_and_failed_newest_first_and_honours_the_limit() {
         };
         let all = client.call(&fqn("ListTransactions"), json!({})).await;
         let listed = ids(&all);
-        assert_eq!(listed.len(), 3, "the record without a kind is skipped");
+        assert_eq!(listed.len(), 3, "records without a bus kind are skipped");
         assert_eq!(listed[1..], ["tx-c", "tx-b"]);
         let failed = &all.parameters["transactions"][0];
         assert_eq!(failed["state"], "failed");
