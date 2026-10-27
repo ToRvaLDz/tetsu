@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod backend;
+pub mod cli;
 pub mod contract;
 pub mod discovery;
 pub mod runner;
