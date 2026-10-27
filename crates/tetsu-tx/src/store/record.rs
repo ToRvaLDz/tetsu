@@ -20,7 +20,8 @@ pub const RECORDS_DIR: &str = "/var/lib/tetsu/transactions";
 const EXT: &str = ".json";
 const TMP_EXT: &str = ".json.tmp";
 
-/// What a transaction did (the kinds of the `org.tetsu.tx.v1` contract).
+/// What a transaction did. Every kind but `InitialInstall` is a kind of
+/// the `org.tetsu.tx.v1` contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TxKind {
@@ -29,6 +30,8 @@ pub enum TxKind {
     InstallAur,
     Remove,
     Rollback,
+    /// The installer's snapshot 1; a record-only kind, never on the bus.
+    InitialInstall,
 }
 
 /// The boot verdict recorded at bless time.
@@ -47,7 +50,7 @@ pub struct Record {
     /// of the installer and for old ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// `None` when rebuilt from the ESP.
+    /// `None` only for a record rebuilt from the ESP.
     pub kind: Option<TxKind>,
     /// Snapshot the transaction started from; `None` for transaction zero
     /// and for rebuilt records.

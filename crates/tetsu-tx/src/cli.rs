@@ -272,6 +272,7 @@ pub fn render_report(report: &Report) -> String {
         TxKind::Install => format!("install {}", report.packages.join(" ")),
         TxKind::InstallAur => format!("install (AUR) {}", report.packages.join(" ")),
         TxKind::Remove => format!("remove {}", report.packages.join(" ")),
+        TxKind::InitialInstall => "initial install".to_owned(),
     };
     let mut out = format!("{what} committed as snapshot {}\n", report.counter);
     if !report.changes.is_empty() {
@@ -388,6 +389,7 @@ fn row_cells(row: &ListRow) -> [String; 5] {
         TxKind::InstallAur => "install_aur",
         TxKind::Remove => "remove",
         TxKind::Rollback => "rollback",
+        TxKind::InitialInstall => "initial_install",
     });
     let boot = match row.boot {
         Some(BootVerdict::Good) => "good",
@@ -742,7 +744,10 @@ mod tests {
         let text = render_list(&rows, false);
         let line = text.lines().nth(1).unwrap();
         let cells: Vec<&str> = line.split_whitespace().collect();
-        assert_eq!(cells, ["1", "initial_install", "-", "good", "booted"]);
+        assert_eq!(
+            cells,
+            ["1", "initial_install", "-", "good", "booted,default"]
+        );
         let value: serde_json::Value = serde_json::from_str(&render_list(&rows, true)).unwrap();
         assert_eq!(value[0]["kind"], "initial_install");
     }

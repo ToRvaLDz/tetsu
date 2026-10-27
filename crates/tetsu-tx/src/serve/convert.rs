@@ -43,6 +43,7 @@ pub fn tx_kind(kind: TxKind) -> Option<wire::TxKind> {
         TxKind::InstallAur => wire::TxKind::InstallAur,
         TxKind::Remove => wire::TxKind::Remove,
         TxKind::Rollback => wire::TxKind::Rollback,
+        TxKind::InitialInstall => return None,
     })
 }
 
