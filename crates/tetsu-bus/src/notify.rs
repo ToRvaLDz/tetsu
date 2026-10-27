@@ -6,6 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use zlink::{Call, Connection};
 
+use crate::endpoint::{Endpoint, connect_verified};
 use crate::into_io;
 
 /// The interface name.
@@ -225,11 +226,10 @@ pub struct ShowStream {
 }
 
 async fn open(
-    path: &Path,
+    mut connection: Connection<zlink::tokio::unix::Stream>,
     params: &ShowParams,
     call: fn(Call<ShowCall<'_>>) -> Call<ShowCall<'_>>,
 ) -> io::Result<Connection<zlink::tokio::unix::Stream>> {
-    let mut connection = zlink::tokio::unix::connect(path).await.map_err(into_io)?;
     let call = call(Call::new(ShowCall {
         method: "org.tetsu.notify.v1.Show",
         parameters: params,
@@ -241,9 +241,24 @@ async fn open(
     Ok(connection)
 }
 
+async fn connect(path: &Path) -> io::Result<Connection<zlink::tokio::unix::Stream>> {
+    zlink::tokio::unix::connect(path).await.map_err(into_io)
+}
+
 /// Connects to the notification server and calls `Show` with `more`.
 pub async fn show(path: &Path, params: &ShowParams) -> io::Result<ShowStream> {
-    let connection = open(path, params, |call| call.set_more(true)).await?;
+    let connection = open(connect(path).await?, params, |call| call.set_more(true)).await?;
+    Ok(ShowStream {
+        connection,
+        ended: false,
+    })
+}
+
+/// Like [`show`], at a fixed endpoint: the server is checked first, and a
+/// wrong one is `PermissionDenied` and receives nothing.
+pub async fn show_at(endpoint: &Endpoint, params: &ShowParams) -> io::Result<ShowStream> {
+    let connection = connect_verified(endpoint).await?;
+    let connection = open(connection, params, |call| call.set_more(true)).await?;
     Ok(ShowStream {
         connection,
         ended: false,
@@ -253,7 +268,16 @@ pub async fn show(path: &Path, params: &ShowParams) -> io::Result<ShowStream> {
 /// Calls `Show` oneway: no reply is read, so the notification cannot be
 /// answered and only the server's own surfaces can dismiss it.
 pub async fn show_oneway(path: &Path, params: &ShowParams) -> io::Result<()> {
-    open(path, params, |call| call.set_oneway(true))
+    open(connect(path).await?, params, |call| call.set_oneway(true))
+        .await
+        .map(drop)
+}
+
+/// Like [`show_oneway`], at a fixed endpoint, with the same server check as
+/// [`show_at`].
+pub async fn show_oneway_at(endpoint: &Endpoint, params: &ShowParams) -> io::Result<()> {
+    let connection = connect_verified(endpoint).await?;
+    open(connection, params, |call| call.set_oneway(true))
         .await
         .map(drop)
 }

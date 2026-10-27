@@ -157,9 +157,9 @@ fn a_server_in_the_expected_cgroup_is_connected() {
 fn a_server_in_another_cgroup_is_refused_and_gets_no_call() {
     with_fake(|world| async move {
         let ep = endpoint(&world.path, elsewhere());
-        let err = connect_verified(&ep).await.err().expect("refused");
+        let err = connect_verified(&ep).await.expect_err("refused");
         assert_eq!(err.kind(), ErrorKind::PermissionDenied);
-        let err = Client::connect_to(&ep).await.err().expect("refused");
+        let err = Client::connect_to(&ep).await.expect_err("refused");
         assert!(matches!(err, ClientError::Io(e) if e.kind() == ErrorKind::PermissionDenied));
         tokio::time::sleep(QUIET).await;
         assert!(world.calls.borrow().is_empty());
@@ -311,12 +311,11 @@ fn show_oneway_at_reaches_the_expected_server() {
 fn show_at_and_show_oneway_at_refuse_a_wrong_server_before_sending() {
     with_fake(|world| async move {
         let ep = endpoint(&world.path, elsewhere());
-        let err = notify::show_at(&ep, &show()).await.err().expect("refused");
+        let err = notify::show_at(&ep, &show()).await.expect_err("refused");
         assert_eq!(err.kind(), ErrorKind::PermissionDenied);
         let err = notify::show_oneway_at(&ep, &show())
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
         assert_eq!(err.kind(), ErrorKind::PermissionDenied);
         tokio::time::sleep(QUIET).await;
         assert!(world.calls.borrow().is_empty());

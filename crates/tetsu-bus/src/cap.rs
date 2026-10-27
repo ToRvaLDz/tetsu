@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zlink::{Call, Connection};
 
+use crate::endpoint::{Endpoint, connect_verified};
 use crate::into_io;
 
 /// The interface name.
@@ -326,6 +327,13 @@ impl Client {
         Ok(Self { connection })
     }
 
+    /// Connects to a service at a fixed path, after checking who serves it.
+    /// A wrong server is `PermissionDenied` and receives nothing.
+    pub async fn connect_to(endpoint: &Endpoint) -> Result<Self, ClientError> {
+        let connection = connect_verified(endpoint).await?;
+        Ok(Self { connection })
+    }
+
     async fn send<P: Serialize + fmt::Debug>(
         &mut self,
         method: &'static str,
@@ -369,6 +377,15 @@ impl Client {
         reply
             .map(|r| r.capabilities)
             .ok_or_else(|| io::Error::other("ListCapabilities reply without parameters").into())
+    }
+
+    /// `Check`. Any error, a malformed reply included, is an `Err`: the
+    /// caller must treat it as a refusal.
+    pub async fn check(&mut self, params: &CheckParams) -> Result<CheckReply, ClientError> {
+        self.send("org.tetsu.cap.v1.Check", Some(params), false)
+            .await?;
+        let (reply, _) = self.receive::<CheckReply>().await?;
+        reply.ok_or_else(|| io::Error::other("Check reply without parameters").into())
     }
 
     /// `Set`.
