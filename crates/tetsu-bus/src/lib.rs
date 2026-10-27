@@ -10,6 +10,7 @@ pub mod endpoint;
 pub mod gate;
 pub mod notify;
 mod nullable;
+pub mod output;
 pub mod peer;
 pub mod server;
 pub mod session;
