@@ -71,9 +71,11 @@ window, workspace, output, session and config interfaces of the bus
 - **`--headless-hotplug`** (headless only): reads hotplug commands from
   stdin, one per line, so tests can plug and unplug outputs:
   `add [<w>x<h>]` (a new `HEADLESS-<n>`, `n` counting up),
-  `add-named <name> <w>x<h>` (a replug) and `remove <name>`. Sides are 1 to
-  16384. A line that does not parse, or names nothing, is logged and
-  ignored.
+  `add-named <name> <w>x<h>` (a replug), `add-modes <name>
+  <w>x<h>[,<w>x<h>...]` (an output with up to 16 modes at 60 Hz, the first
+  preferred and current; it makes a real mode change testable) and
+  `remove <name>`. Sides are 1 to 16384. A line that does not parse, or
+  names nothing, is logged and ignored.
 
 Query the bus with `varlinkctl call $TETSU_COMP_SOCKET
 org.tetsu.comp.window.v1.ListWindows '{}'`. The bus socket is
@@ -86,8 +88,54 @@ stdin hook headless). `org.tetsu.comp.output.v1` serves `ListOutputs` and
 `WatchOutputs`: modes, current mode, scale, transform, position and the EDID
 make (the three-letter PNP id, for example `GSM`), model and serial. The EDID
 comes from the display, so control characters are stripped and each field is
-cut to 32 characters. `ConfigureOutputs` answers
-`org.varlink.service.MethodNotImplemented` until #97.
+cut to 32 characters.
+
+`ConfigureOutputs` takes a map from output id to `{enabled, mode, scale,
+transform, x, y}` (a field left null keeps its value) and applies it
+atomically, then stores the non-null fields in the managed file as the
+config keys `output.<connector>.<field>`. The checks run in this order and
+the first failure rejects the whole call, with nothing written or applied:
+
+1. `OutputNotFound{id}`: the first unknown id.
+2. `InvalidConfiguration{id, reason}`, per output in id order: enabling an
+   output that has no mode; a `mode` the output does not list (matched by
+   width, height and refresh); a `scale` that is not finite or outside
+   0.25 to 8; an unknown `transform`; `x` or `y` beyond 2^20 either way; a
+   connector name that cannot be a config key.
+3. `InvalidConfiguration`, global: no output would stay enabled (the id is
+   the first one in the call that disables an output); two enabled pinned
+   outputs would overlap by a positive area, where one of them is in the
+   call (the id is the later one, the reason names the other).
+4. `OverriddenByUser{keys}`: every key the call would store that the user
+   file sets, sorted. A user field the call does not touch does not block.
+
+An empty `configs` is valid and writes nothing. A managed file that cannot
+be written, or a compositor that is stopping, answers
+`org.tetsu.comp.config.v1.StateWriteFailed` (`output.v1` declares no write
+error). A call sets, never clears: a field goes back to automatic only by
+editing the managed file. On the tty, a display that refuses a mode gives
+`InvalidConfiguration` and the managed file goes back to what it was.
+
+The same config, whoever wrote it, is the one source: it applies at start,
+on hotplug (by connector name, so a replugged monitor gets its own config
+back), on a live reload and after a call. A value that cannot apply (a mode
+the display lacks) is ignored on the model side and only logged.
+
+- **Placement.** An output with a `position` is pinned there. Automatic
+  outputs are packed at `y = 0`, in the order they were added, starting at
+  the right edge of the rightmost pinned output (0 with none pinned). A pin
+  that overlaps an earlier pin when the config is loaded is ignored and
+  logged. Pinning one output moves the automatic ones to its right: set
+  every position to fix a layout.
+- **Disable.** A disabled output stays in `ListOutputs` with `enabled:
+  false` and `current_mode: null`, and its last mode is remembered. For
+  clients it is unplugged: its workspaces move as on an unplug and come
+  back when it is enabled, its layer surfaces get `closed`, its `wl_output`
+  global goes (a new one appears on enable, so a bar re-creates its
+  surface) and the lock machine stops waiting for it. If the last enabled
+  output is unplugged while others are disabled, the first of them is
+  enabled.
+- **Winit.** The mode is the window size, so any other mode is refused.
 
 - **Ids.** `out-<n>`, never reused: a monitor plugged in again has a new id.
   Follow it by `name` or by the EDID fields.
@@ -246,6 +294,21 @@ agent's `SetManaged` (and `ConfigureOutputs`) ask `tetsu-capd` first.
 | `render.explicit_sync` | no | `org.tetsu.comp.render.v1.SetExplicitSync` |
 | `lock.command`, `trust.input` | no (they run commands) | user file only; ignored in the managed file |
 
+The output keys are `output.<connector>.{enabled, mode, scale, transform,
+position}` (a connector name is `[A-Za-z0-9_-]{1,32}`). They are not
+writable through `SetManaged` (it answers `KeyNotWritable` with the method
+`org.tetsu.comp.output.v1.ConfigureOutputs`), and they exist in `GetConfig`
+only while some layer sets them: when the last layer that sets one drops
+it, `WatchConfig` sends `removed` (the first keys to do so), and the output
+returns to automatic. A user-file value wins field by field.
+
+    [output.DP-1]
+    enabled   = true
+    mode      = { width = 3840, height = 2160, refresh_mhz = 60000 }
+    scale     = 1.25
+    transform = "normal"
+    position  = { x = 0, y = 0 }
+
 Live now: the gaps, the rules (for windows that open from then on),
 `layout.default` and `layout.master_ratio` (for workspaces that have no
 layout state yet) and `lock.command` (the next launch). At the next start:
@@ -290,11 +353,15 @@ map, not on later title changes.
 - `model`: windows, workspaces, outputs and the events they emit, in the
   order the contract demands. Pure, tested first. `model/outputs.rs` keeps
   the output state and its layout.
-- `outputs/`: EDID parsing, mode lists and logical geometry. Pure.
+- `outputs/`: EDID parsing, mode lists, logical geometry and placement,
+  the `ConfigureOutputs` planner (`configure`), the config's say on an
+  output (`prefs`) and the bounds they share (`limits`). Pure. `glue` is
+  the apply path on the loop.
 - `layout/`: the algorithms (`dwindle`, `master`, `floating`). Pure.
 - `rules`: app_id and title patterns to a decision. Pure.
 - `settings`: the checks of the config values and the settings they make.
-- `config/`: the layers: `keys` (the registry), `layer` (parse with
+- `config/`: the layers: `keys` (the registry; `output_keys` the open set of
+  `output.<connector>.*` keys), `layer` (parse with
   diagnostics), `merge`, `paths`, `store` (read, poll, write the managed
   file), `set` (plan a `SetManaged`) and `glue` (the loop side).
 - `lock/`: the session lock state machine (pure) and its Smithay glue;
@@ -306,7 +373,8 @@ map, not on later title changes.
 - `engine`: the model plus per-workspace layout state; `apply(Action)`
   and `arrange` give events and rects. Pure.
 - `grab`: the pointer grab that moves a floating window.
-- `bus`: the bus thread. The compositor loop sends deltas over an
+- `bus`: the bus thread. The calls that change things (`SetManaged`,
+  `ConfigureOutputs`) reach the loop as one `Command` channel. The compositor loop sends deltas over an
   unbounded channel and never waits on it; a watcher that falls 256 events
   behind is disconnected, and a dead thread is restarted.
 - `state`, `handlers`, `input`, `render`, `backend`: the Smithay side.

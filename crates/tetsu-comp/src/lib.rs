@@ -1,8 +1,8 @@
 //! tetsu-comp: the Tetsu compositor.
 //!
 //! Serves `org.tetsu.comp.{window,workspace,output,session,config}.v1`
-//! through the `tetsu-bus` facade, behind the capability gate (output reads
-//! only for now; `config` is the three-layer config), `zwlr_layer_shell_v1` and
+//! through the `tetsu-bus` facade, behind the capability gate (`output` reads
+//! and `ConfigureOutputs`; `config` is the three-layer config), `zwlr_layer_shell_v1` and
 //! `ext-session-lock-v1`. Trust (`trust`) is decided when a client connects:
 //! only clients the compositor starts see the virtual input protocols or may
 //! take over a dead lock (`lock`).

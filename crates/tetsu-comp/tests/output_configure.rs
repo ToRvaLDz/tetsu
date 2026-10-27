@@ -1,8 +1,6 @@
-//! The `ConfigureOutputs` planner and the output prefs: pure functions of
-//! the outputs, the call and the config layers.
+//! The `ConfigureOutputs` planner and the output prefs, pure.
 
 mod common;
-
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
@@ -128,10 +126,9 @@ fn a_scale_outside_the_bounds_is_refused() {
         assert_eq!(id, "out-2");
         assert!(reason.contains("scale"), "{reason}");
     }
-    let ok = run(&two(), &[("out-2", json!({ "scale": 0.25 }))], "", "");
-    assert!(ok.is_ok());
-    let ok = run(&two(), &[("out-2", json!({ "scale": 8 }))], "", "");
-    assert!(ok.is_ok());
+    for scale in [json!(0.25), json!(8)] {
+        assert!(run(&two(), &[("out-2", json!({ "scale": scale }))], "", "").is_ok());
+    }
 }
 
 #[test]
@@ -211,7 +208,6 @@ fn a_pin_over_a_disabled_output_is_fine() {
 
 #[test]
 fn the_first_failure_wins_in_the_documented_order() {
-    // Invalid (out-1 scale) comes before the user override of out-2.
     let call = [
         ("out-1", json!({ "scale": 0 })),
         ("out-2", json!({ "scale": 2 })),
@@ -298,10 +294,9 @@ fn x_alone_persists_the_position_with_the_current_y() {
 
 #[test]
 fn an_empty_call_or_empty_configs_persist_nothing() {
-    let planned = run(&two(), &[], "", "").unwrap();
-    assert!(planned.managed.is_empty());
-    let planned = run(&two(), &[("out-1", json!({}))], "", "").unwrap();
-    assert!(planned.managed.is_empty());
+    assert!(run(&two(), &[], "", "").unwrap().managed.is_empty());
+    let nulls = [("out-1", json!({}))];
+    assert!(run(&two(), &nulls, "", "").unwrap().managed.is_empty());
 }
 
 #[test]
