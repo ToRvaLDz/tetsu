@@ -182,6 +182,24 @@ fn a_call_that_leaves_no_output_enabled_names_the_first_that_disables() {
 }
 
 #[test]
+fn a_call_that_disables_nothing_is_fine_when_the_config_lit_nothing() {
+    let dark = "[output.HEADLESS-1]\nenabled = false\n[output.HEADLESS-2]\nenabled = false\n";
+    let scale = [("out-1", json!({ "scale": 1.5 }))];
+    assert!(run(&two(), &scale, "", dark).is_ok());
+    assert!(run(&two(), &[], "", dark).is_ok());
+    assert!(run(&two(), &[], dark, "").is_ok());
+    // Turning off what is already off turns nothing off.
+    let again = [("out-1", json!({ "enabled": false }))];
+    assert!(run(&two(), &again, dark, "").is_ok());
+}
+
+#[test]
+fn an_empty_call_is_fine_with_one_output_left() {
+    let one = "[output.HEADLESS-1]\nenabled = false\n";
+    assert!(run(&two(), &[], one, "").is_ok());
+}
+
+#[test]
 fn two_pinned_outputs_that_overlap_are_refused_naming_the_other() {
     let call = [
         ("out-1", json!({ "x": 0, "y": 0 })),

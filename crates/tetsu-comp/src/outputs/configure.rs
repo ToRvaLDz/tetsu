@@ -218,12 +218,16 @@ pub fn plan(
     let mut values = view.values();
     values.extend(managed.clone());
     let resolved = prefs::resolve(outputs, &values);
-    let raw_enabled = outputs.iter().any(|o| {
-        prefs::OutputPrefs::of(&o.name, &values)
-            .enabled
-            .unwrap_or(true)
-    });
-    if !outputs.is_empty() && !raw_enabled {
+    // Only a call that turns the last enabled output off is refused: one
+    // that changes nothing there stays fine, whatever the stored config is.
+    let any_enabled = |values: &Values| {
+        outputs.iter().any(|o| {
+            prefs::OutputPrefs::of(&o.name, values)
+                .enabled
+                .unwrap_or(true)
+        })
+    };
+    if !outputs.is_empty() && any_enabled(&view.values()) && !any_enabled(&values) {
         return Err(invalid(
             &disables_first(configs, outputs),
             "no output would stay enabled",
