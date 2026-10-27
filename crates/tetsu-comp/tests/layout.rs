@@ -3,9 +3,7 @@
 use std::str::FromStr;
 
 use tetsu_comp::layout::floating::{MIN_VISIBLE, centered, clamp_into, from_tile};
-use tetsu_comp::layout::{
-    Gaps, LayoutKind, Rect, dwindle::dwindle, master::master, split, usable,
-};
+use tetsu_comp::layout::{Gaps, LayoutKind, Rect, dwindle::dwindle, master::master, split, usable};
 
 const VIEW: Rect = Rect {
     x: 0,

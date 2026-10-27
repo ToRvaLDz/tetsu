@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 
+use tetsu_comp::backend::headless::{HotplugCommand, parse_command};
 use tetsu_comp::cli::{Backend, CliError, Parsed, parse};
 
 fn args(list: &[&str]) -> Vec<OsString> {
@@ -117,4 +118,107 @@ fn extra_headless_outputs_need_the_headless_backend() {
 fn help_is_not_a_run() {
     assert!(matches!(parse(args(&["--help"]), false), Ok(Parsed::Help)));
     assert!(matches!(parse(args(&["-h"]), true), Ok(Parsed::Help)));
+}
+
+#[test]
+fn the_hotplug_hook_needs_the_headless_backend() {
+    let cli = run(&["--backend", "headless", "--headless-hotplug"], false).unwrap();
+    assert!(cli.headless_hotplug);
+    assert!(
+        !run(&["--backend", "headless"], false)
+            .unwrap()
+            .headless_hotplug
+    );
+    for backend in ["winit", "tty"] {
+        assert_eq!(
+            run(&["--backend", backend, "--headless-hotplug"], false).unwrap_err(),
+            CliError::HeadlessOnly
+        );
+    }
+    assert_eq!(
+        run(&["--headless-hotplug"], true).unwrap_err(),
+        CliError::HeadlessOnly
+    );
+}
+
+#[test]
+fn the_headless_only_message_names_both_options() {
+    let message = CliError::HeadlessOnly.to_string();
+    assert!(message.contains("--headless-outputs"), "{message}");
+    assert!(message.contains("--headless-hotplug"), "{message}");
+    assert!(message.contains("--backend headless"), "{message}");
+}
+
+#[test]
+fn hotplug_commands_parse() {
+    assert_eq!(parse_command("add"), Ok(HotplugCommand::Add { size: None }));
+    assert_eq!(
+        parse_command("add 1280x720"),
+        Ok(HotplugCommand::Add {
+            size: Some((1280, 720))
+        })
+    );
+    assert_eq!(
+        parse_command("add 800x600\n"),
+        Ok(HotplugCommand::Add {
+            size: Some((800, 600))
+        })
+    );
+    assert_eq!(
+        parse_command("add-named HEADLESS-1 1920x1080\r\n"),
+        Ok(HotplugCommand::AddNamed {
+            name: "HEADLESS-1".into(),
+            size: (1920, 1080)
+        })
+    );
+    assert_eq!(
+        parse_command("remove HEADLESS-2\n"),
+        Ok(HotplugCommand::Remove {
+            name: "HEADLESS-2".into()
+        })
+    );
+}
+
+#[test]
+fn hotplug_sides_are_one_to_sixteen_thousand_three_hundred_eighty_four() {
+    for ok in ["1x1", "16384x16384", "1x16384"] {
+        assert!(parse_command(&format!("add {ok}")).is_ok(), "{ok}");
+    }
+    for bad in [
+        "0x0",
+        "0x10",
+        "10x0",
+        "16385x10",
+        "10x16385",
+        "-1x5",
+        "1280",
+        "1280x",
+        "x720",
+        "axb",
+        "1280x720x3",
+        "1280 720",
+        "+5x5",
+        "",
+    ] {
+        assert!(parse_command(&format!("add {bad}")).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn bad_hotplug_lines_are_errors() {
+    for bad in [
+        "",
+        "\n",
+        "bogus",
+        "add-named",
+        "add-named DP-1",
+        "add-named DP-1 0x0",
+        "add-named DP-1 1920x1080 extra",
+        "remove",
+        "remove a b",
+        "add 1920x1080 extra",
+        "ADD",
+    ] {
+        assert!(parse_command(bad).is_err(), "{bad:?}");
+    }
 }
