@@ -5,7 +5,11 @@
 //! `$CREDENTIALS_DIRECTORY` of the broker's unit through
 //! `LoadCredentialEncrypted=`. Nothing else holds the key.
 
+use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+
+use zeroize::Zeroize as _;
 
 use crate::vault::Secret;
 
@@ -42,7 +46,27 @@ pub enum UnlockError {
 
 /// Reads the vault key from `dir` (`$CREDENTIALS_DIRECTORY`).
 pub fn vault_key(dir: Option<&Path>) -> Result<Secret, UnlockError> {
-    todo!("{dir:?}")
+    let dir = dir.ok_or(UnlockError::NoDirectory)?;
+    let path = dir.join(CREDENTIAL_NAME);
+    let mut bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Err(UnlockError::Missing(path)),
+        Err(source) => return Err(UnlockError::Io { path, source }),
+    };
+    if bytes.is_empty() {
+        return Err(UnlockError::Empty(path));
+    }
+    if bytes.len() < MIN_KEY_LEN {
+        bytes.zeroize();
+        return Err(UnlockError::TooShort(path));
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(Secret::new(text)),
+        Err(e) => {
+            e.into_bytes().zeroize();
+            Err(UnlockError::NotText(path))
+        }
+    }
 }
 
 #[cfg(test)]
