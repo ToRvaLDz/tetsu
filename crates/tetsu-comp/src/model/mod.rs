@@ -5,29 +5,36 @@
 //! window before `closed`, at most one `changed` per window per flush, and
 //! `added` before `activated` and `focused` for a workspace.
 
+mod outputs;
 mod windows;
 mod workspaces;
 
+use tetsu_bus::output::{ListOutputsReply, Mode, OutputEvent};
 use tetsu_bus::window::{ListWindowsReply, Placement, WindowEvent};
 use tetsu_bus::workspace::{ListWorkspacesReply, WorkspaceEvent};
 
+use crate::layout::Rect;
+pub use outputs::OutputInfo;
+use outputs::Outputs;
 use windows::Windows;
 pub use windows::{WindowInfo, WindowUpdate};
 use workspaces::Workspaces;
 
 /// What changed since the last flush, per interface.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Events {
     /// For `WatchWindows`.
     pub window: Vec<WindowEvent>,
     /// For `WatchWorkspaces`.
     pub workspace: Vec<WorkspaceEvent>,
+    /// For `WatchOutputs`.
+    pub output: Vec<OutputEvent>,
 }
 
 impl Events {
     /// Nothing changed.
     pub fn is_empty(&self) -> bool {
-        self.window.is_empty() && self.workspace.is_empty()
+        self.window.is_empty() && self.workspace.is_empty() && self.output.is_empty()
     }
 }
 
@@ -36,12 +43,67 @@ impl Events {
 pub struct Model {
     windows: Windows,
     workspaces: Workspaces,
+    outputs: Outputs,
 }
 
 impl Model {
-    /// Adds an output with its first workspace; returns the output id.
+    /// Adds an output with one 1920x1080 mode; see `add_output_info`.
     pub fn add_output(&mut self, name: &str) -> String {
-        self.workspaces.add_output(name)
+        self.add_output_info(OutputInfo::named(name))
+    }
+
+    /// Adds an output; returns its id. Workspaces that were on an output
+    /// of the same name come back, workspaces left without an output are
+    /// adopted, and an output with none gets a fresh one.
+    pub fn add_output_info(&mut self, info: OutputInfo) -> String {
+        let name = info.name.clone();
+        let before = self.workspaces.focused().map(str::to_owned);
+        let id = self.outputs.add(info);
+        self.workspaces.add_output(&id, &name);
+        self.follow_focus(before);
+        id
+    }
+
+    /// Unplugs an output. Its workspaces move to the first remaining
+    /// output (after its highest index) and return when an output of the
+    /// same name does; with none left they lose their output. Unknown
+    /// ids are ignored.
+    pub fn remove_output(&mut self, id: &str) {
+        if !self.outputs.contains(id) {
+            return;
+        }
+        let target = self.outputs.first_except(id).map(str::to_owned);
+        let before = self.workspaces.focused().map(str::to_owned);
+        self.outputs.remove(id);
+        self.workspaces.remove_output(id, target.as_deref());
+        self.follow_focus(before);
+    }
+
+    /// Replaces an output's modes and current mode. Unknown ids are
+    /// ignored.
+    pub fn set_output_mode(&mut self, id: &str, modes: Vec<Mode>, current: Option<usize>) {
+        self.outputs.set_mode(id, modes, current);
+    }
+
+    /// The window focus follows the workspace focus when that moved.
+    fn follow_focus(&mut self, before: Option<String>) {
+        let now = self.workspaces.focused().map(str::to_owned);
+        if now == before {
+            return;
+        }
+        let top = now.and_then(|ws| self.windows.top_on(&ws));
+        self.windows.focus(top.as_deref());
+    }
+
+    /// The enabled outputs and their rects in the global logical space,
+    /// in the order they were added.
+    pub fn output_layout(&self) -> Vec<(String, Rect)> {
+        self.outputs.layout()
+    }
+
+    /// For `ListOutputs`.
+    pub fn outputs_snapshot(&self) -> ListOutputsReply {
+        self.outputs.snapshot()
     }
 
     /// Maps a window on the focused workspace; returns its id. It is not
@@ -114,6 +176,7 @@ impl Model {
         Events {
             window: self.windows.flush(),
             workspace: self.workspaces.flush(),
+            output: self.outputs.flush(),
         }
     }
 
