@@ -5,6 +5,7 @@
 pub mod audit;
 pub mod broker;
 pub mod caller;
+pub mod cli;
 pub mod daemon;
 pub mod init;
 pub mod model;
