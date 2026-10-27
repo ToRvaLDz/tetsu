@@ -5,12 +5,21 @@
 //! in a file in the clear or in the environment.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::fs::{self, DirBuilder};
+use std::io::ErrorKind;
+use std::os::unix::fs::DirBuilderExt as _;
+use std::path::{Path, PathBuf};
 
 use tetsu_tx::boot::BootError;
 use tetsu_tx::boot::tool::Runner;
 
+use zeroize::Zeroizing;
+
 use crate::paths::Paths;
+use crate::unlock::CREDENTIAL_NAME;
+
+/// The key length in bytes; the credential holds it as hex.
+const KEY_BYTES: usize = 32;
 
 /// What the key is sealed to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,8 +68,56 @@ pub fn init(
     runner: &dyn Runner,
     rng: &mut dyn FnMut(&mut [u8]),
 ) -> Result<PathBuf, InitError> {
-    let _ = (paths, seal, runner, rng, OsString::new());
-    todo!()
+    let credential = paths.credential();
+    let io = |path: &Path| {
+        let path = path.to_owned();
+        move |source| InitError::Io { path, source }
+    };
+    if credential.symlink_metadata().is_ok() {
+        return Err(InitError::CredentialExists(credential));
+    }
+    let vault = paths.vault();
+    match fs::metadata(&vault) {
+        Ok(m) if m.len() > 0 => return Err(InitError::VaultExists(vault)),
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(io(&vault)(e)),
+    }
+    let store = paths.credstore();
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&store)
+        .map_err(io(&store))?;
+    let mut raw = Zeroizing::new([0u8; KEY_BYTES]);
+    rng(raw.as_mut_slice());
+    let mut hex = Zeroizing::new(String::with_capacity(KEY_BYTES * 2));
+    for byte in raw.iter() {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    let args: Vec<OsString> = vec![
+        "encrypt".into(),
+        "--user".into(),
+        format!("--name={CREDENTIAL_NAME}").into(),
+        format!("--with-key={}", seal.as_str()).into(),
+        "-".into(),
+        credential.clone().into_os_string(),
+    ];
+    runner.output_stdin("systemd-creds", &args, hex.as_bytes())?;
+    Ok(credential)
+}
+
+/// Fills `buf` from the kernel's random source.
+pub fn system_random(buf: &mut [u8]) {
+    use rustix::rand::{GetRandomFlags, getrandom};
+    let mut filled = 0;
+    while filled < buf.len() {
+        match getrandom(&mut buf[filled..], GetRandomFlags::empty()) {
+            Ok(n) => filled += n,
+            Err(rustix::io::Errno::INTR) => {}
+            Err(e) => panic!("getrandom failed: {e}"),
+        }
+    }
 }
 
 #[cfg(test)]
