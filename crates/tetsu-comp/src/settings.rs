@@ -1,0 +1,220 @@
+//! The settings: an optional `--config <file>` TOML with `[layout]` and
+//! `[[window_rule]]`. Without a file the defaults apply. The layering of
+//! default, managed and user files, live reload and config.v1 are #73's;
+//! this schema is the user-file schema it builds on.
+
+use std::fmt;
+use std::path::Path;
+
+use serde::Deserialize;
+
+use crate::layout::master::{DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
+use crate::layout::{Gaps, LayoutKind};
+use crate::rules::{Pattern, Rule};
+
+/// What the engine runs with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Settings {
+    /// The layout of a new workspace.
+    pub layout: LayoutKind,
+    /// Space around and between windows.
+    pub gaps: Gaps,
+    /// The master's share of the width, `MIN_RATIO..=MAX_RATIO`.
+    pub master_ratio: f64,
+    /// The window rules, in file order.
+    pub rules: Vec<Rule>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            layout: LayoutKind::Dwindle,
+            gaps: Gaps::NONE,
+            master_ratio: DEFAULT_RATIO,
+            rules: Vec::new(),
+        }
+    }
+}
+
+/// Why a config file was refused. Every message names the key.
+#[derive(Debug)]
+pub enum SettingsError {
+    /// The file could not be read.
+    Io(std::io::Error),
+    /// Not TOML, an unknown key or a value of the wrong type; the message
+    /// has the line.
+    Toml(String),
+    /// `layout.default` is none of the three layouts.
+    UnknownLayout(String),
+    /// A gap below zero; the key is `layout.gaps_inner` or `gaps_outer`.
+    NegativeGap(&'static str, i64),
+    /// `layout.master_ratio` outside 0.1..=0.9.
+    BadRatio(f64),
+    /// A pattern that is not a regex.
+    BadRegex {
+        /// The rule's position in the file.
+        rule: usize,
+        /// `app_id` or `title`.
+        key: &'static str,
+        /// The regex error.
+        message: String,
+    },
+    /// A rule with neither `app_id` nor `title`.
+    NoMatcher(usize),
+    /// `workspace` outside 1..=9.
+    BadWorkspace(usize, i64),
+    /// `size` with a side that is not positive.
+    BadSize(usize, i64, i64),
+}
+
+impl fmt::Display for SettingsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "{e}"),
+            Self::Toml(message) => write!(f, "{}", message.trim_end()),
+            Self::UnknownLayout(name) => write!(
+                f,
+                "layout.default: unknown layout {name:?} (dwindle, master or floating)"
+            ),
+            Self::NegativeGap(key, value) => {
+                write!(f, "layout.{key}: {value} is negative")
+            }
+            Self::BadRatio(ratio) => write!(
+                f,
+                "layout.master_ratio: {ratio} is outside {MIN_RATIO}..={MAX_RATIO}"
+            ),
+            Self::BadRegex { rule, key, message } => {
+                write!(f, "window_rule[{rule}].{key}: bad regex: {message}")
+            }
+            Self::NoMatcher(rule) => {
+                write!(f, "window_rule[{rule}]: needs app_id or title")
+            }
+            Self::BadWorkspace(rule, value) => {
+                write!(f, "window_rule[{rule}].workspace: {value} is outside 1..=9")
+            }
+            Self::BadSize(rule, w, h) => write!(
+                f,
+                "window_rule[{rule}].size: [{w}, {h}] needs two positive numbers"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SettingsError {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFile {
+    #[serde(default)]
+    layout: RawLayout,
+    #[serde(default)]
+    window_rule: Vec<RawRule>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawLayout {
+    default: Option<String>,
+    gaps_inner: Option<i64>,
+    gaps_outer: Option<i64>,
+    master_ratio: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRule {
+    app_id: Option<String>,
+    title: Option<String>,
+    floating: Option<bool>,
+    workspace: Option<i64>,
+    output: Option<String>,
+    size: Option<[i64; 2]>,
+}
+
+fn gap(key: &'static str, value: Option<i64>, default: i32) -> Result<i32, SettingsError> {
+    match value {
+        None => Ok(default),
+        Some(v) if v < 0 => Err(SettingsError::NegativeGap(key, v)),
+        Some(v) => Ok(i32::try_from(v).unwrap_or(i32::MAX / 4)),
+    }
+}
+
+fn pattern(
+    rule: usize,
+    key: &'static str,
+    source: Option<String>,
+) -> Result<Option<Pattern>, SettingsError> {
+    source
+        .map(|s| {
+            Pattern::new(&s).map_err(|e| SettingsError::BadRegex {
+                rule,
+                key,
+                message: e.to_string(),
+            })
+        })
+        .transpose()
+}
+
+fn rule(index: usize, raw: RawRule) -> Result<Rule, SettingsError> {
+    if raw.app_id.is_none() && raw.title.is_none() {
+        return Err(SettingsError::NoMatcher(index));
+    }
+    let workspace = match raw.workspace {
+        None => None,
+        Some(n @ 1..=9) => Some(n as u8),
+        Some(n) => return Err(SettingsError::BadWorkspace(index, n)),
+    };
+    let size = match raw.size {
+        None => None,
+        Some([w, h]) => match (i32::try_from(w), i32::try_from(h)) {
+            (Ok(w), Ok(h)) if w > 0 && h > 0 => Some((w, h)),
+            _ => return Err(SettingsError::BadSize(index, w, h)),
+        },
+    };
+    Ok(Rule {
+        app_id: pattern(index, "app_id", raw.app_id)?,
+        title: pattern(index, "title", raw.title)?,
+        floating: raw.floating,
+        workspace,
+        output: raw.output,
+        size,
+    })
+}
+
+/// Parses the text of a config file.
+pub fn parse(text: &str) -> Result<Settings, SettingsError> {
+    let raw: RawFile = toml::from_str(text).map_err(|e| SettingsError::Toml(e.to_string()))?;
+    let defaults = Settings::default();
+    let layout = match raw.layout.default {
+        None => defaults.layout,
+        Some(name) => name
+            .parse()
+            .map_err(|_| SettingsError::UnknownLayout(name))?,
+    };
+    let master_ratio = match raw.layout.master_ratio {
+        None => defaults.master_ratio,
+        Some(r) if (MIN_RATIO..=MAX_RATIO).contains(&r) => r,
+        Some(r) => return Err(SettingsError::BadRatio(r)),
+    };
+    let rules = raw
+        .window_rule
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| rule(i, r))
+        .collect::<Result<_, _>>()?;
+    Ok(Settings {
+        layout,
+        gaps: Gaps {
+            outer: gap("gaps_outer", raw.layout.gaps_outer, defaults.gaps.outer)?,
+            inner: gap("gaps_inner", raw.layout.gaps_inner, defaults.gaps.inner)?,
+        },
+        master_ratio,
+        rules,
+    })
+}
+
+/// Reads and parses a config file.
+pub fn load(path: &Path) -> Result<Settings, SettingsError> {
+    let text = std::fs::read_to_string(path).map_err(SettingsError::Io)?;
+    parse(&text)
+}

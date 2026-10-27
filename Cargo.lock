@@ -2162,6 +2162,7 @@ dependencies = [
  "tetsu-bus",
  "tetsu-bus-contract",
  "tokio",
+ "toml",
  "tracing-subscriber",
 ]
 
