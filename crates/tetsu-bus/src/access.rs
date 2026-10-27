@@ -164,7 +164,7 @@ pub fn in_wheel(passwd: &str, group: &str, uid: u32) -> bool {
     let Some((wheel_gid, members)) = group.lines().find_map(wheel_entry) else {
         return false;
     };
-    primary_gid == wheel_gid || members.iter().any(|member| *member == name)
+    primary_gid == wheel_gid || members.contains(&name)
 }
 
 /// `name:x:uid:gid:...` -> (name, gid), when the line is for `uid`.
