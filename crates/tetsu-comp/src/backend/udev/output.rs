@@ -119,7 +119,7 @@ fn light_device(state: &mut State, tty: &mut Tty, index: usize) -> Result<(), Bo
             .unwrap_or(&info.modes()[0]);
         let mode = Mode::from(drm_mode);
         let name = connector_name(&info);
-        let output = state.add_output(&name, mode.size, mode.refresh);
+        let output = state.add_virtual_output(&name, mode.size, mode.refresh);
         let mut planes = tty.devices[index]
             .manager
             .device()

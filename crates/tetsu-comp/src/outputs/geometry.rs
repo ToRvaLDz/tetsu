@@ -1,5 +1,6 @@
 //! Logical sizes and the automatic layout of outputs.
 
+use smithay::utils::Transform as SmithayTransform;
 use tetsu_bus::output::{Mode, Transform};
 
 /// The size of an output in the logical space: the mode divided by the
@@ -35,4 +36,19 @@ pub fn pack(outputs: &[(&str, i64, bool)]) -> Vec<(String, i64, i64)> {
         }
     }
     packed
+}
+
+/// The Wayland transform of an `output.v1` one; unknown values do not
+/// transform.
+pub fn to_smithay_transform(transform: Transform) -> SmithayTransform {
+    match transform {
+        Transform::Rotate90 => SmithayTransform::_90,
+        Transform::Rotate180 => SmithayTransform::_180,
+        Transform::Rotate270 => SmithayTransform::_270,
+        Transform::Flipped => SmithayTransform::Flipped,
+        Transform::Flipped90 => SmithayTransform::Flipped90,
+        Transform::Flipped180 => SmithayTransform::Flipped180,
+        Transform::Flipped270 => SmithayTransform::Flipped270,
+        Transform::Normal | Transform::Unknown => SmithayTransform::Normal,
+    }
 }

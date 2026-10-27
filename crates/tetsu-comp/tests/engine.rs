@@ -653,7 +653,7 @@ fn after_an_unplug_the_moved_windows_are_hidden_and_the_target_keeps_its_tiles()
     let view = Rect { x: 0, ..views[1].1 };
     let after = engine.arrange(&second, view);
     assert_eq!(ids(&after.tiled), [on_second.as_str()]);
-    assert_eq!(after.hidden, [on_first.clone()]);
+    assert_eq!(after.hidden, [on_first]);
     assert_eq!(after.tiled[0].1, view);
     checked(&mut engine);
 }

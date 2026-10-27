@@ -1,5 +1,5 @@
 //! The command line: `tetsu-comp [--backend winit|tty|headless]
-//! [--config <file>] [--headless-outputs <n>] [-- cmd...]`.
+//! [--config <file>] [--headless-outputs <n>] [--headless-hotplug] [-- cmd...]`.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 /// Usage text.
 pub const USAGE: &str = "usage: tetsu-comp [--backend winit|tty|headless] [--config <file>]
-                  [--headless-outputs <1..4>] [-- <command>...]
+                  [--headless-outputs <1..4>] [--headless-hotplug]
+                  [-- <command>...]
 
   --backend   winit (nested in the host session), tty (a VT) or headless
               (no output device; for tests). Default: winit when
@@ -17,6 +18,10 @@ pub const USAGE: &str = "usage: tetsu-comp [--backend winit|tty|headless] [--con
   --headless-outputs
               headless only: the number of virtual outputs, 1 to 4.
               Default: 1.
+  --headless-hotplug
+              headless only: read hotplug commands from stdin, one per
+              line: `add [<w>x<h>]`, `add-named <name> <w>x<h>` and
+              `remove <name>`. For tests.
   -- <cmd>    run <cmd> as the first client, with WAYLAND_DISPLAY and
               TETSU_COMP_SOCKET set.";
 
@@ -40,6 +45,8 @@ pub struct Cli {
     pub config: Option<PathBuf>,
     /// Virtual outputs of the headless backend, 1..=4.
     pub headless_outputs: u8,
+    /// Whether the headless backend reads hotplug commands from stdin.
+    pub headless_hotplug: bool,
     /// The first client and its arguments, empty for none.
     pub command: Vec<OsString>,
 }
@@ -64,7 +71,8 @@ pub enum CliError {
     UnknownOption(String),
     /// A number that is not in range: the option and the text it got.
     BadNumber(&'static str, String),
-    /// `--headless-outputs` with a backend other than headless.
+    /// `--headless-outputs` or `--headless-hotplug` with a backend other
+    /// than headless.
     HeadlessOnly,
 }
 
@@ -80,7 +88,10 @@ impl fmt::Display for CliError {
                     "{option} wants a number from 1 to {MAX_OUTPUTS}, not {text:?}"
                 )
             }
-            Self::HeadlessOnly => write!(f, "--headless-outputs needs --backend headless"),
+            Self::HeadlessOnly => write!(
+                f,
+                "--headless-outputs and --headless-hotplug need --backend headless"
+            ),
         }
     }
 }
@@ -112,6 +123,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, hosted: bool) -> Result<P
     let mut backend = None;
     let mut config = None;
     let mut outputs = None;
+    let mut hotplug = false;
     let mut args = args.into_iter();
     let mut command = Vec::new();
     while let Some(arg) = args.next() {
@@ -137,17 +149,19 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, hosted: bool) -> Result<P
             "--headless-outputs" => {
                 outputs = Some(outputs_named(&value("--headless-outputs")?)?);
             }
+            "--headless-hotplug" if inline.is_none() => hotplug = true,
             _ => return Err(CliError::UnknownOption(text)),
         }
     }
     let backend = backend.unwrap_or(if hosted { Backend::Winit } else { Backend::Tty });
-    if outputs.is_some() && backend != Backend::Headless {
+    if (outputs.is_some() || hotplug) && backend != Backend::Headless {
         return Err(CliError::HeadlessOnly);
     }
     Ok(Parsed::Run(Cli {
         backend,
         config,
         headless_outputs: outputs.unwrap_or(1),
+        headless_hotplug: hotplug,
         command,
     }))
 }

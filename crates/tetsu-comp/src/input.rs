@@ -10,11 +10,12 @@ use smithay::backend::input::{
     InputTime, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     PointerMotionEvent,
 };
-use smithay::desktop::WindowSurfaceType;
+use smithay::desktop::{WindowSurfaceType, layer_map_for_output};
 use smithay::input::keyboard::{FilterResult, Keysym, ModifiersState, keysyms};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
+use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 
 use crate::engine::Action as EngineAction;
 use crate::state::State;
@@ -131,14 +132,25 @@ impl State {
         }
     }
 
-    fn pointer_location(&self) -> Point<f64, Logical> {
+    pub(crate) fn pointer_location(&self) -> Point<f64, Logical> {
         self.seat
             .get_pointer()
             .map_or_else(Point::default, |p| p.current_location())
     }
 
+    /// After an output went away: moves the pointer back inside the
+    /// outputs that are left.
+    pub(crate) fn keep_pointer_on_screen(&mut self) {
+        let location = self.pointer_location();
+        let clamped = self.clamp_to_outputs(location);
+        if clamped != location {
+            let time = u32::try_from(self.start_time.elapsed().as_millis()).unwrap_or(u32::MAX);
+            self.move_pointer(clamped, InputTime::from_millis(time));
+        }
+    }
+
     /// Keeps `location` inside the union of the outputs.
-    fn clamp_to_outputs(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
+    pub(crate) fn clamp_to_outputs(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
         let mut bounds: Option<(f64, f64, f64, f64)> = None;
         for geometry in self
             .space
@@ -165,7 +177,7 @@ impl State {
         }
     }
 
-    fn move_pointer(&mut self, location: Point<f64, Logical>, time: InputTime) {
+    pub(crate) fn move_pointer(&mut self, location: Point<f64, Logical>, time: InputTime) {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
@@ -182,15 +194,36 @@ impl State {
         pointer.frame(self);
     }
 
-    /// The surface under a point and its origin, for pointer focus.
+    /// The surface under a point and its origin, for pointer focus: the
+    /// overlay and top layers, then the windows, then the bottom and
+    /// background layers.
     pub fn surface_under(
         &self,
         location: Point<f64, Logical>,
     ) -> Option<(WlSurface, Point<f64, Logical>)> {
-        let (window, origin) = self.space.element_under(location)?;
-        let (surface, offset) =
-            window.surface_under(location - origin.to_f64(), WindowSurfaceType::ALL)?;
-        Some((surface, (offset + origin).to_f64()))
+        let output = self.space.output_under(location).next().cloned();
+        let on_layer = |layer: WlrLayer| {
+            let output = output.as_ref()?;
+            let geometry = self.space.output_geometry(output)?;
+            let map = layer_map_for_output(output);
+            let relative = location - geometry.loc.to_f64();
+            let surface = map.layer_under(layer, relative)?;
+            let placed = map.layer_geometry(surface)?;
+            let (found, offset) =
+                surface.surface_under(relative - placed.loc.to_f64(), WindowSurfaceType::ALL)?;
+            Some((found, (offset + placed.loc + geometry.loc).to_f64()))
+        };
+        let on_window = || {
+            let (window, origin) = self.space.element_under(location)?;
+            let (surface, offset) =
+                window.surface_under(location - origin.to_f64(), WindowSurfaceType::ALL)?;
+            Some((surface, (offset + origin).to_f64()))
+        };
+        on_layer(WlrLayer::Overlay)
+            .or_else(|| on_layer(WlrLayer::Top))
+            .or_else(on_window)
+            .or_else(|| on_layer(WlrLayer::Bottom))
+            .or_else(|| on_layer(WlrLayer::Background))
     }
 
     fn on_key<I: InputBackend>(&mut self, event: &I::KeyboardKeyEvent) {

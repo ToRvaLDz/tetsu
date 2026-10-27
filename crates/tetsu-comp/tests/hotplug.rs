@@ -165,8 +165,8 @@ fn losing_every_output_does_not_end_the_compositor() {
     let mut wl = WlClient::connect(&comp.wayland_socket());
     let top = wl.map("a", "one");
 
-    comp.control("remove HEADLESS-1");
     comp.control("remove HEADLESS-2");
+    comp.control("remove HEADLESS-1");
     wl.wait_for_outputs(&[]);
     let list = eventually("every workspace orphaned", || {
         let list = bus.call(&contract, LIST_WORKSPACES);

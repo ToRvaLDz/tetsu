@@ -1,5 +1,7 @@
 //! wl_compositor, wl_shm and buffers: the first buffer maps a toplevel.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use smithay::backend::renderer::utils::{RendererSurfaceStateUserData, on_commit_buffer_handler};
 use smithay::reexports::calloop::Interest;
 use smithay::reexports::wayland_server::protocol::wl_buffer;
@@ -51,6 +53,7 @@ impl CompositorHandler for State {
             if let Some(window) = self.window_for_surface(&root) {
                 window.on_commit();
             }
+            self.commit_layer(&root);
         }
         self.commit_toplevel(surface);
         self.popups.commit(surface);
@@ -160,7 +163,24 @@ impl State {
     }
 }
 
-fn has_buffer(surface: &WlSurface) -> bool {
+/// Whether `surface` has a buffer, and this is the first time anyone asks
+/// after it got one.
+pub(crate) fn first_buffer(surface: &WlSurface) -> bool {
+    if !has_buffer(surface) {
+        return false;
+    }
+    with_states(surface, |states| {
+        let flag = states
+            .data_map
+            .get_or_insert_threadsafe(|| FirstBuffer(AtomicBool::new(false)));
+        !flag.0.swap(true, Ordering::Relaxed)
+    })
+}
+
+/// Set once the first buffer of a surface was reported.
+struct FirstBuffer(AtomicBool);
+
+pub(crate) fn has_buffer(surface: &WlSurface) -> bool {
     with_states(surface, |states| {
         states
             .data_map

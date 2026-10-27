@@ -198,7 +198,6 @@ fn hotplug_sides_are_one_to_sixteen_thousand_three_hundred_eighty_four() {
         "1280x720x3",
         "1280 720",
         "+5x5",
-        "",
     ] {
         assert!(parse_command(&format!("add {bad}")).is_err(), "{bad:?}");
     }

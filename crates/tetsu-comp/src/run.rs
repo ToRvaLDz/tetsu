@@ -28,7 +28,9 @@ pub fn run(cli: &Cli, settings: Settings) -> Result<(), Box<dyn Error>> {
     let mut state = State::new(&mut event_loop, display, settings)?;
 
     match cli.backend {
-        Backend::Headless => headless::init(&mut state, cli.headless_outputs)?,
+        Backend::Headless => {
+            headless::init(&mut state, cli.headless_outputs, cli.headless_hotplug)?;
+        }
         Backend::Winit => winit::init(&mut state)?,
         Backend::Tty => udev::init(&mut state)?,
     }

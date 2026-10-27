@@ -6,23 +6,29 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use smithay::desktop::{PopupManager, Space, Window};
+use smithay::desktop::{PopupManager, Space, Window, layer_map_for_output};
 use smithay::input::{Seat, SeatState};
-use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
+use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, LoopSignal, Mode as PollMode, PostAction,
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
+use smithay::reexports::wayland_server::backend::{
+    ClientData, ClientId, DisconnectReason, GlobalId,
+};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Display, DisplayHandle, Resource};
-use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size, Transform};
+use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
 use smithay::wayland::compositor::{CompositorClientState, CompositorState, with_states};
 use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::drm_syncobj::DrmSyncobjState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
+use smithay::wayland::shell::wlr_layer::{
+    KeyboardInteractivity, Layer as WlrLayer, WlrLayerShellState,
+};
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgShellState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
@@ -31,13 +37,18 @@ use crate::bus::{Publisher, Snapshot};
 use crate::engine::{Arrangement, Engine};
 use crate::gpu::sync::ExplicitSync;
 use crate::input::ModKey;
-use crate::layout::Rect;
-use crate::model::WindowInfo;
+use crate::layout::{Rect, usable};
+use crate::model::{OutputInfo, WindowInfo};
+use crate::outputs::geometry::to_smithay_transform;
 use crate::settings::{RenderSettings, Settings};
 
 /// Key repeat delay and rate of the seat keyboard.
 const REPEAT_DELAY_MS: i32 = 200;
 const REPEAT_RATE: i32 = 25;
+/// How long a removed `wl_output` global stays listed, disabled, before it
+/// is destroyed: a client binding at that very moment must not hit a
+/// global that is gone.
+const GLOBAL_REMOVE_DELAY: Duration = Duration::from_secs(10);
 
 /// An output the model knows.
 pub struct OutputEntry {
@@ -47,6 +58,8 @@ pub struct OutputEntry {
     pub output: Output,
     /// Where it sits in the space.
     pub origin: Point<i32, Logical>,
+    /// Its `wl_output` global.
+    pub(crate) global: GlobalId,
 }
 
 /// A mapped window and its id in the model.
@@ -88,6 +101,7 @@ pub struct State {
     pub space: Space<Window>,
     pub(crate) compositor_state: CompositorState,
     pub(crate) xdg_shell_state: XdgShellState,
+    pub(crate) layer_shell_state: WlrLayerShellState,
     pub(crate) shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub(crate) seat_state: SeatState<State>,
@@ -145,6 +159,7 @@ impl State {
             space: Space::default(),
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
+            layer_shell_state: WlrLayerShellState::new::<Self>(&dh),
             shm_state: ShmState::new::<Self>(&dh, vec![]),
             output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(&dh),
             seat_state,
@@ -202,42 +217,125 @@ impl State {
         Ok(socket_name)
     }
 
-    /// Adds an output of `size` at `refresh` mHz to the right of the others.
-    pub fn add_output(
+    /// Adds an output of `size` at `refresh` mHz with one mode.
+    pub fn add_virtual_output(
         &mut self,
         name: &str,
         size: Size<i32, smithay::utils::Physical>,
         refresh: i32,
     ) -> Output {
+        let mut info = OutputInfo::named(name);
+        info.modes = vec![tetsu_bus::output::Mode {
+            width: i64::from(size.w),
+            height: i64::from(size.h),
+            refresh_mhz: i64::from(refresh),
+            preferred: true,
+        }];
+        self.add_output(info)
+    }
+
+    /// Adds an output: the model places it (and brings back the workspaces
+    /// it had), the `wl_output` global appears, the windows are laid out
+    /// again.
+    pub fn add_output(&mut self, info: OutputInfo) -> Output {
         let output = Output::new(
-            name.to_owned(),
+            info.name.clone(),
             PhysicalProperties {
                 size: (0, 0).into(),
                 subpixel: Subpixel::Unknown,
-                make: "Tetsu".into(),
-                model: name.to_owned(),
-                serial_number: "Unknown".into(),
+                make: info.make.clone().unwrap_or_else(|| "Tetsu".into()),
+                model: info.model.clone().unwrap_or_else(|| info.name.clone()),
+                serial_number: info.serial.clone().unwrap_or_else(|| "Unknown".into()),
             },
         );
-        let mode = Mode { size, refresh };
-        let x: i32 = self
-            .outputs
-            .iter()
-            .filter_map(|o| o.output.current_mode())
-            .map(|m| m.size.w)
-            .sum();
-        let origin = Point::from((x, 0));
-        let _global = output.create_global::<State>(&self.display_handle);
-        output.change_current_state(Some(mode), Some(Transform::Normal), None, Some(origin));
-        output.set_preferred(mode);
-        self.space.map_output(&output, origin);
-        let id = self.engine.add_output(name);
+        let smithay_mode = |m: &tetsu_bus::output::Mode| Mode {
+            size: (
+                i32::try_from(m.width).unwrap_or(i32::MAX),
+                i32::try_from(m.height).unwrap_or(i32::MAX),
+            )
+                .into(),
+            refresh: i32::try_from(m.refresh_mhz).unwrap_or(i32::MAX),
+        };
+        for mode in &info.modes {
+            output.add_mode(smithay_mode(mode));
+            if mode.preferred {
+                output.set_preferred(smithay_mode(mode));
+            }
+        }
+        let current = info
+            .current_mode
+            .and_then(|i| info.modes.get(i))
+            .map(smithay_mode);
+        let scale = (info.scale != 1.0).then_some(Scale::Fractional(info.scale));
+        let global = output.create_global::<State>(&self.display_handle);
+        output.change_current_state(
+            current,
+            Some(to_smithay_transform(info.transform)),
+            scale,
+            None,
+        );
+        let id = self.engine.add_output_info(info);
         self.outputs.push(OutputEntry {
             id,
             output: output.clone(),
-            origin,
+            origin: Point::from((0, 0)),
+            global,
         });
+        self.apply_output_layout();
+        self.relayout();
+        self.sync_focus();
         output
+    }
+
+    /// Unplugs an output: its layer surfaces are closed, its workspaces
+    /// move to another output (see the model), the `wl_output` global goes
+    /// away and the windows are laid out again.
+    pub fn remove_output(&mut self, output: &Output) {
+        let Some(at) = self.outputs.iter().position(|o| &o.output == output) else {
+            return;
+        };
+        let entry = self.outputs.remove(at);
+        {
+            let mut map = layer_map_for_output(&entry.output);
+            let layers: Vec<_> = map.layers().cloned().collect();
+            for layer in layers {
+                layer.layer_surface().send_close();
+                map.unmap_layer(&layer);
+            }
+        }
+        self.space.unmap_output(&entry.output);
+        self.engine.remove_output(&entry.id);
+        self.display_handle
+            .disable_global::<State>(entry.global.clone());
+        let global = entry.global;
+        let _ = self.loop_handle.insert_source(
+            Timer::from_duration(GLOBAL_REMOVE_DELAY),
+            move |_, (), state| {
+                state.display_handle.remove_global::<State>(global.clone());
+                TimeoutAction::Drop
+            },
+        );
+        eprintln!("tetsu-comp: output {} removed", entry.output.name());
+        self.apply_output_layout();
+        self.relayout();
+        self.sync_focus();
+        self.keep_pointer_on_screen();
+    }
+
+    /// Puts every output where the model's automatic layout says. Nothing
+    /// else computes an origin.
+    pub fn apply_output_layout(&mut self) {
+        let layout = self.engine.model().output_layout();
+        for entry in &mut self.outputs {
+            let Some((_, rect)) = layout.iter().find(|(id, _)| *id == entry.id) else {
+                continue;
+            };
+            entry.origin = Point::from((rect.x, rect.y));
+            entry
+                .output
+                .change_current_state(None, None, None, Some(entry.origin));
+            self.space.map_output(&entry.output, entry.origin);
+        }
     }
 
     /// Resizes an output's mode and tiles its windows again.
@@ -250,27 +348,44 @@ impl State {
         let mode = Mode { size, refresh };
         output.change_current_state(Some(mode), None, None, None);
         output.set_preferred(mode);
+        layer_map_for_output(output).arrange();
+        if let Some(entry) = self.outputs.iter().find(|o| &o.output == output) {
+            let modes = vec![tetsu_bus::output::Mode {
+                width: i64::from(size.w),
+                height: i64::from(size.h),
+                refresh_mhz: i64::from(refresh),
+                preferred: true,
+            }];
+            self.engine.set_output_mode(&entry.id, modes, Some(0));
+        }
+        self.apply_output_layout();
         self.relayout();
     }
 
-    fn viewport(entry: &OutputEntry) -> Rect {
-        let size = entry
-            .output
-            .current_mode()
-            .map_or((0, 0).into(), |m| m.size);
-        Rect {
-            x: entry.origin.x,
-            y: entry.origin.y,
-            w: size.w,
-            h: size.h,
-        }
-    }
-
-    /// The rect each output lays its windows out in.
+    /// The rect each output lays its windows out in: the output narrowed
+    /// by the exclusive zones of its layer surfaces.
     pub fn viewports(&self) -> Vec<(String, Rect)> {
-        self.outputs
-            .iter()
-            .map(|o| (o.id.clone(), Self::viewport(o)))
+        self.engine
+            .model()
+            .output_layout()
+            .into_iter()
+            .map(|(id, rect)| {
+                let view = self
+                    .outputs
+                    .iter()
+                    .find(|o| o.id == id)
+                    .map_or(rect, |entry| {
+                        let zone = layer_map_for_output(&entry.output).non_exclusive_zone();
+                        let zone = Rect {
+                            x: zone.loc.x,
+                            y: zone.loc.y,
+                            w: zone.size.w,
+                            h: zone.size.h,
+                        };
+                        usable(rect, zone)
+                    });
+                (id, view)
+            })
             .collect()
     }
 
@@ -304,15 +419,12 @@ impl State {
     /// tiles, then floating windows above them; windows of other
     /// workspaces are unmapped.
     pub fn relayout(&mut self) {
-        let arrangements: Vec<(Rect, Arrangement)> = self
-            .outputs
-            .iter()
-            .map(|o| {
-                let view = Self::viewport(o);
-                (view, self.engine.arrange(&o.id, view))
-            })
+        let arrangements: Vec<Arrangement> = self
+            .viewports()
+            .into_iter()
+            .map(|(id, view)| self.engine.arrange(&id, view))
             .collect();
-        for (_, arrangement) in &arrangements {
+        for arrangement in &arrangements {
             for id in &arrangement.hidden {
                 if let Some(mapped) = self.mapped.iter().find(|m| &m.id == id) {
                     self.space.unmap_elem(&mapped.window);
@@ -353,8 +465,8 @@ impl State {
     fn raise_floating(&mut self) {
         let focused = self.engine.model().focused_window().map(str::to_owned);
         let mut order: Vec<String> = Vec::new();
-        for o in &self.outputs {
-            let arrangement = self.engine.arrange(&o.id, Self::viewport(o));
+        for (id, view) in self.viewports() {
+            let arrangement = self.engine.arrange(&id, view);
             order.extend(arrangement.floating.into_iter().map(|(id, _)| id));
         }
         order.sort_by_key(|id| focused.as_ref() == Some(id));
@@ -428,13 +540,39 @@ impl State {
                 toplevel.send_pending_configure();
             }
         }
-        let surface = target
-            .as_ref()
-            .and_then(Window::toplevel)
-            .map(|t| t.wl_surface().clone());
+        // A mapped layer that asks for exclusive keyboard focus wins.
+        let surface = self.exclusive_layer().or_else(|| {
+            target
+                .as_ref()
+                .and_then(Window::toplevel)
+                .map(|t| t.wl_surface().clone())
+        });
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
         }
+    }
+
+    /// The surface of a mapped `overlay` or `top` layer that asked for
+    /// exclusive keyboard interactivity; `overlay` first, the focused output
+    /// first. `on_demand` layers get no focus yet.
+    fn exclusive_layer(&self) -> Option<WlSurface> {
+        let focused = self.engine.model().focused_output();
+        let mut outputs: Vec<&OutputEntry> = self.outputs.iter().collect();
+        outputs.sort_by_key(|o| Some(o.id.as_str()) != focused);
+        [WlrLayer::Overlay, WlrLayer::Top]
+            .into_iter()
+            .find_map(|wanted| {
+                outputs.iter().find_map(|entry| {
+                    let map = layer_map_for_output(&entry.output);
+                    map.layers_on(wanted)
+                        .find(|layer| {
+                            layer.cached_state().keyboard_interactivity
+                                == KeyboardInteractivity::Exclusive
+                                && crate::handlers::has_buffer(layer.wl_surface())
+                        })
+                        .map(|layer| layer.wl_surface().clone())
+                })
+            })
     }
 
     /// The process id of the client owning `surface`.
@@ -461,6 +599,20 @@ impl State {
             window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| {
                 Some(output.clone())
             });
+        }
+        let zone_changed = {
+            let mut map = layer_map_for_output(output);
+            for layer in map.layers() {
+                layer.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| {
+                    Some(output.clone())
+                });
+            }
+            let before = map.non_exclusive_zone();
+            map.cleanup();
+            map.non_exclusive_zone() != before
+        };
+        if zone_changed {
+            self.relayout();
         }
         self.space.refresh();
         self.popups.cleanup();

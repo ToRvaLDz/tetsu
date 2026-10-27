@@ -2,9 +2,12 @@
 
 mod compositor;
 mod dmabuf;
+mod layer_shell;
 mod shell_misc;
 mod syncobj;
 mod xdg_shell;
+
+pub(crate) use compositor::has_buffer;
 
 use crate::state::State;
 
