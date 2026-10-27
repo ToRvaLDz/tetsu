@@ -41,8 +41,8 @@ window and workspace interfaces of the bus (`org.tetsu.comp.window.v1`,
   software renderer (llvmpipe, as on QEMU's std VGA) is used only when it
   is the only device. The log says what was chosen:
 
-      tetsu-comp: render device /dev/dri/renderD128 (i915), automatic: only device
-      tetsu-comp: output eDP-1 on /dev/dri/card0, cross-gpu=false
+      tetsu-comp: render device renderD128 (i915), automatic: only device
+      tetsu-comp: output eDP-1 on card0, cross-gpu=false
 
   There is no hotplug yet: cards and monitors must be connected before
   start, and plugging an external monitor later does not move the render
