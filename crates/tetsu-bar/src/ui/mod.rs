@@ -195,7 +195,10 @@ fn insert_sources(handle: &LoopHandle<'static, Ui>, messages: UiChannel) -> io::
             Timer::from_duration(SAMPLE_INTERVAL),
             |_, _, ui: &mut Ui| {
                 let root = Path::new(ROOT);
+                // The minute timer runs on the monotonic clock and stalls across
+                // suspend; re-reading the wall clock here bounds the staleness.
                 let changes = [
+                    Change::Tick(clock::label(&clock::now())),
                     Change::Battery(battery::read(root)),
                     Change::Network(network::read(root)),
                 ];
