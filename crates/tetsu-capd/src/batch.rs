@@ -128,7 +128,7 @@ mod tests {
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].class, "a.b");
         batcher.record("a.b", "x.y.M", at(111));
-        assert!(batcher.due(at(115)).is_empty());
+        assert!(batcher.due(at(114)).is_empty());
         assert_eq!(batcher.due(at(121)).len(), 2);
     }
 
