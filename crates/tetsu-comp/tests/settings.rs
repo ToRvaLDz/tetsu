@@ -2,7 +2,7 @@
 
 use tetsu_comp::layout::{Gaps, LayoutKind};
 use tetsu_comp::rules::{Pattern, Rule};
-use tetsu_comp::settings::{Settings, SettingsError, parse};
+use tetsu_comp::settings::{DeviceChoice, Settings, SettingsError, SyncMode, parse};
 
 fn err(text: &str) -> String {
     match parse(text) {
@@ -166,4 +166,61 @@ fn a_missing_file_is_an_error_naming_it() {
     assert!(matches!(e, SettingsError::Io(_)));
     std::fs::write(&path, "[layout]\ngaps_outer = 3\n").unwrap();
     assert_eq!(tetsu_comp::settings::load(&path).unwrap().gaps.outer, 3);
+}
+
+#[test]
+fn the_render_defaults_are_auto_auto_and_no_wait() {
+    let render = parse("").unwrap().render;
+    assert_eq!(render.device, DeviceChoice::Auto);
+    assert_eq!(render.explicit_sync, SyncMode::Auto);
+    assert!(!render.wait_for_frame_completion);
+}
+
+#[test]
+fn a_render_table_parses_each_valid_value() {
+    let text = "[render]\ndevice = \"/dev/dri/renderD129\"\nexplicit_sync = \"off\"\nwait_for_frame_completion = true\n";
+    let render = parse(text).unwrap().render;
+    assert_eq!(
+        render.device,
+        DeviceChoice::Node("/dev/dri/renderD129".into())
+    );
+    assert_eq!(render.explicit_sync, SyncMode::Off);
+    assert!(render.wait_for_frame_completion);
+
+    let render = parse("[render]\ndevice = \"auto\"\nexplicit_sync = \"on\"\n")
+        .unwrap()
+        .render;
+    assert_eq!(render.device, DeviceChoice::Auto);
+    assert_eq!(render.explicit_sync, SyncMode::On);
+    assert_eq!(
+        parse("[render]\nexplicit_sync = \"auto\"\n")
+            .unwrap()
+            .render
+            .explicit_sync,
+        SyncMode::Auto
+    );
+}
+
+#[test]
+fn a_bad_render_device_names_the_key() {
+    for bad in ["card0", "/etc/passwd", "/dev/dri/../sda", "", "/dev/dri/"] {
+        let message = err(&format!("[render]\ndevice = {bad:?}\n"));
+        assert!(message.contains("render.device"), "{bad}: {message}");
+    }
+}
+
+#[test]
+fn an_unknown_sync_mode_names_the_key() {
+    let message = err("[render]\nexplicit_sync = \"force\"\n");
+    assert!(message.contains("render.explicit_sync"), "{message}");
+    assert!(matches!(
+        parse("[render]\nexplicit_sync = \"force\"\n"),
+        Err(SettingsError::UnknownSyncMode(_))
+    ));
+}
+
+#[test]
+fn an_unknown_render_key_is_refused() {
+    let message = err("[render]\nvrr = true\n");
+    assert!(message.contains("vrr"), "{message}");
 }
