@@ -4,10 +4,13 @@
 //! functions, never zlink directly.
 
 pub mod notify;
+mod nullable;
 pub mod peer;
 pub mod server;
 pub mod session;
 pub mod tx;
+pub mod window;
+pub mod workspace;
 
 fn into_io(e: zlink::Error) -> std::io::Error {
     match e {
