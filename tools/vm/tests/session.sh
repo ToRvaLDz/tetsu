@@ -31,11 +31,13 @@ ts() {
 
 session_checks() {
   local sock out
+  # The serial console is a terminal: keep the systemd tools from paging.
+  gexec "export SYSTEMD_PAGER= PAGER=cat"
   # 1. Boots to greetd.
   check "the default target is graphical" '^graphical\.target$' "systemctl get-default"
   check "greetd is active" '^active$' "systemctl is-active greetd.service"
   check "the greeter is agreety on tty1" '^tty1$' \
-    "$(guest_poll 60 'ps -o tty= -p "$(pgrep -u greeter -x agreety | head -n 1)" 2>/dev/null | grep -qx tty1') ps -o tty= -p \"\$(pgrep -u greeter -x agreety | head -n 1)\""
+    "$(guest_poll 60 'ps -o tty= -p "$(pgrep -u greeter -x agreety | head -n 1)" 2>/dev/null | grep -qx tty1'); ps -o tty= -p \"\$(pgrep -u greeter -x agreety | head -n 1)\""
   check "the three daemons are enabled for every user" '^enabled$' \
     "systemctl --user is-enabled tetsu-notifyd.service tetsu-capd.service tetsu-bar.service | sort -u"
   check_not "no session binary has a missing library" 'not found' \
@@ -55,7 +57,7 @@ session_checks() {
   assert_contains "$SCENARIO: agreety logged in through greetd" "$EXPECT_LINE" "AGREETY-RC-0"
 
   # 3. The session is up.
-  gexec "$(guest_poll 90 'systemctl --user is-active -q tetsu-bar.service tetsu-capd.service') true" 120
+  gexec "$(guest_poll 90 'systemctl --user is-active -q tetsu-bar.service tetsu-capd.service'); true" 120
   gexec "systemctl --user is-active tetsu-comp.service graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service | grep -cx active"
   assert_eq "$SCENARIO: five units active" "5" "$(tail -n 1 <<<"$GOUT")"
   check "the greetd logind session is a wayland one on VT1" 'Type=wayland' \
@@ -69,7 +71,7 @@ session_checks() {
     "e=\$(systemctl --user show-environment); d=\$(sed -n 's/^WAYLAND_DISPLAY=//p' <<<\"\$e\"); test -S \"/run/user/\$(id -u)/\$d\" && echo sock-ok"
   check "the compositor bus socket exists" 'sock-ok' \
     "s=\$(systemctl --user show-environment | sed -n 's/^TETSU_COMP_SOCKET=//p'); test -S \"\$s\" && echo sock-ok"
-  check "ListOutputs names an output" '"name"' \
+  check "ListOutputs names an output" '"id" : "out-' \
     "varlinkctl call \"\$(systemctl --user show-environment | sed -n 's/^TETSU_COMP_SOCKET=//p')\" org.tetsu.comp.output.v1.ListOutputs '{}'"
   check "notifyd answers org.tetsu.notify.v1" 'org\.tetsu\.notify\.v1' \
     "varlinkctl info /run/user/\$(id -u)/tetsu/org.tetsu.notify.v1"
@@ -98,10 +100,10 @@ session_checks() {
 
   # 5. Ends cleanly.
   gexec "systemctl --user stop tetsu-comp.service; echo stopped"
-  gexec "$(guest_poll 60 '! systemctl --user is-active -q graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service') systemctl --user is-active graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service | sort -u" 90
+  gexec "$(guest_poll 60 '! systemctl --user is-active -q graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service'); systemctl --user is-active graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service | sort -u" 90
   assert_eq "$SCENARIO: the target and the daemons are inactive" "inactive" "$(tail -n 1 <<<"$GOUT")"
   check "the greeter is back" '^[0-9]+$' \
-    "$(guest_poll 60 'pgrep -u greeter -x agreety') pgrep -u greeter -x agreety | head -n 1"
+    "$(guest_poll 60 'pgrep -u greeter -x agreety'); pgrep -u greeter -x agreety | head -n 1"
   check_not "WAYLAND_DISPLAY is gone from the manager environment" '^WAYLAND_DISPLAY=' \
     "systemctl --user show-environment"
 }
