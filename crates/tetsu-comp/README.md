@@ -96,10 +96,13 @@ cut to 32 characters. `ConfigureOutputs` answers
 - **Unplug.** The workspaces of the output move to the first remaining
   output, after its highest index and in their order; each remembers its
   home (connector name, index, whether it was active). When an output with
-  that name comes back, they return to their old indices and the one that
-  was active is active again; no workspace is created. With no output
+  that name comes back, they return to their old indices and one of them
+  becomes active again: the focused workspace if it is among them, else the
+  one that was active at home; no workspace is created. With no output
   left, workspaces have `output_id: null` and nothing is focused; the next
-  output adopts them. An output with a new name gets a fresh workspace.
+  output adopts them (the focused workspace again wins, then the one that
+  was active, then the lowest), and windows opened meanwhile are mapped on
+  the workspace that gets the focus. An output with a new name gets a fresh workspace.
   `Super+N` does not reach a moved workspace whose index is above 8 until
   its home returns.
 - **`wl_output`.** The global is disabled at once and destroyed 10 s later.
