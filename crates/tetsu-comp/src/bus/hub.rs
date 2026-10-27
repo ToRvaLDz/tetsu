@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 use tetsu_bus::output::{ListOutputsReply, Output, OutputEvent, OutputKind};
 use tetsu_bus::server::StreamItem;
+use tetsu_bus::session::{GetSessionReply, SessionEvent, SessionKind};
 use tetsu_bus::window::{ListWindowsReply, Window, WindowEvent, WindowKind};
 use tetsu_bus::workspace::{ListWorkspacesReply, Workspace, WorkspaceEvent, WorkspaceKind};
 use tokio::sync::mpsc;
@@ -56,6 +57,7 @@ pub struct Mirror {
     active: BTreeMap<String, String>,
     focused_workspace: Option<String>,
     outputs: Vec<Output>,
+    locked: bool,
 }
 
 impl Mirror {
@@ -68,6 +70,7 @@ impl Mirror {
             active: snapshot.workspaces.active.clone(),
             focused_workspace: snapshot.workspaces.focused_id.clone(),
             outputs: snapshot.outputs.outputs.clone(),
+            locked: snapshot.locked,
         }
     }
 
@@ -169,6 +172,23 @@ impl Mirror {
         }
     }
 
+    /// Applies one session event.
+    pub fn apply_session(&mut self, event: &SessionEvent) {
+        match event.kind {
+            SessionKind::Initial => self.locked = event.locked.unwrap_or(self.locked),
+            SessionKind::Locked => self.locked = true,
+            SessionKind::Unlocked => self.locked = false,
+            SessionKind::Unknown => {}
+        }
+    }
+
+    /// For `GetSession`.
+    pub fn session(&self) -> GetSessionReply {
+        GetSessionReply {
+            locked: self.locked,
+        }
+    }
+
     /// For `ListOutputs`.
     pub fn outputs(&self) -> ListOutputsReply {
         ListOutputsReply {
@@ -201,6 +221,10 @@ impl Mirror {
         OutputEvent::initial(self.outputs.clone())
     }
 
+    fn session_initial(&self) -> SessionEvent {
+        SessionEvent::initial(self.locked)
+    }
+
     fn workspaces_initial(&self) -> WorkspaceEvent {
         WorkspaceEvent::initial(
             self.workspaces.clone(),
@@ -212,13 +236,14 @@ impl Mirror {
 
 type Watchers = Vec<mpsc::Sender<StreamItem>>;
 
-/// The mirror and the watchers of the three interfaces.
+/// The mirror and the watchers of the four interfaces.
 #[derive(Debug)]
 pub struct Hub {
     mirror: Mirror,
     window_watchers: Watchers,
     workspace_watchers: Watchers,
     output_watchers: Watchers,
+    session_watchers: Watchers,
 }
 
 impl Hub {
@@ -229,6 +254,7 @@ impl Hub {
             window_watchers: Vec::new(),
             workspace_watchers: Vec::new(),
             output_watchers: Vec::new(),
+            session_watchers: Vec::new(),
         }
     }
 
@@ -253,6 +279,10 @@ impl Hub {
             self.mirror.apply_output(event);
             fan_out(&mut self.output_watchers, event);
         }
+        for event in &events.session {
+            self.mirror.apply_session(event);
+            fan_out(&mut self.session_watchers, event);
+        }
     }
 
     /// A new `WatchWindows` stream, `initial` already queued.
@@ -263,6 +293,11 @@ impl Hub {
     /// A new `WatchOutputs` stream, `initial` already queued.
     pub fn watch_outputs(&mut self) -> mpsc::Receiver<StreamItem> {
         watch(&mut self.output_watchers, &self.mirror.outputs_initial())
+    }
+
+    /// A new `WatchSession` stream, `initial` already queued.
+    pub fn watch_session(&mut self) -> mpsc::Receiver<StreamItem> {
+        watch(&mut self.session_watchers, &self.mirror.session_initial())
     }
 
     /// A new `WatchWorkspaces` stream, `initial` already queued.

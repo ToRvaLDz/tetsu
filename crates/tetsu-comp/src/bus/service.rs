@@ -6,11 +6,11 @@ use std::rc::Rc;
 use serde_json::{Value, json};
 use tetsu_bus::peer::Peer;
 use tetsu_bus::server::{ErrorReply, Handler, Request, Response};
-use tetsu_bus::{output, window, workspace};
+use tetsu_bus::{output, session, window, workspace};
 
 use super::hub::Hub;
 
-/// Serves the reads of the three interfaces from the hub. They are open to every
+/// Serves the reads of the four interfaces from the hub. They are open to every
 /// caller (#22.8 gates mutating calls only, and there are none yet).
 pub struct BusService {
     hub: Rc<RefCell<Hub>>,
@@ -44,6 +44,10 @@ impl Handler for BusService {
             "org.tetsu.comp.output.v1.WatchOutputs" => {
                 Response::BoundedStream(self.hub.borrow_mut().watch_outputs())
             }
+            "org.tetsu.comp.session.v1.GetSession" => value(&self.hub.borrow().mirror().session()),
+            "org.tetsu.comp.session.v1.WatchSession" => {
+                Response::BoundedStream(self.hub.borrow_mut().watch_session())
+            }
             // #97 serves it.
             "org.tetsu.comp.output.v1.ConfigureOutputs" => Response::Error(ErrorReply::new(
                 "org.varlink.service.MethodNotImplemented",
@@ -59,6 +63,7 @@ impl Handler for BusService {
                     window::INTERFACE,
                     workspace::INTERFACE,
                     output::INTERFACE,
+                    session::INTERFACE,
                 ],
             })),
             "org.varlink.service.GetInterfaceDescription" => {
@@ -71,6 +76,9 @@ impl Handler for BusService {
                     }
                     Some(output::INTERFACE) => {
                         Response::Reply(json!({ "description": output::IDL }))
+                    }
+                    Some(session::INTERFACE) => {
+                        Response::Reply(json!({ "description": session::IDL }))
                     }
                     Some(other) => Response::Error(ErrorReply::new(
                         "org.varlink.service.InterfaceNotFound",
