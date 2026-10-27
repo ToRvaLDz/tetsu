@@ -69,24 +69,24 @@ impl WlrLayerShellHandler for State {
 
 impl State {
     /// The output a new layer surface goes on: the one it names, else the
-    /// focused one, else the first. `None` when it names an output that is
-    /// gone or there is none.
+    /// focused one, else the first lit one. A dark output takes none. `None`
+    /// when it names an output that is gone or dark, or there is none.
     fn output_for_layer(&self, wanted: Option<&WlOutput>) -> Option<Output> {
         if let Some(wanted) = wanted {
             let output = Output::from_resource(wanted)?;
             return self
                 .outputs
                 .iter()
-                .any(|o| o.output == output)
+                .any(|o| o.enabled && o.output == output)
                 .then_some(output);
         }
         let focused = self
             .engine
             .model()
             .focused_output()
-            .and_then(|id| self.outputs.iter().find(|o| o.id == id));
+            .and_then(|id| self.outputs.iter().find(|o| o.enabled && o.id == id));
         focused
-            .or_else(|| self.outputs.first())
+            .or_else(|| self.outputs.iter().find(|o| o.enabled))
             .map(|o| o.output.clone())
     }
 

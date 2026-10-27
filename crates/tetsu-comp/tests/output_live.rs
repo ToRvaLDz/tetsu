@@ -274,13 +274,14 @@ fn a_layer_surface_on_a_stale_dark_output_is_closed() {
     wl.keep_output("HEADLESS-1");
 
     configure(&mut client, &json!({ "out-1": { "enabled": false } }));
-    wl.wait_for_outputs(&["HEADLESS-2"]);
 
-    // The global stays bound for a while: a bar made now on the stale
-    // wl_output must not land on the dark output.
+    // The client has not read the global's removal yet (a bar re-creating
+    // its surface right after `closed`): its wl_output still resolves, and
+    // the bar must not land on the dark output.
     wl.bar_on_kept("HEADLESS-1");
     wl.wait_for_closed(1);
     assert_eq!(wl.closed_count(), 1);
+    assert!(wl.layer_sizes().is_empty());
 }
 
 const PERSISTED: &str = "[output.HEADLESS-2]\nscale = 2.0\nposition = { x = 0, y = 1080 }\n";
