@@ -9,3 +9,4 @@ pub mod glue;
 pub mod limits;
 pub mod modes;
 pub mod prefs;
+pub mod queue;

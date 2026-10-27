@@ -155,12 +155,21 @@ fn light_connector(
         .find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
         .unwrap_or(&info.modes()[0]);
     let name = connector_name(&info);
-    // A dark output stays listed and stays dark: not lit again here.
-    if state.outputs.iter().any(|o| o.output.name() == name) {
-        return Ok(None);
-    }
-    let described = describe(device, handle, &info, &name, preferred);
-    let output = state.add_output(described);
+    // An output of that name already listed: a dark one stays dark, a lit
+    // one without a head (recovered after the last display went) is lit now.
+    let known = state
+        .outputs
+        .iter()
+        .find(|o| o.output.name() == name)
+        .map(|o| (o.output.clone(), o.enabled));
+    let (output, added) = match known {
+        Some((_, false)) => return Ok(None),
+        Some((output, true)) => (output, false),
+        None => {
+            let described = describe(device, handle, &info, &name, preferred);
+            (state.add_output(described), true)
+        }
+    };
     if !state
         .outputs
         .iter()
@@ -177,7 +186,9 @@ fn light_connector(
             Ok(Some(crtc))
         }
         Err(e) => {
-            state.remove_output(&output);
+            if added {
+                state.remove_output(&output);
+            }
             Err(format!("cannot light {name}: {e}").into())
         }
     }
@@ -358,8 +369,16 @@ impl State {
         let Some(mut tty) = self.tty.take() else {
             return;
         };
+        self.tty_taken = true;
         f(self, &mut tty);
         self.tty = Some(tty);
+        self.tty_taken = false;
+        // Changes made by a nested reapply while the tty was away.
+        if !self.tty_queue.is_empty()
+            && let Err(refused) = self.apply_tty(&[])
+        {
+            eprintln!("tetsu-comp: {refused}");
+        }
     }
 }
 

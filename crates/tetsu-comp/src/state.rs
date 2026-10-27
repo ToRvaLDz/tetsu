@@ -170,6 +170,10 @@ pub struct State {
     pub mod_key: ModKey,
     /// The tty backend, once started.
     pub tty: Option<crate::backend::udev::Tty>,
+    /// Output changes owed to the tty while it is taken out of the state.
+    pub(crate) tty_queue: crate::outputs::queue::ChangeQueue,
+    /// Whether the tty is taken out of the state right now.
+    pub(crate) tty_taken: bool,
     /// Switches to a VT (tty only).
     pub vt_switch: Option<Box<dyn FnMut(i32)>>,
 }
@@ -235,6 +239,8 @@ impl State {
             virtual_pointer_state,
             mod_key: ModKey::Super,
             tty: None,
+            tty_queue: crate::outputs::queue::ChangeQueue::default(),
+            tty_taken: false,
             vt_switch: None,
         })
     }

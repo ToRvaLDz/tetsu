@@ -16,6 +16,7 @@ use super::device::connector_name;
 use super::frame::Elements;
 use super::output::{configured_mode, free_crtc, light_head};
 use crate::outputs::glue::{OutputChange, Refused};
+use crate::outputs::queue::ChangeSink;
 use crate::state::State;
 
 fn refuse(id: &str, reason: String) -> Refused {
@@ -25,28 +26,51 @@ fn refuse(id: &str, reason: String) -> Refused {
     }
 }
 
+/// The tty backend as the place the changes go to.
+struct Live<'a> {
+    state: &'a mut State,
+    tty: &'a mut Tty,
+}
+
+impl ChangeSink for Live<'_> {
+    fn apply(&mut self, changes: &[OutputChange]) -> Result<(), Refused> {
+        let mut first_refusal = None;
+        for change in changes {
+            let (id, result) = match change {
+                OutputChange::Mode(id) => (id, self.state.tty_mode(self.tty, id)),
+                OutputChange::Disabled(id) => (id, self.state.tty_disable(self.tty, id)),
+                OutputChange::Enabled(id) => (id, self.state.tty_enable(self.tty, id)),
+            };
+            if let Err(reason) = result {
+                eprintln!("tetsu-comp: {id}: {reason}");
+                first_refusal.get_or_insert_with(|| refuse(id, reason));
+            }
+        }
+        first_refusal.map_or(Ok(()), Err)
+    }
+}
+
 impl State {
-    /// Takes the changes to the displays. Nothing to do without a tty (or
-    /// while it is taken out, as when a connector is being lit).
+    /// Takes the changes to the displays, Disabled first, then Mode, then
+    /// Enabled. Without a tty there is nothing to do; while the tty is taken
+    /// out (a rescan is running) they wait and go once it is back.
     pub(crate) fn apply_tty(&mut self, changes: &[OutputChange]) -> Result<(), Refused> {
-        if changes.is_empty() || self.tty.is_none() {
+        if self.tty.is_none() && !self.tty_taken {
             return Ok(());
         }
-        let mut first_refusal = None;
-        self.with_tty(|state, tty| {
-            for change in changes {
-                let (id, result) = match change {
-                    OutputChange::Mode(id) => (id, state.tty_mode(tty, id)),
-                    OutputChange::Disabled(id) => (id, state.tty_disable(tty, id)),
-                    OutputChange::Enabled(id) => (id, state.tty_enable(tty, id)),
-                };
-                if let Err(reason) = result {
-                    eprintln!("tetsu-comp: {id}: {reason}");
-                    first_refusal.get_or_insert_with(|| refuse(id, reason));
-                }
-            }
-        });
-        first_refusal.map_or(Ok(()), Err)
+        let mut queue = std::mem::take(&mut self.tty_queue);
+        let mut result = Ok(());
+        if self.tty.is_none() {
+            result = queue.submit(changes, None);
+        } else {
+            self.with_tty(|state, tty| {
+                result = queue.submit(changes, Some(&mut Live { state, tty }));
+            });
+        }
+        // Whatever was queued meanwhile comes after.
+        queue.absorb(std::mem::take(&mut self.tty_queue));
+        self.tty_queue = queue;
+        result
     }
 
     fn output_of(&self, id: &str) -> Option<Output> {
