@@ -177,6 +177,11 @@ impl Store {
         Ok(found.map(|item| item.as_unlocked().clone()))
     }
 
+    /// Whether a secret has this id.
+    pub async fn contains(&self, id: &SecretId) -> Result<bool, StoreError> {
+        Ok(self.find(id).await?.is_some())
+    }
+
     /// The value of one secret.
     pub async fn value(&self, id: &SecretId) -> Result<Secret, StoreError> {
         let item = self
