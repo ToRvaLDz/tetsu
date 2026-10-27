@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use common::Client;
 use serde_json::{Value, json};
-use tetsu_comp::layout::{Gaps, Rect, tile};
+use tetsu_comp::layout::dwindle::dwindle;
+use tetsu_comp::layout::{Gaps, Rect};
 use wayland::WlClient;
 
 const WATCH_WINDOWS: &str = "org.tetsu.comp.window.v1.WatchWindows";
@@ -137,7 +138,7 @@ fn a_mapped_window_is_opened_focused_changed_and_closed_on_the_bus() {
         w: 1920,
         h: 1080,
     };
-    let tile = tile(output, Gaps::NONE, 1)[0];
+    let tile = dwindle(output, Gaps::NONE, 1)[0];
     assert_eq!(wl.sizes(&top)[0], (tile.w as u32, tile.h as u32));
 
     let opened = watch.event(&contract, WATCH_WINDOWS);

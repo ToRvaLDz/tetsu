@@ -26,7 +26,8 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 
 use crate::bus::{Publisher, Snapshot};
-use crate::layout::{Gaps, Rect, tile};
+use crate::layout::dwindle::dwindle;
+use crate::layout::{Gaps, Rect};
 use crate::model::{Model, WindowInfo};
 
 /// Key repeat delay and rate of the seat keyboard.
@@ -250,7 +251,7 @@ impl State {
             .iter()
             .find(|o| self.model.active_workspace(&o.id) == Some(workspace))?;
         let count = self.model.windows_on(workspace).len() + 1;
-        tile(Self::viewport(entry), Gaps::NONE, count)
+        dwindle(Self::viewport(entry), Gaps::NONE, count)
             .last()
             .copied()
     }
@@ -281,7 +282,7 @@ impl State {
                 continue;
             };
             let ids = self.model.windows_on(workspace);
-            let rects = tile(Self::viewport(entry), Gaps::NONE, ids.len());
+            let rects = dwindle(Self::viewport(entry), Gaps::NONE, ids.len());
             for (id, rect) in ids.iter().zip(rects) {
                 let Some(mapped) = self.mapped.iter().find(|m| &m.id == id) else {
                     continue;
