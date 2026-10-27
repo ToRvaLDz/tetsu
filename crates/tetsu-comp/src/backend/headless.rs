@@ -6,7 +6,9 @@
 //!
 //! - `add [<w>x<h>]`: a new output named `HEADLESS-<n>`, `n` counting up;
 //! - `add-named <name> <w>x<h>`: an output with that name (a replug);
-//! - `remove <name>`.
+//! - `remove <name>`;
+//! - `focus-next` / `focus-prev`: the Super+J / Super+K bind, run through
+//!   the same path (the focus-to-bar latency test uses it).
 //!
 //! A line that does not parse, or names nothing, is logged and ignored.
 
@@ -16,6 +18,7 @@ use std::time::Duration;
 use smithay::reexports::calloop::channel::{self, Event};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
+use crate::engine::Action as EngineAction;
 use crate::input::ModKey;
 use crate::state::State;
 
@@ -50,6 +53,10 @@ pub enum HotplugCommand {
         /// The connector name.
         name: String,
     },
+    /// The focus-next bind.
+    FocusNext,
+    /// The focus-prev bind.
+    FocusPrev,
 }
 
 /// Reads one line, without its newline, converted lossily. Never buffers
@@ -99,6 +106,8 @@ pub fn parse_command(line: &str) -> Result<HotplugCommand, String> {
         ["remove", name] => Ok(HotplugCommand::Remove {
             name: (*name).to_owned(),
         }),
+        ["focus-next"] => Ok(HotplugCommand::FocusNext),
+        ["focus-prev"] => Ok(HotplugCommand::FocusPrev),
         [] => Err("empty line".to_owned()),
         _ => Err(format!("cannot parse {:?}", line.trim_end())),
     }
@@ -224,6 +233,14 @@ fn run_command(state: &mut State, command: HotplugCommand, counter: &mut u32) {
                 Some(output) => state.remove_output(&output),
                 None => eprintln!("tetsu-comp: hotplug: no output {name}"),
             }
+            Ok(())
+        }
+        HotplugCommand::FocusNext => {
+            state.run_action(EngineAction::FocusNext);
+            Ok(())
+        }
+        HotplugCommand::FocusPrev => {
+            state.run_action(EngineAction::FocusPrev);
             Ok(())
         }
     };

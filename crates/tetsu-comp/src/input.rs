@@ -274,7 +274,7 @@ impl State {
     }
 
     /// Runs a layout bind and follows it: layout, focus, close request.
-    fn run_action(&mut self, action: EngineAction) {
+    pub(crate) fn run_action(&mut self, action: EngineAction) {
         let effect = self.engine.apply(action, &self.viewports());
         if effect.relayout {
             self.relayout();
