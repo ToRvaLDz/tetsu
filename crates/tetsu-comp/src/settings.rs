@@ -1,10 +1,10 @@
 //! The settings: an optional `--config <file>` TOML with `[layout]` and
-//! `[[window_rule]]`. Without a file the defaults apply. The layering of
+//! `[render]` and `[[window_rule]]`. Without a file the defaults apply. The layering of
 //! default, managed and user files, live reload and config.v1 are #73's;
 //! this schema is the user-file schema it builds on.
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -23,6 +23,41 @@ pub struct Settings {
     pub master_ratio: f64,
     /// The window rules, in file order.
     pub rules: Vec<Rule>,
+    /// The GPU and explicit sync choices of the tty backend.
+    pub render: RenderSettings,
+}
+
+/// Which GPU renders.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum DeviceChoice {
+    /// The compositor picks (`gpu::select`).
+    #[default]
+    Auto,
+    /// A node under `/dev/dri/`.
+    Node(PathBuf),
+}
+
+/// The `render.explicit_sync` switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyncMode {
+    /// On when the render device supports it.
+    #[default]
+    Auto,
+    /// On where possible, loud when not.
+    On,
+    /// Never.
+    Off,
+}
+
+/// The `[render]` table; mirrors `org.tetsu.comp.render.v1` (#73).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RenderSettings {
+    /// The render device.
+    pub device: DeviceChoice,
+    /// Explicit sync.
+    pub explicit_sync: SyncMode,
+    /// Wait for each frame to finish before queueing it.
+    pub wait_for_frame_completion: bool,
 }
 
 impl Default for Settings {
@@ -32,6 +67,7 @@ impl Default for Settings {
             gaps: Gaps::NONE,
             master_ratio: DEFAULT_RATIO,
             rules: Vec::new(),
+            render: RenderSettings::default(),
         }
     }
 }
@@ -65,6 +101,10 @@ pub enum SettingsError {
     BadWorkspace(usize, i64),
     /// `size` with a side that is not positive.
     BadSize(usize, i64, i64),
+    /// `render.device` is neither `auto` nor an absolute path under `/dev/dri/`.
+    BadRenderDevice(String),
+    /// `render.explicit_sync` is none of `auto`, `on`, `off`.
+    UnknownSyncMode(String),
 }
 
 impl fmt::Display for SettingsError {
@@ -96,6 +136,14 @@ impl fmt::Display for SettingsError {
                 f,
                 "window_rule[{rule}].size: [{w}, {h}] needs two positive numbers"
             ),
+            Self::BadRenderDevice(value) => write!(
+                f,
+                "render.device: {value:?} is neither \"auto\" nor a path under /dev/dri/"
+            ),
+            Self::UnknownSyncMode(name) => write!(
+                f,
+                "render.explicit_sync: unknown mode {name:?} (auto, on or off)"
+            ),
         }
     }
 }
@@ -108,7 +156,17 @@ struct RawFile {
     #[serde(default)]
     layout: RawLayout,
     #[serde(default)]
+    render: RawRender,
+    #[serde(default)]
     window_rule: Vec<RawRule>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawRender {
+    device: Option<String>,
+    explicit_sync: Option<String>,
+    wait_for_frame_completion: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -181,6 +239,35 @@ fn rule(index: usize, raw: RawRule) -> Result<Rule, SettingsError> {
     })
 }
 
+fn render(raw: RawRender) -> Result<RenderSettings, SettingsError> {
+    let device = match raw.device.as_deref() {
+        None | Some("auto") => DeviceChoice::Auto,
+        Some(path) => {
+            let p = Path::new(path);
+            let under_dri = p.strip_prefix("/dev/dri").is_ok_and(|rest| {
+                let mut parts = rest.components();
+                matches!(parts.next(), Some(std::path::Component::Normal(_)))
+                    && parts.next().is_none()
+            });
+            if !under_dri {
+                return Err(SettingsError::BadRenderDevice(path.to_owned()));
+            }
+            DeviceChoice::Node(p.to_owned())
+        }
+    };
+    let explicit_sync = match raw.explicit_sync.as_deref() {
+        None | Some("auto") => SyncMode::Auto,
+        Some("on") => SyncMode::On,
+        Some("off") => SyncMode::Off,
+        Some(other) => return Err(SettingsError::UnknownSyncMode(other.to_owned())),
+    };
+    Ok(RenderSettings {
+        device,
+        explicit_sync,
+        wait_for_frame_completion: raw.wait_for_frame_completion.unwrap_or(false),
+    })
+}
+
 /// Parses the text of a config file.
 pub fn parse(text: &str) -> Result<Settings, SettingsError> {
     let raw: RawFile = toml::from_str(text).map_err(|e| SettingsError::Toml(e.to_string()))?;
@@ -210,6 +297,7 @@ pub fn parse(text: &str) -> Result<Settings, SettingsError> {
         },
         master_ratio,
         rules,
+        render: render(raw.render)?,
     })
 }
 
