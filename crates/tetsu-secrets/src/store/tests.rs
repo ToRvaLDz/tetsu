@@ -111,7 +111,7 @@ async fn rotate_replaces_the_value_and_keeps_the_binding() {
     assert_eq!(rotated.host, meta("demo").host);
     assert_eq!(rotated.allowed_tools, meta("demo").allowed_tools);
     assert_eq!(store.value(&id).await.unwrap().expose(), "second-value");
-    assert_eq!(store.list().await.unwrap(), [rotated.clone()]);
+    assert_eq!(store.list().await.unwrap(), std::slice::from_ref(&rotated));
     drop(store);
     let again = Store::open(&path, &key()).await.unwrap();
     assert_eq!(again.list().await.unwrap(), [rotated]);

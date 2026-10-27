@@ -106,7 +106,7 @@ fn take_value(parameters: &mut Value) -> Result<Secret, Invalid> {
     Ok(value)
 }
 
-fn optional_text<'a>(parameters: &'a Value, name: Invalid) -> Result<Option<&'a str>, Invalid> {
+fn optional_text(parameters: &Value, name: Invalid) -> Result<Option<&str>, Invalid> {
     match &parameters[name] {
         Value::Null => Ok(None),
         Value::String(text) => Ok(Some(text)),
