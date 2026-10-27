@@ -41,7 +41,7 @@ pub(super) fn write_file(path: &Path, content: &str, mode: u32) -> Result<(), In
 }
 
 /// A text file that may not exist yet.
-fn read_or_empty(path: &Path) -> Result<String, InstallError> {
+pub(super) fn read_or_empty(path: &Path) -> Result<String, InstallError> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(text),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
@@ -54,12 +54,25 @@ fn invalid(what: &str, why: String) -> InstallError {
 }
 
 impl Executor<'_> {
-    fn etc(&self) -> PathBuf {
+    pub(super) fn etc(&self) -> PathBuf {
         self.target.layout().etc(FIRST_COUNTER)
     }
 
-    fn snapshot_root(&self) -> PathBuf {
+    pub(super) fn snapshot_root(&self) -> PathBuf {
         self.target.layout().root(FIRST_COUNTER)
+    }
+
+    /// A container over snapshot 1 with its own scratch `/var`, for the
+    /// steps that run the target's own tools offline.
+    pub(super) fn offline_container(&self, scratch: &str) -> Result<Nspawn, InstallError> {
+        let scratch = self.run.subdir(scratch)?;
+        fs::create_dir_all(&self.target.cache_dir)
+            .map_err(|e| InstallError::io(&self.target.cache_dir, e))?;
+        Ok(Nspawn::new(
+            &self.snapshot_root(),
+            &scratch,
+            &self.target.cache_dir,
+        ))
     }
 
     fn home(&self) -> PathBuf {
@@ -271,11 +284,7 @@ impl Executor<'_> {
     /// so the first `tetsu-tx update` finds it. Each device gets a local
     /// signing key made here; the payload ships no keyring secrets.
     fn init_keyring(&mut self) -> Result<(), InstallError> {
-        let root = self.snapshot_root();
-        let scratch = self.run.subdir("keyring-var")?;
-        fs::create_dir_all(&self.target.cache_dir)
-            .map_err(|e| InstallError::io(&self.target.cache_dir, e))?;
-        let ns = Nspawn::new(&root, &scratch, &self.target.cache_dir);
+        let ns = self.offline_container("keyring-var")?;
         let steps: [&[&str]; 2] = [
             &["pacman-key", "--init"],
             &["pacman-key", "--populate", "archlinux"],
@@ -298,10 +307,7 @@ impl Executor<'_> {
     fn build_initrd(&mut self) -> Result<(), InstallError> {
         let root = self.snapshot_root();
         let version = kernel_version(&root)?;
-        let scratch = self.run.subdir("initrd-var")?;
-        fs::create_dir_all(&self.target.cache_dir)
-            .map_err(|e| InstallError::io(&self.target.cache_dir, e))?;
-        let ns = Nspawn::new(&root, &scratch, &self.target.cache_dir);
+        let ns = self.offline_container("initrd-var")?;
         build_initrd(self.deps.runner, &ns, &version)?;
         self.state.kernel_version = Some(version);
         Ok(())
