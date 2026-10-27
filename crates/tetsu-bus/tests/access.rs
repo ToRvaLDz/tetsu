@@ -53,7 +53,7 @@ fn everything_else_is_gated() {
         "org.tetsu.notify.v1.Show",
         "org.tetsu.tx.v1.getStatus",
         "org.tetsu.tx.v1.Unknown",
-        "org.varlinkx.service.GetInfo",
+        "org.varlinkx.service.Install",
         "GetStatus",
         "Install",
         "",
