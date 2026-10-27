@@ -105,10 +105,13 @@ impl PointerGrab<State> for MoveGrab {
         let moved = data
             .engine
             .move_floating(&self.id, (target.x, target.y), self.viewport);
-        if let Some(rect) = moved {
-            data.space
-                .map_element(self.window.clone(), (rect.x, rect.y), false);
-        }
+        // Senza rect la finestra non è più spostabile (nascosta, mossa): fine grab.
+        let Some(rect) = moved else {
+            handle.unset_grab(self, data, event.serial, event.time, true);
+            return;
+        };
+        data.space
+            .map_element(self.window.clone(), (rect.x, rect.y), false);
     }
 
     fn relative_motion(

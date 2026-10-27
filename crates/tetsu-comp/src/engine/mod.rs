@@ -326,7 +326,8 @@ impl Engine {
                         ..*r
                     },
                 );
-                (id.clone(), rect)
+                // Un output rimpicciolito non deve lasciare finestre fuori schermo.
+                (id.clone(), clamp_into(viewport, rect))
             })
             .collect();
         let hidden = self
@@ -347,6 +348,11 @@ impl Engine {
     /// returns its rect; `None` when it does not float.
     pub fn move_floating(&mut self, id: &str, origin: (i32, i32), viewport: Rect) -> Option<Rect> {
         let workspace = self.model.workspace_of(id)?.to_owned();
+        // Solo una finestra visibile (workspace attivo del suo output) si sposta.
+        let output = self.model.output_of(&workspace)?.to_owned();
+        if self.model.active_workspace(&output) != Some(workspace.as_str()) {
+            return None;
+        }
         let state = self.state(&workspace);
         if !state.is_floating(id) {
             return None;
@@ -471,6 +477,10 @@ impl Engine {
     ) -> bool {
         let Some(id) = focused else { return false };
         if self.state(workspace).position(id).is_none() {
+            return false;
+        }
+        // Nel layout floating tutto fluttua già: niente flag nascosto.
+        if self.state(workspace).layout == LayoutKind::Floating {
             return false;
         }
         let tiles = self.tiles_of(workspace, views);
