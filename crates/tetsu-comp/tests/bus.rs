@@ -3,13 +3,15 @@
 
 mod common;
 
-use std::io::{Read, Write};
+use common::Client;
+
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::json;
 use tetsu_bus::window::{ListWindowsReply, WindowEvent};
 use tetsu_bus::workspace::ListWorkspacesReply;
 use tetsu_bus_contract::{Contract, check_error};
@@ -22,70 +24,6 @@ const WATCH_WINDOWS: &str = "org.tetsu.comp.window.v1.WatchWindows";
 const LIST_WINDOWS: &str = "org.tetsu.comp.window.v1.ListWindows";
 const WATCH_WORKSPACES: &str = "org.tetsu.comp.workspace.v1.WatchWorkspaces";
 const LIST_WORKSPACES: &str = "org.tetsu.comp.workspace.v1.ListWorkspaces";
-
-struct Client {
-    stream: UnixStream,
-    buffer: Vec<u8>,
-}
-
-impl Client {
-    fn connect(path: &Path) -> Self {
-        let stream = UnixStream::connect(path).unwrap();
-        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
-        Self {
-            stream,
-            buffer: Vec::new(),
-        }
-    }
-
-    fn send(&mut self, method: &str, more: bool) {
-        let mut call = json!({ "method": method, "parameters": {} });
-        if more {
-            call["more"] = json!(true);
-        }
-        let mut bytes = serde_json::to_vec(&call).unwrap();
-        bytes.push(0);
-        self.stream.write_all(&bytes).unwrap();
-    }
-
-    /// The next message, or `None` at end of file.
-    fn try_recv(&mut self) -> Option<Value> {
-        loop {
-            if let Some(end) = self.buffer.iter().position(|b| *b == 0) {
-                let message: Vec<u8> = self.buffer.drain(..=end).collect();
-                return Some(serde_json::from_slice(&message[..end]).unwrap());
-            }
-            let mut chunk = [0u8; 65536];
-            match self.stream.read(&mut chunk) {
-                Ok(0) => return None,
-                Ok(n) => self.buffer.extend_from_slice(&chunk[..n]),
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => return None,
-                Err(e) => panic!("no reply in time: {e}"),
-            }
-        }
-    }
-
-    fn recv(&mut self) -> Value {
-        self.try_recv().expect("the server closed the connection")
-    }
-
-    /// One reply, checked against `method`'s outputs.
-    fn call(&mut self, contract: &Contract, method: &str) -> Value {
-        self.send(method, false);
-        let reply = self.recv();
-        let parameters = reply["parameters"].clone();
-        common::check(contract, method, &parameters);
-        parameters
-    }
-
-    /// The next streamed reply of `method`, checked; returns its event.
-    fn event(&mut self, contract: &Contract, method: &str) -> Value {
-        let reply = self.recv();
-        assert_eq!(reply["continues"], true, "{reply}");
-        common::check(contract, method, &reply["parameters"]);
-        reply["parameters"]["event"].clone()
-    }
-}
 
 fn socket(dir: &tempfile::TempDir) -> PathBuf {
     dir.path().join("tetsu/comp/wayland-test")
