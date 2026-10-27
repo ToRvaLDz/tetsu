@@ -30,6 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup show
+      # System libraries of the Smithay backends (tetsu-comp)
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libseat-dev libinput-dev libgbm-dev libdrm-dev libxkbcommon-dev libegl-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -39,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - run: pacman -Syu --noconfirm --needed systemd systemd-ukify sbsigntools openssl binutils rustup gcc git
+      - run: pacman -Syu --noconfirm --needed systemd systemd-ukify sbsigntools openssl binutils rustup gcc git pkgconf libinput seatd libxkbcommon xkeyboard-config mesa libdrm wayland
       - uses: actions/checkout@v4
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
