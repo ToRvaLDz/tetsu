@@ -100,11 +100,18 @@ fn production(scope: Scope) -> GateConfig<EtcFiles, RootOnly> {
     }
 }
 
+impl GateConfig<EtcFiles, RootOnly> {
+    /// The production config of a per-user service.
+    pub fn session() -> Self {
+        production(Scope::Session)
+    }
+}
+
 impl<H> Gated<H, EtcFiles, RootOnly> {
     /// The gate of a per-user service: only its owner and root may call,
     /// and the agent's gated calls go to the capd of the owner.
     pub fn session(inner: H) -> Self {
-        Self::with(inner, production(Scope::Session))
+        Self::with(inner, GateConfig::session())
     }
 }
 

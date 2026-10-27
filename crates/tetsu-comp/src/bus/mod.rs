@@ -16,7 +16,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tetsu_bus::config::ConfigEvent;
-use tetsu_bus::gate::Gated;
+use tetsu_bus::access::{EtcFiles, Groups};
+use tetsu_bus::gate::{Authority, GateConfig, Gated, RootOnly};
 use tetsu_bus::server;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
@@ -26,6 +27,24 @@ pub use hub::{Hub, Mirror, Snapshot, WATCH_QUEUE};
 pub use service::BusService;
 
 use crate::model::Events;
+
+/// The comp bus service behind the gate: the one place the service is put
+/// behind it, for the compositor and for the tests alike.
+pub fn handler<G: Groups + 'static, A: Authority>(
+    hub: Rc<RefCell<Hub>>,
+    commands: Option<CommandSink>,
+    config: GateConfig<G, A>,
+) -> Gated<BusService, G, A> {
+    Gated::with(BusService::new(hub, commands), config)
+}
+
+/// [`handler`] with the production gate of a per-user service.
+pub fn session_handler(
+    hub: Rc<RefCell<Hub>>,
+    commands: Option<CommandSink>,
+) -> Gated<BusService, EtcFiles, RootOnly> {
+    handler(hub, commands, GateConfig::session())
+}
 
 /// Least time between two restarts of the bus thread.
 const RESTART_INTERVAL: Duration = Duration::from_secs(1);
@@ -179,7 +198,7 @@ fn run(
         };
         let _ = ready.send(Ok(()));
         let hub = Rc::new(RefCell::new(Hub::new(reset)));
-        let service = Rc::new(Gated::session(BusService::new(hub.clone(), commands)));
+        let service = Rc::new(session_handler(hub.clone(), commands));
         let mut serving = tokio::task::spawn_local(server::serve(listener, service));
         loop {
             tokio::select! {

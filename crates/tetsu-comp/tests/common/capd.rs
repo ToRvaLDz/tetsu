@@ -13,10 +13,10 @@ use smithay::reexports::rustix;
 use tetsu_bus::access::{EtcFiles, ExpectedServer, Scope};
 use tetsu_bus::cap::{CheckReply, DeniedBy};
 use tetsu_bus::endpoint::Endpoint;
-use tetsu_bus::gate::{GateConfig, Gated, RootOnly};
+use tetsu_bus::gate::{GateConfig, RootOnly};
 use tetsu_bus::peer::Peer;
 use tetsu_bus::server::{self, Handler, Request, Response};
-use tetsu_comp::bus::{BusService, CommandSink, Hub, Snapshot};
+use tetsu_comp::bus::{CommandSink, Hub, Snapshot, handler};
 
 /// What the fakes saw, in order.
 pub type Log = Arc<Mutex<Vec<String>>>;
@@ -114,9 +114,9 @@ impl GatedComp {
                     Ok(())
                 });
                 let hub = Rc::new(RefCell::new(Hub::new(&snapshot)));
-                let service = BusService::new(hub, Some(commands));
-                let gate = Gated::with(
-                    service,
+                let gate = handler(
+                    hub,
+                    Some(commands),
                     GateConfig {
                         scope: Scope::Session,
                         own_uid: rustix::process::geteuid().as_raw(),
