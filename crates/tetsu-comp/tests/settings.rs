@@ -224,3 +224,47 @@ fn an_unknown_render_key_is_refused() {
     let message = err("[render]\nvrr = true\n");
     assert!(message.contains("vrr"), "{message}");
 }
+
+#[test]
+fn the_lock_and_trust_defaults_are_swaylock_and_nothing() {
+    let settings = parse("").unwrap();
+    assert_eq!(settings.lock.command, ["swaylock"]);
+    assert!(settings.trust.input.is_empty());
+}
+
+#[test]
+fn a_lock_and_trust_table_parses() {
+    let text = "[lock]\ncommand = [\"gtklock\", \"-d\"]\n\n[trust]\ninput = [[\"wtype\"], [\"/usr/bin/wayvnc\", \"--output=X\"]]\n";
+    let settings = parse(text).unwrap();
+    assert_eq!(settings.lock.command, ["gtklock", "-d"]);
+    assert_eq!(
+        settings.trust.input,
+        [vec!["wtype"], vec!["/usr/bin/wayvnc", "--output=X"]]
+    );
+}
+
+#[test]
+fn an_empty_lock_command_means_no_relaunch() {
+    let settings = parse("[lock]\ncommand = []\n").unwrap();
+    assert!(settings.lock.command.is_empty());
+}
+
+#[test]
+fn an_empty_argv_in_trust_input_is_refused_naming_the_key() {
+    let message = err("[trust]\ninput = [[\"wtype\"], []]\n");
+    assert!(message.contains("trust.input[1]"), "{message}");
+    let message = err("[trust]\ninput = [[\"\"]]\n");
+    assert!(message.contains("trust.input[0]"), "{message}");
+}
+
+#[test]
+fn a_blank_lock_program_is_refused_naming_the_key() {
+    let message = err("[lock]\ncommand = [\"\"]\n");
+    assert!(message.contains("lock.command"), "{message}");
+}
+
+#[test]
+fn unknown_lock_and_trust_keys_are_refused() {
+    assert!(err("[lock]\nidle = 5\n").contains("idle"));
+    assert!(err("[trust]\nall = true\n").contains("all"));
+}

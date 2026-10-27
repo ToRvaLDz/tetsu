@@ -25,6 +25,34 @@ pub struct Settings {
     pub rules: Vec<Rule>,
     /// The GPU and explicit sync choices of the tty backend.
     pub render: RenderSettings,
+    /// The session locker.
+    pub lock: LockSettings,
+    /// Helpers the compositor starts with trust.
+    pub trust: TrustSettings,
+}
+
+/// The `[lock]` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockSettings {
+    /// The locker's argv, started on the lock bind and again when the
+    /// locker dies. Empty: nothing is started.
+    pub command: Vec<String>,
+}
+
+impl Default for LockSettings {
+    fn default() -> Self {
+        Self {
+            command: vec!["swaylock".to_owned()],
+        }
+    }
+}
+
+/// The `[trust]` table.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TrustSettings {
+    /// Commands started once at startup with the trust to bind the virtual
+    /// input protocols.
+    pub input: Vec<Vec<String>>,
 }
 
 /// Which GPU renders.
@@ -68,6 +96,8 @@ impl Default for Settings {
             master_ratio: DEFAULT_RATIO,
             rules: Vec::new(),
             render: RenderSettings::default(),
+            lock: LockSettings::default(),
+            trust: TrustSettings::default(),
         }
     }
 }
@@ -298,6 +328,8 @@ pub fn parse(text: &str) -> Result<Settings, SettingsError> {
         master_ratio,
         rules,
         render: render(raw.render)?,
+        lock: defaults.lock,
+        trust: defaults.trust,
     })
 }
 
