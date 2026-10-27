@@ -103,24 +103,48 @@ fn a_value_with_a_newline_uses_the_length_prefixed_form() {
     field.extend_from_slice(value);
     field.push(b'\n');
     assert!(bytes.windows(field.len()).any(|w| w == field.as_slice()));
-    // The forged line is not a field of its own.
-    assert!(
-        !bytes
-            .windows(26)
-            .any(|w| w == b"\nTETSU_ACTION=forged\nPRIOR")
-    );
+}
+
+/// Reads a datagram back the way journald does.
+fn decode(mut bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut fields = Vec::new();
+    while !bytes.is_empty() {
+        let end = bytes
+            .iter()
+            .position(|b| *b == b'=' || *b == b'\n')
+            .unwrap();
+        let name = String::from_utf8(bytes[..end].to_vec()).unwrap();
+        let value = if bytes[end] == b'=' {
+            let rest = &bytes[end + 1..];
+            let stop = rest.iter().position(|b| *b == b'\n').unwrap();
+            bytes = &rest[stop + 1..];
+            rest[..stop].to_vec()
+        } else {
+            let rest = &bytes[end + 1..];
+            let len = u64::from_le_bytes(rest[..8].try_into().unwrap()) as usize;
+            let value = rest[8..8 + len].to_vec();
+            assert_eq!(rest[8 + len], b'\n');
+            bytes = &rest[8 + len + 1..];
+            value
+        };
+        fields.push((name, value));
+    }
+    fields
 }
 
 #[test]
 fn a_comm_with_a_newline_cannot_forge_a_field() {
     let mut e = entry(Action::Add);
     e.caller.comm = "x\nPRIORITY=0".into();
-    let bytes = encode(&e);
-    assert!(!text_lossy(&bytes).contains("\nPRIORITY=0\n"));
-}
-
-fn text_lossy(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
+    let fields = decode(&encode(&e));
+    let priorities: Vec<_> = fields.iter().filter(|(n, _)| n == "PRIORITY").collect();
+    assert_eq!(priorities.len(), 1);
+    assert_eq!(priorities[0].1, b"6");
+    let comm = fields
+        .iter()
+        .find(|(n, _)| n == "TETSU_CALLER_COMM")
+        .unwrap();
+    assert_eq!(comm.1, b"x\nPRIORITY=0");
 }
 
 #[test]
