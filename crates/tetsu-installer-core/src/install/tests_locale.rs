@@ -55,7 +55,10 @@ fn another_language_is_generated_in_the_target() {
     let run = install("es_MX.UTF-8", |_| {});
     run.out.result.as_ref().unwrap();
     let locale_gen = run.etc("locale.gen");
-    assert_eq!(locale_gen, format!("{PAYLOAD_LOCALE_GEN}es_MX.UTF-8 UTF-8\n"));
+    assert_eq!(
+        locale_gen,
+        format!("{PAYLOAD_LOCALE_GEN}es_MX.UTF-8 UTF-8\n")
+    );
     assert_eq!(run.etc("locale.conf"), "LANG=es_MX.UTF-8\n");
 
     let root = format!("-D {}", run.work("top/@snapshots/1/root").display());
