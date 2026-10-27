@@ -10,6 +10,8 @@ REPO=$(cd "$HERE/../../.." && pwd)
 . "$HERE/lib.sh"
 # shellcheck source=../lib/wait.sh
 . "$HERE/../lib/wait.sh"
+# shellcheck source=policy.sh
+. "$HERE/policy.sh"
 
 IMAGE=${TETSU_INSTALLER_IMAGE:-$REPO/target/image/tetsu-installer.raw}
 
@@ -359,4 +361,5 @@ first_boot() { # LEVEL
   say_info "first boot: $SEEN_PASS passphrase prompt(s), $SEEN_PIN PIN prompt(s)"
   login
   common_checks "$1"
+  bus_policy_checks
 }
