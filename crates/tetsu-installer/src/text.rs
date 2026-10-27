@@ -3,6 +3,7 @@
 //! captured log.
 
 use std::io::{BufRead, Write};
+use std::os::fd::{AsFd, OwnedFd};
 
 use tetsu_installer_core::error::InstallError;
 use tetsu_installer_core::frontend::{Frontend, Validate};
@@ -14,7 +15,14 @@ use crate::tty::EchoOff;
 pub struct TextFrontend<R, W> {
     input: R,
     out: W,
-    hide_secrets: bool,
+    echo: EchoTarget,
+}
+
+/// Which terminal loses its echo while a secret is typed.
+enum EchoTarget {
+    None,
+    Stdin,
+    Fd(OwnedFd),
 }
 
 impl<R: BufRead, W: Write> TextFrontend<R, W> {
@@ -23,15 +31,34 @@ impl<R: BufRead, W: Write> TextFrontend<R, W> {
         Self {
             input,
             out,
-            hide_secrets: false,
+            echo: EchoTarget::None,
         }
     }
 
     /// Turn terminal echo off while a secret is typed. Only meaningful when
     /// `input` is the process's standard input and it is a terminal.
     pub fn hide_secrets(mut self, hide: bool) -> Self {
-        self.hide_secrets = hide;
+        self.echo = if hide {
+            EchoTarget::Stdin
+        } else {
+            EchoTarget::None
+        };
         self
+    }
+
+    /// Turn echo off on this terminal while a secret is typed, for an input
+    /// that is not standard input.
+    pub fn secret_terminal(mut self, terminal: OwnedFd) -> Self {
+        self.echo = EchoTarget::Fd(terminal);
+        self
+    }
+
+    fn echo_off(&self) -> Option<EchoOff> {
+        match &self.echo {
+            EchoTarget::None => None,
+            EchoTarget::Stdin => EchoOff::new(),
+            EchoTarget::Fd(fd) => EchoOff::on(fd.as_fd()),
+        }
     }
 
     /// Give the reader and the writer back.
@@ -77,8 +104,10 @@ impl<R: BufRead, W: Write> Frontend for TextFrontend<R, W> {
     }
 
     fn ask_secret(&mut self, prompt: &str) -> Result<String, InstallError> {
+        // Echo goes off before the prompt, so what is typed as soon as the
+        // prompt shows is never echoed.
+        let guard = self.echo_off();
         self.print(&format!("{prompt} (not shown): "))?;
-        let guard = self.hide_secrets.then(EchoOff::new).flatten();
         let answer = self.read_line();
         drop(guard);
         answer

@@ -1,7 +1,7 @@
 //! Terminal echo control for secret prompts.
 
 use std::io::stdin;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
 use rustix::termios::{LocalModes, OptionalActions, Termios, isatty, tcgetattr, tcsetattr};
 
@@ -13,27 +13,34 @@ pub fn stdin_is_tty() -> bool {
 
 /// Echo is off while the guard lives; dropping it restores the terminal.
 pub struct EchoOff {
+    fd: OwnedFd,
     saved: Termios,
 }
 
 impl EchoOff {
     /// Turn echo off on standard input; `None` when it is not a terminal.
     pub fn new() -> Option<Self> {
-        let fd = stdin();
-        let saved = tcgetattr(fd.as_fd()).ok()?;
+        Self::on(stdin().as_fd())
+    }
+
+    /// Turn echo off on the terminal `fd`; `None` when it is not one. The
+    /// guard keeps its own copy of the descriptor.
+    pub fn on(fd: BorrowedFd<'_>) -> Option<Self> {
+        let saved = tcgetattr(fd).ok()?;
         let mut quiet = saved.clone();
         quiet.local_modes.remove(LocalModes::ECHO);
         // The newline the user types is not echoed either; keep it so the
         // next line starts clean.
         quiet.local_modes.insert(LocalModes::ECHONL);
-        tcsetattr(fd.as_fd(), OptionalActions::Flush, &quiet).ok()?;
-        Some(Self { saved })
+        tcsetattr(fd, OptionalActions::Flush, &quiet).ok()?;
+        let fd = fd.try_clone_to_owned().ok()?;
+        Some(Self { fd, saved })
     }
 }
 
 impl Drop for EchoOff {
     fn drop(&mut self) {
-        let _ = tcsetattr(stdin().as_fd(), OptionalActions::Flush, &self.saved);
+        let _ = tcsetattr(&self.fd, OptionalActions::Flush, &self.saved);
     }
 }
 
