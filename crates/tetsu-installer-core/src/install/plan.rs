@@ -80,6 +80,9 @@ pub enum Action {
     WriteUser,
     LockRoot,
     WriteLocale,
+    /// Generate the chosen language on the target (planned only when the
+    /// payload does not already carry it).
+    GenerateLocale,
     WriteHostname,
     WriteFstab,
     WriteCmdline,
@@ -178,7 +181,7 @@ impl Action {
             Self::ExtractPayload => &["tar"],
             Self::HashPassword | Self::GenerateKey(_) => &["openssl"],
             Self::WriteUser | Self::StageApiKey => &["chown"],
-            Self::InitKeyring | Self::BuildInitrd => &["systemd-nspawn"],
+            Self::GenerateLocale | Self::InitKeyring | Self::BuildInitrd => &["systemd-nspawn"],
             Self::BuildUki => &["ukify", "sbsign"],
             Self::InstallBootloader => &["sbsign"],
             Self::VerifySignatures => &["sbverify"],
@@ -223,6 +226,7 @@ impl Action {
             Self::WriteUser => "create the user and add it to wheel",
             Self::LockRoot => "lock the root account",
             Self::WriteLocale => "write keymap, language, timezone and clock settings",
+            Self::GenerateLocale => "generate the chosen locale",
             Self::WriteHostname => "write the hostname",
             Self::WriteFstab => "write the mounts of the shared subvolumes and the ESP",
             Self::WriteCmdline => "write the kernel command line",
@@ -463,6 +467,39 @@ mod tests {
         assert_eq!(InitKeyring.describe(), "initialise the pacman keyring");
     }
 
+    fn mexican(level: UnlockLevel) -> Answers {
+        let mut a = answers(level);
+        a.locale.language = "es_MX.UTF-8".into();
+        a
+    }
+
+    #[test]
+    fn a_pregenerated_language_plans_no_generation() {
+        let plan = InstallPlan::build(
+            &answers(UnlockLevel::Comfort),
+            &target(SecureBoot::SetupMode),
+        );
+        assert!(!plan.actions().contains(&GenerateLocale));
+    }
+
+    #[test]
+    fn another_language_is_generated_right_after_it_is_written() {
+        let plan = InstallPlan::build(
+            &mexican(UnlockLevel::Comfort),
+            &target(SecureBoot::SetupMode),
+        );
+        let at = |x: Action| plan.actions().iter().position(|a| *a == x).unwrap();
+        assert_eq!(at(GenerateLocale), at(WriteLocale) + 1);
+        assert!(at(ExtractPayload) < at(GenerateLocale));
+        assert!(at(GenerateLocale) < at(InitKeyring));
+        assert!(at(GenerateLocale) < at(BuildInitrd));
+        assert!(at(GenerateLocale) < at(SealSnapshot));
+        assert_eq!(GenerateLocale.stage(), Stage::Disk);
+        assert!(!GenerateLocale.is_soft());
+        assert_eq!(GenerateLocale.programs(), ["systemd-nspawn"]);
+        assert!(plan.programs().contains(&"systemd-nspawn"));
+    }
+
     #[test]
     fn balanced_plans_the_same_as_comfort() {
         let t = target(SecureBoot::SetupMode);
@@ -525,9 +562,11 @@ mod tests {
     fn actions_never_go_back_a_stage() {
         for level in UnlockLevel::ALL {
             for sb in [SecureBoot::Off, SecureBoot::SetupMode] {
-                let plan = InstallPlan::build(&answers(level), &target(sb));
-                let stages: Vec<Stage> = plan.actions().iter().map(|a| a.stage()).collect();
-                assert!(stages.is_sorted(), "{stages:?}");
+                for a in [answers(level), mexican(level)] {
+                    let plan = InstallPlan::build(&a, &target(sb));
+                    let stages: Vec<Stage> = plan.actions().iter().map(|a| a.stage()).collect();
+                    assert!(stages.is_sorted(), "{stages:?}");
+                }
             }
         }
     }
@@ -538,7 +577,11 @@ mod tests {
             &answers(UnlockLevel::Comfort),
             &target(SecureBoot::SetupMode),
         );
-        for a in plan.actions() {
+        let mexican = InstallPlan::build(
+            &mexican(UnlockLevel::Comfort),
+            &target(SecureBoot::SetupMode),
+        );
+        for a in plan.actions().iter().chain(mexican.actions()) {
             assert_eq!(
                 a.is_soft(),
                 matches!(a, EnrollKeys | CreateBootEntry | SetBootOrder)
