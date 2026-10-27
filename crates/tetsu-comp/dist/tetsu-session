@@ -15,14 +15,27 @@ if systemctl --user -q is-active tetsu-comp.service; then
   exit 1
 fi
 
+# Leave no stale session variables for the next login; runs on every exit.
+cleanup() {
+  systemctl --user unset-environment \
+    XDG_SESSION_ID XDG_SEAT XDG_VTNR XDG_SESSION_TYPE \
+    WAYLAND_DISPLAY TETSU_COMP_SOCKET || true
+}
+# The unit lives in the user manager, not in this session: stop it when greetd
+# or logind ends the script, else it would outlive the session.
+on_signal() {
+  systemctl --user stop tetsu-comp.service || true
+  exit 143
+}
+trap cleanup EXIT
+trap on_signal HUP INT TERM
+
 # libseat (logind backend) finds the session through XDG_SESSION_ID.
-systemctl --user reset-failed
+systemctl --user reset-failed tetsu-comp.service || true
 systemctl --user import-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR
 
+# In the background so a signal is handled while waiting, not after.
 status=0
-systemctl --user --wait start tetsu-comp.service || status=$?
-
-# Leave no stale session variables for the next login.
-systemctl --user unset-environment \
-  XDG_SESSION_ID XDG_SEAT XDG_VTNR WAYLAND_DISPLAY TETSU_COMP_SOCKET || true
+systemctl --user --wait start tetsu-comp.service &
+wait $! || status=$?
 exit "$status"
