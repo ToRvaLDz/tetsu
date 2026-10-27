@@ -1,6 +1,11 @@
 //! `tetsu comp`: talk to the compositor's bus.
 
+use std::io::Write;
+use std::path::Path;
 use std::process::ExitCode;
+use std::time::Duration;
+
+use tetsu_bus::cap::ClientError;
 
 pub mod render;
 pub mod socket;
@@ -41,6 +46,26 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     }
 }
 
+/// How long the compositor has to answer.
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// One line telling why the call failed, without the `tetsu: ` prefix.
+pub fn describe(_error: &ClientError, _socket: &Path) -> String {
+    todo!()
+}
+
+/// Runs a parsed command against the compositor at `socket`. Returns the
+/// exit status: 0 shown, 1 failed.
+pub async fn run(
+    _command: Command,
+    _socket: &Path,
+    _timeout: Duration,
+    _out: &mut dyn Write,
+    _err: &mut dyn Write,
+) -> u8 {
+    todo!()
+}
+
 /// Entry point of `tetsu comp ...`: exit status 0 shown, 1 failed, 2 usage.
 pub fn main(args: Vec<String>) -> ExitCode {
     match parse(&args) {
@@ -65,6 +90,50 @@ mod tests {
 
     fn parse_args(args: &[&str]) -> Result<Command, String> {
         parse(&args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>())
+    }
+
+    fn remote(error: &str) -> ClientError {
+        ClientError::Remote {
+            error: error.into(),
+            parameters: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn describe_tells_what_went_wrong() {
+        use std::io::{Error, ErrorKind};
+        let path = Path::new("/run/user/1/tetsu/comp/wayland-0");
+        let io = |kind| describe(&ClientError::Io(Error::from(kind)), path);
+        for kind in [ErrorKind::NotFound, ErrorKind::ConnectionRefused] {
+            assert_eq!(
+                io(kind),
+                "tetsu-comp is not running (no listener at /run/user/1/tetsu/comp/wayland-0)"
+            );
+        }
+        assert_eq!(
+            io(ErrorKind::PermissionDenied),
+            "permission denied on /run/user/1/tetsu/comp/wayland-0: \
+             the socket belongs to another user or session"
+        );
+        let other = describe(&ClientError::Io(Error::other("boom")), path);
+        assert_eq!(
+            other,
+            "cannot talk to tetsu-comp at /run/user/1/tetsu/comp/wayland-0: boom"
+        );
+        assert_eq!(
+            describe(&remote("org.tetsu.comp.config.v1.PermissionDenied"), path),
+            "not allowed: tetsu-comp refused to show its config to this process"
+        );
+        for name in [
+            "org.varlink.service.MethodNotFound",
+            "org.varlink.service.InterfaceNotFound",
+        ] {
+            assert_eq!(
+                describe(&remote(name), path),
+                "this tetsu-comp does not serve org.tetsu.comp.config.v1 (too old?)"
+            );
+        }
+        assert_eq!(describe(&remote("org.x.Odd"), path), "org.x.Odd");
     }
 
     #[test]
