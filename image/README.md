@@ -157,3 +157,34 @@ tools/vm/tetsu-vm start --disk target/image/tetsu-installer.raw --snapshot \
 tools/vm/tetsu-vm wait-for --timeout 240 'Keyboard layout'
 tools/vm/tetsu-vm stop
 ```
+
+## Session
+
+The payload boots to `graphical.target` with `greetd` on tty1 (`vt = 1`,
+`/etc/greetd/config.toml`), running the stock text greeter `agreety`. After a
+login greetd starts `/usr/bin/tetsu-session` as the user, which starts the
+user unit `tetsu-comp.service` and waits for it; when the compositor ends,
+greetd shows the greeter again.
+
+The chain, in order:
+
+1. `tetsu-session` imports `XDG_SESSION_ID`, `XDG_SEAT` and `XDG_VTNR` into
+   the user manager (libseat's logind backend finds the session from them)
+   and runs `systemctl --user --wait start tetsu-comp.service`.
+2. `tetsu-comp.service` (`Type=notify`) runs the compositor on the tty
+   backend. Its first client, `/usr/libexec/tetsu-comp-ready`, publishes
+   `WAYLAND_DISPLAY` and `TETSU_COMP_SOCKET` to the manager and sends
+   `READY=1`.
+3. `graphical-session.target` follows (the compositor is `BindsTo=` and
+   `Before=` it), then `tetsu-notifyd`, then `tetsu-capd`; `tetsu-bar` starts
+   after the target. Stopping the compositor stops the target and with it
+   every daemon.
+
+There is no socket activation: the daemons bind their own sockets, so that
+`tetsu-capd` and the clients see them as the units they expect (#75). Never
+stage or enable a `tetsu-notifyd.socket` here.
+
+`image/stage-session` installs the binaries, the user units and the launcher
+scripts into the payload tree; the greetd config and the presets are in
+`image/mkosi.profiles/payload/mkosi.extra`. `image/tests/session.sh` pins all
+of it without root or a VM; `tools/vm/tests/session.sh` proves it in a VM.
