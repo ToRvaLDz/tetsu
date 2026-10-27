@@ -63,6 +63,36 @@ impl Handler for Test {
                 tx.try_send(StreamItem::Last(json!({ "i": 2 }))).unwrap();
                 Response::BoundedStream(rx)
             }
+            "org.example.Later" => {
+                // Answers after `delay_ms`: `how` is reply, error or drop.
+                let (mut tx, rx) = oneshot::channel();
+                let delay = request.parameters["delay_ms"].as_u64().unwrap_or(0);
+                let how = request.parameters["how"].as_str().unwrap_or("reply");
+                let how = how.to_owned();
+                let gone = self.gone.clone();
+                tokio::task::spawn_local(async move {
+                    tokio::select! {
+                        () = tx.closed() => {
+                            let _ = gone.send(());
+                        }
+                        () = tokio::time::sleep(Duration::from_millis(delay)) => {
+                            match how.as_str() {
+                                "reply" => {
+                                    let _ = tx.send(Ok(json!({ "late": true })));
+                                }
+                                "error" => {
+                                    let _ = tx.send(Err(ErrorReply::new(
+                                        "org.example.Broken",
+                                        json!({ "why": "late" }),
+                                    )));
+                                }
+                                _ => drop(tx),
+                            }
+                        }
+                    }
+                });
+                Response::Pending(rx)
+            }
             "org.example.Fail" => Response::Error(ErrorReply::new(
                 "org.example.Broken",
                 json!({ "why": "asked to" }),
@@ -455,5 +485,81 @@ fn a_system_socket_file_goes_with_its_listener() {
         assert!(path.exists());
         drop(listener);
         assert!(!path.exists());
+    });
+}
+
+#[test]
+fn a_pending_reply_is_sent_once_the_handler_answers() {
+    with_server(|path, _| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.Later", "parameters": { "delay_ms": 50 } }))
+            .await;
+        let reply = client.recv().await;
+        assert_eq!(reply["parameters"]["late"], true);
+        assert!(reply.get("continues").is_none_or(|c| c == false));
+    });
+}
+
+#[test]
+fn closing_the_socket_during_a_pending_reply_reaches_the_handler() {
+    with_server(|path, mut gone| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.Later", "parameters": { "delay_ms": 60000 } }))
+            .await;
+        drop(client);
+        tokio::time::timeout(TIMEOUT, gone.recv())
+            .await
+            .expect("the handler sees the caller go")
+            .unwrap();
+    });
+}
+
+#[test]
+fn a_call_pipelined_during_a_pending_reply_is_answered_after_it() {
+    with_server(|path, _| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.Later", "parameters": { "delay_ms": 50 } }))
+            .await;
+        client
+            .send(json!({ "method": "org.example.Echo", "parameters": { "value": 4 } }))
+            .await;
+        assert_eq!(client.recv().await["parameters"]["late"], true);
+        assert_eq!(client.recv().await["parameters"]["value"], 4);
+    });
+}
+
+#[test]
+fn a_pending_sender_dropped_without_an_answer_closes_the_connection() {
+    with_server(|path, _| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.Later", "parameters": { "how": "drop" } }))
+            .await;
+        let mut rest = Vec::new();
+        let read = tokio::time::timeout(TIMEOUT, client.0.read_to_end(&mut rest))
+            .await
+            .expect("the server closes the connection");
+        assert_eq!(read.unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_pending_error_answer_is_a_varlink_error() {
+    with_server(|path, _| async move {
+        let mut client = Client::connect(&path).await;
+        client
+            .send(json!({ "method": "org.example.Later", "parameters": { "how": "error" } }))
+            .await;
+        let reply = client.recv().await;
+        assert_eq!(reply["error"], "org.example.Broken");
+        assert_eq!(reply["parameters"]["why"], "late");
+        // The connection is usable again.
+        client
+            .send(json!({ "method": "org.example.Echo", "parameters": { "value": 1 } }))
+            .await;
+        assert_eq!(client.recv().await["parameters"]["value"], 1);
     });
 }
