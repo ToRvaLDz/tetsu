@@ -7,6 +7,7 @@ pub mod batch;
 pub mod catalog;
 pub mod clock;
 pub mod decide;
+pub mod engine;
 pub mod intent;
 pub mod notify;
 pub mod store;
