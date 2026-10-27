@@ -103,7 +103,8 @@ set is defined in one place; `image/tests/tetsu-base.sh` pins that shape.
   systemd-resolved and systemd-timesyncd are enabled, so the first
   `tx update` has a network. The pacman mirror is
   `https://geo.mirror.pkgbuild.com`.
-- Locales named by the installer's keyboard table are generated.
+- Locales named by the installer's keyboard table are generated; the
+  installer generates any other supported locale it is given, at install time.
 
 ## Installer medium
 

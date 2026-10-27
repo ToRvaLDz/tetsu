@@ -1,5 +1,8 @@
 //! Keyboard step: the layout drives the default language and timezone.
 //! The RTC is always kept in UTC.
+//!
+//! The table's locales (plus the fallback) are the ones the payload
+//! pregenerates; any other language goes through [`crate::locales`].
 
 use std::collections::BTreeSet;
 

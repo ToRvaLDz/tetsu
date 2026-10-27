@@ -2,7 +2,7 @@
 //!
 //! The payload carries the locales of the keyboard table. Any other
 //! `ll_CC.UTF-8` the owner names is checked against glibc's
-//! `usr/share/i18n/SUPPORTED` twice: at answer time against the medium's,
+//! `usr/share/i18n/SUPPORTED` twice (the pregenerated ones skip the file): at answer time against the medium's,
 //! and at install time against the target's own, which is the one whose
 //! `locale-gen` runs.
 
