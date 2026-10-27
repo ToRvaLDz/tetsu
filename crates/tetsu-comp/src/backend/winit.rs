@@ -25,9 +25,10 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     // The host compositor grabs Super.
     state.mod_key = ModKey::CtrlAlt;
     let (mut backend, winit_events) = winit::init::<GlesRenderer>()?;
+    // The winit framebuffer is upside down: every output transform is
+    // composed over this one.
+    state.base_transform = Transform::Flipped180;
     let output = state.add_virtual_output(OUTPUT_NAME, backend.window_size(), REFRESH_MHZ);
-    // The winit framebuffer is upside down.
-    output.change_current_state(None, Some(Transform::Flipped180), None, None);
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
     state

@@ -33,6 +33,8 @@ pub fn run(cli: &Cli, store: Store) -> Result<(), Box<dyn Error>> {
     let display: Display<State> = Display::new()?;
     let mut state = State::new(&mut event_loop, display, settings)?;
 
+    // Before the backend: the outputs present at start get their config.
+    state.config = Some(store);
     match cli.backend {
         Backend::Headless => {
             headless::init(&mut state, cli.headless_outputs, cli.headless_hotplug)?;
@@ -45,7 +47,6 @@ pub fn run(cli: &Cli, store: Store) -> Result<(), Box<dyn Error>> {
     let _ = state.engine.flush();
     let wayland = state.socket_name.to_string_lossy().into_owned();
     let bus_path = bus_socket_path(runtime_dir.as_deref(), &wayland)?;
-    state.config = Some(store);
     let (sender, commands) = channel::channel::<BusCommand>();
     state
         .loop_handle

@@ -145,9 +145,17 @@ fn a_valid_call_applies_persists_and_is_published() {
     wl.wait_for_size(&top, (960, 540));
 
     let text = managed_text(&comp).expect("the managed file is written");
-    assert!(text.contains("[output.HEADLESS-1]"), "{text}");
-    assert!(text.contains("[output.HEADLESS-2]"), "{text}");
-    assert!(text.contains("scale = 2.0"), "{text}");
+    let parsed = tetsu_comp::config::layer::parse(&text);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let keys: Vec<_> = parsed.values.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        [
+            "output.HEADLESS-1.position",
+            "output.HEADLESS-2.position",
+            "output.HEADLESS-2.scale"
+        ]
+    );
 
     let now = client.call(&contract, GET_CONFIG);
     let scale = entry(&now, "output.HEADLESS-2.scale");

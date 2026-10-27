@@ -18,6 +18,7 @@
 //! `fcbc971cf49a987b1e8d5ff1d64da6b1f61a1787` (GPL-3.0-or-later); the
 //! `MultiRenderer` plumbing follows Smithay's `anvil`.
 
+mod apply;
 mod device;
 mod feedback;
 mod frame;

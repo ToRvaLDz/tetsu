@@ -8,9 +8,8 @@ use std::time::{Duration, Instant};
 
 use smithay::desktop::{PopupManager, Space, Window, layer_map_for_output};
 use smithay::input::{Seat, SeatState};
-use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
+use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::generic::Generic;
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, LoopSignal, Mode as PollMode, PostAction,
 };
@@ -20,7 +19,7 @@ use smithay::reexports::wayland_server::backend::{
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Display, DisplayHandle, Resource};
-use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
+use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size, Transform as SmithayTransform};
 use smithay::wayland::compositor::{CompositorClientState, CompositorState, with_states};
 use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::drm_syncobj::DrmSyncobjState;
@@ -47,16 +46,13 @@ use crate::lock::LockMachine;
 use crate::lock::glue::LockGlue;
 use crate::model::{OutputInfo, WindowInfo};
 use crate::outputs::geometry::to_smithay_transform;
+use crate::outputs::glue::{close_layers, smithay_mode, smithay_scale};
 use crate::settings::{RenderSettings, Settings};
 use crate::trust::{Trust, trust_of};
 
 /// Key repeat delay and rate of the seat keyboard.
 const REPEAT_DELAY_MS: i32 = 200;
 const REPEAT_RATE: i32 = 25;
-/// How long a removed `wl_output` global stays listed, disabled, before it
-/// is destroyed: a client binding at that very moment must not hit a
-/// global that is gone.
-const GLOBAL_REMOVE_DELAY: Duration = Duration::from_secs(10);
 
 /// An output the model knows.
 pub struct OutputEntry {
@@ -66,8 +62,11 @@ pub struct OutputEntry {
     pub output: Output,
     /// Where it sits in the space.
     pub origin: Point<i32, Logical>,
-    /// Its `wl_output` global.
-    pub(crate) global: GlobalId,
+    /// Whether the output is lit. A dark one is listed but has no
+    /// `wl_output` global, no layers and no workspaces.
+    pub enabled: bool,
+    /// Its `wl_output` global; none while it is dark.
+    pub(crate) global: Option<GlobalId>,
 }
 
 /// A mapped window and its id in the model.
@@ -143,6 +142,9 @@ pub struct State {
     pub engine: Engine,
     /// The outputs, in the order they were added.
     pub outputs: Vec<OutputEntry>,
+    /// The transform of the backend's framebuffer, composed under every
+    /// output's own (winit draws upside down).
+    pub base_transform: SmithayTransform,
     /// Toplevels that have not committed a buffer yet.
     pub unmapped: Vec<Window>,
     /// Mapped windows.
@@ -219,6 +221,7 @@ impl State {
             display_handle: dh,
             engine: Engine::new(settings),
             outputs: Vec::new(),
+            base_transform: SmithayTransform::Normal,
             unmapped: Vec::new(),
             mapped: Vec::new(),
             publisher: None,
@@ -288,10 +291,11 @@ impl State {
         self.add_output(info)
     }
 
-    /// Adds an output: the model places it (and brings back the workspaces
-    /// it had), the `wl_output` global appears, the windows are laid out
-    /// again.
-    pub fn add_output(&mut self, info: OutputInfo) -> Output {
+    /// Adds an output: the config's say on it is merged in, the model
+    /// places it (and brings back the workspaces it had), the `wl_output`
+    /// global appears if it is lit, the windows are laid out again.
+    pub fn add_output(&mut self, mut info: OutputInfo) -> Output {
+        self.merge_output_prefs(&mut info);
         let output = Output::new(
             info.name.clone(),
             PhysicalProperties {
@@ -302,14 +306,6 @@ impl State {
                 serial_number: info.serial.clone().unwrap_or_else(|| "Unknown".into()),
             },
         );
-        let smithay_mode = |m: &tetsu_bus::output::Mode| Mode {
-            size: (
-                i32::try_from(m.width).unwrap_or(i32::MAX),
-                i32::try_from(m.height).unwrap_or(i32::MAX),
-            )
-                .into(),
-            refresh: i32::try_from(m.refresh_mhz).unwrap_or(i32::MAX),
-        };
         for mode in &info.modes {
             output.add_mode(smithay_mode(mode));
             if mode.preferred {
@@ -320,25 +316,29 @@ impl State {
             .current_mode
             .and_then(|i| info.modes.get(i))
             .map(smithay_mode);
-        let scale = (info.scale != 1.0).then_some(Scale::Fractional(info.scale));
-        let global = output.create_global::<State>(&self.display_handle);
+        let enabled = info.enabled;
+        let global = enabled.then(|| output.create_global::<State>(&self.display_handle));
         output.change_current_state(
             current,
-            Some(to_smithay_transform(info.transform)),
-            scale,
+            Some(self.base_transform + to_smithay_transform(info.transform)),
+            Some(smithay_scale(info.scale)),
             None,
         );
         let id = self.engine.add_output_info(info);
-        self.lock.output_added(&id);
+        if enabled {
+            self.lock.output_added(&id);
+        }
         self.outputs.push(OutputEntry {
             id,
             output: output.clone(),
             origin: Point::from((0, 0)),
+            enabled,
             global,
         });
-        self.apply_output_layout();
-        self.relayout();
-        self.sync_focus();
+        // The config decides about the others too (a pin may have moved).
+        if let Err(refused) = self.reapply_outputs() {
+            eprintln!("tetsu-comp: {refused}");
+        }
         output
     }
 
@@ -350,32 +350,18 @@ impl State {
             return;
         };
         let entry = self.outputs.remove(at);
-        {
-            let mut map = layer_map_for_output(&entry.output);
-            let layers: Vec<_> = map.layers().cloned().collect();
-            for layer in layers {
-                layer.layer_surface().send_close();
-                map.unmap_layer(&layer);
-            }
-        }
+        close_layers(&entry.output);
         self.space.unmap_output(&entry.output);
         self.engine.remove_output(&entry.id);
         self.lock_output_removed(&entry.id);
-        self.display_handle
-            .disable_global::<State>(entry.global.clone());
-        let global = entry.global;
-        let _ = self.loop_handle.insert_source(
-            Timer::from_duration(GLOBAL_REMOVE_DELAY),
-            move |_, (), state| {
-                state.display_handle.remove_global::<State>(global.clone());
-                TimeoutAction::Drop
-            },
-        );
+        if let Some(global) = entry.global {
+            self.retire_global(global);
+        }
         eprintln!("tetsu-comp: output {} removed", entry.output.name());
-        self.apply_output_layout();
-        self.relayout();
-        self.sync_focus();
-        self.keep_pointer_on_screen();
+        // A dark output may have been lit meanwhile (the last lit one went).
+        if let Err(refused) = self.reapply_outputs() {
+            eprintln!("tetsu-comp: {refused}");
+        }
     }
 
     /// Puts every output where the model's automatic layout says. Nothing

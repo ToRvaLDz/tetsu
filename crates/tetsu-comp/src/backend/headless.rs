@@ -200,8 +200,12 @@ fn add_output(
     state
         .loop_handle
         .insert_source(Timer::from_duration(FRAME), move |_, (), state| {
-            if !state.outputs.iter().any(|o| o.output == output) {
+            let Some(entry) = state.outputs.iter().find(|o| o.output == output) else {
                 return TimeoutAction::Drop;
+            };
+            // A dark output has no frames.
+            if !entry.enabled {
+                return TimeoutAction::ToDuration(FRAME);
             }
             // No renderer: the tick presents the scene as it is now.
             let locked = matches!(state.view(&output), View::Locked(_));

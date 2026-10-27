@@ -15,6 +15,7 @@ use super::geometry::{PlaceIn, logical_size, place};
 use super::limits;
 use crate::config::merge::Values;
 use crate::config::output_keys::{key, number, transform};
+use crate::model::OutputInfo;
 
 /// The config of one output by connector name, as far as it is usable.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -133,4 +134,30 @@ pub fn targets(outputs: &[Output], values: &Values) -> Vec<Target> {
         }
     }
     targets
+}
+
+/// Puts the config's say on an output that is about to be added: lit or
+/// dark, mode (when the display offers it), scale, transform and pin. What
+/// the config leaves out stays as the backend described it.
+pub fn apply_to_info(info: &mut OutputInfo, values: &Values) {
+    let prefs = OutputPrefs::of(&info.name, values);
+    if let Some(enabled) = prefs.enabled {
+        info.enabled = enabled;
+    }
+    let spec = prefs.mode;
+    let at = spec.and_then(|s| {
+        info.modes
+            .iter()
+            .position(|m| (m.width, m.height, m.refresh_mhz) == (s.width, s.height, s.refresh_mhz))
+    });
+    if at.is_some() {
+        info.current_mode = at;
+    }
+    if let Some(scale) = prefs.scale {
+        info.scale = scale;
+    }
+    if let Some(transform) = prefs.transform {
+        info.transform = transform;
+    }
+    info.position = prefs.pin;
 }
