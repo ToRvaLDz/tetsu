@@ -6,6 +6,7 @@ use tetsu_installer_core::entropy::SystemEntropy;
 use tetsu_tx::boot::tool::SystemRunner;
 
 use crate::cli::{self, Command, USAGE};
+use crate::comp;
 use crate::secureboot::{self, Context, Paths};
 
 /// Exit status 0 done, 1 failed, 2 usage.
@@ -27,6 +28,7 @@ pub fn main(args: impl IntoIterator<Item = String>) -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Command::Cap(rest) => return tetsu_capd::cli::main(rest),
+        Command::Comp(rest) => return comp::main(rest),
         Command::Enroll { without_microsoft } => secureboot::enroll(&ctx, without_microsoft),
         Command::Trust(cert) => secureboot::trust(&ctx, &cert),
     };

@@ -8,6 +8,7 @@ usage: tetsu secureboot enroll [--without-microsoft]
        tetsu cap list
        tetsu cap set <class> <automatic|notify|ask|off> [--scope <scope>]
        tetsu cap revoke <class> [--scope <scope>]
+       tetsu comp config [--json]
 
   secureboot enroll   enroll the Secure Boot keys of /var/lib/tetsu/keys
                       together with the Microsoft certificates (the
@@ -16,6 +17,9 @@ usage: tetsu secureboot enroll [--without-microsoft]
                       says Tetsu's keys alone are meant
   secureboot trust    trust one more certificate in the db: a .der, .crt or
                       .pem certificate, or a pre-signed .auth file
+  comp config         show the effective compositor config: every key with
+                      its value, origin and writability, then the problems
+                      of the user file; --json prints the wire reply
 
 exit status: 0 done, 1 failed, 2 usage error";
 
@@ -24,6 +28,7 @@ pub enum Command {
     Enroll { without_microsoft: bool },
     Trust(PathBuf),
     Cap(Vec<String>),
+    Comp(Vec<String>),
     Help,
 }
 
@@ -42,6 +47,9 @@ pub fn parse(args: &[String]) -> Option<Command> {
             Some(Command::Trust(PathBuf::from(cert)))
         }
         ["cap", rest @ ..] => Some(Command::Cap(rest.iter().map(|s| (*s).to_owned()).collect())),
+        ["comp", rest @ ..] => Some(Command::Comp(
+            rest.iter().map(|s| (*s).to_owned()).collect(),
+        )),
         _ => None,
     }
 }
