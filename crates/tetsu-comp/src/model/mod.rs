@@ -1,0 +1,124 @@
+//! The window and workspace model.
+//!
+//! Operations go in, contract-ordered events come out at `flush`: `opened`
+//! before any `focused` that names the window, `focused` for the next
+//! window before `closed`, at most one `changed` per window per flush, and
+//! `added` before `activated` and `focused` for a workspace.
+
+mod windows;
+mod workspaces;
+
+use tetsu_bus::window::{ListWindowsReply, WindowEvent};
+use tetsu_bus::workspace::{ListWorkspacesReply, WorkspaceEvent};
+
+use windows::Windows;
+pub use windows::{WindowInfo, WindowUpdate};
+use workspaces::Workspaces;
+
+/// What changed since the last flush, per interface.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Events {
+    /// For `WatchWindows`.
+    pub window: Vec<WindowEvent>,
+    /// For `WatchWorkspaces`.
+    pub workspace: Vec<WorkspaceEvent>,
+}
+
+impl Events {
+    /// Nothing changed.
+    pub fn is_empty(&self) -> bool {
+        self.window.is_empty() && self.workspace.is_empty()
+    }
+}
+
+/// Windows, workspaces and outputs.
+#[derive(Debug, Default)]
+pub struct Model {
+    windows: Windows,
+    workspaces: Workspaces,
+}
+
+impl Model {
+    /// Adds an output with its first workspace; returns the output id.
+    pub fn add_output(&mut self, name: &str) -> String {
+        self.workspaces.add_output(name)
+    }
+
+    /// Maps a window on the focused workspace; returns its id. It is not
+    /// focused: call `focus`.
+    pub fn open(&mut self, info: WindowInfo) -> String {
+        let workspace = self.workspaces.focused().map(str::to_owned);
+        self.windows.open(info, workspace)
+    }
+
+    /// Changes a window's app_id or title. Unknown ids are ignored.
+    pub fn update(&mut self, id: &str, update: WindowUpdate) {
+        self.windows.update(id, update);
+    }
+
+    /// Unmaps a window. Unknown ids are ignored.
+    pub fn close(&mut self, id: &str) {
+        self.windows.close(id);
+    }
+
+    /// Focuses a window, or nothing. Focusing a window on another
+    /// workspace focuses that workspace too.
+    pub fn focus(&mut self, id: Option<&str>) {
+        if let Some(workspace) = self.windows.focus(id) {
+            self.workspaces.focus(&workspace);
+        }
+    }
+
+    /// Makes a workspace the active one of its output and the focused one.
+    pub fn focus_workspace(&mut self, id: &str) {
+        self.workspaces.focus(id);
+    }
+
+    /// Takes the events since the last call.
+    pub fn flush(&mut self) -> Events {
+        Events {
+            window: self.windows.flush(),
+            workspace: self.workspaces.flush(),
+        }
+    }
+
+    /// For `ListWindows`.
+    pub fn windows_snapshot(&self) -> ListWindowsReply {
+        self.windows.snapshot()
+    }
+
+    /// For `ListWorkspaces`.
+    pub fn workspaces_snapshot(&self) -> ListWorkspacesReply {
+        self.workspaces.snapshot()
+    }
+
+    /// The window ids on a workspace, in the order they opened.
+    pub fn windows_on(&self, workspace_id: &str) -> Vec<String> {
+        self.windows.on_workspace(workspace_id)
+    }
+
+    /// The workspace a window is on.
+    pub fn workspace_of(&self, window_id: &str) -> Option<&str> {
+        self.windows.workspace_of(window_id)
+    }
+
+    /// The active workspace of an output.
+    pub fn active_workspace(&self, output_id: &str) -> Option<&str> {
+        self.workspaces.active(output_id)
+    }
+
+    /// The focused window.
+    pub fn focused_window(&self) -> Option<&str> {
+        self.windows.focused()
+    }
+
+    /// The focused workspace.
+    pub fn focused_workspace(&self) -> Option<&str> {
+        self.workspaces.focused()
+    }
+
+    /// The name an output was added with.
+    pub fn output_name(&self, output_id: &str) -> Option<&str> {
+        self.workspaces.output_name(output_id)
+    }
+}
