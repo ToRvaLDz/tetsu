@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use tetsu_bus_contract::{BlessError, bless};
+use tetsu_bus_contract::{BlessError, bless, load_dir, polkit_policy};
 
-const USAGE: &str = "usage: cargo xtask bless-contract";
+const USAGE: &str = "usage: cargo xtask bless-contract | polkit-policy <out>";
 
 /// The IDL directory of tetsu-bus, found from this crate's own location so
 /// it does not depend on the working directory.
@@ -46,10 +46,34 @@ fn bless_contract() -> ExitCode {
     }
 }
 
+/// Scrive il file polkit generato dall'IDL in `out`.
+fn polkit_policy_task(out: &str) -> ExitCode {
+    let contract = match load_dir(&idl_dir()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("polkit-policy: cannot load the IDL: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let xml = match polkit_policy(&contract) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("polkit-policy: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = std::fs::write(out, xml) {
+        eprintln!("polkit-policy: cannot write {out}: {e}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match (args.next().as_deref(), args.next()) {
         (Some("bless-contract"), None) => bless_contract(),
+        (Some("polkit-policy"), Some(out)) if args.next().is_none() => polkit_policy_task(&out),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)

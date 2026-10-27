@@ -12,24 +12,24 @@ fn contract(sources: &[(&str, &str)]) -> Contract {
 const ALPHA: &str = "interface org.tetsu.alpha.v1
 
 # @capability packages.install
-Install() -> ()
+method Install() -> ()
 
 # @capability packages.install
-Reinstall() -> ()
+method Reinstall() -> ()
 
 # @capability aur.re_view
-Review() -> ()
+method Review() -> ()
 
-Status() -> ()
+method Status() -> ()
 ";
 
 const BETA: &str = "interface org.tetsu.beta.v1
 
 # @capability notify.send
-Send() -> ()
+method Send() -> ()
 
 # @capability packages.install
-Other() -> ()
+method Other() -> ()
 ";
 
 #[test]
@@ -79,7 +79,7 @@ fn malformed_capability_is_an_error() {
     let bad = "interface org.tetsu.bad.v1
 
 # @capability Packages
-Do() -> ()
+method Do() -> ()
 ";
     let c = contract(&[("bad.varlink", bad)]);
     assert!(capability_classes(&c).is_err());
@@ -90,7 +90,7 @@ Do() -> ()
 fn no_class_at_all_is_an_error() {
     let none = "interface org.tetsu.none.v1
 
-Get() -> ()
+method Get() -> ()
 ";
     let c = contract(&[("n.varlink", none)]);
     assert!(polkit_policy(&c).is_err());

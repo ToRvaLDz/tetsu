@@ -10,6 +10,7 @@ mod compat;
 mod fixtures;
 mod load;
 mod model;
+mod polkit;
 mod replies;
 mod rules;
 mod value;
@@ -22,6 +23,7 @@ pub use load::{LoadError, load_dir, read_dir_sources};
 pub use model::{
     Capability, Contract, CustomType, Doc, ErrorDef, Field, Interface, Method, Ty, TypeDef, Variant,
 };
+pub use polkit::{PolicyError, capability_classes, polkit_action_id, polkit_policy};
 pub use replies::{check_error, check_reply};
 pub use rules::check_rules;
 pub use violation::{Kind, Violation};
