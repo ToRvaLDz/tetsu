@@ -135,3 +135,12 @@ fn no_candidates_gives_nogpu() {
     assert_eq!(select(&[], None), Selection::NoGpu);
     assert_eq!(select(&[], Some(Some(1))), Selection::NoGpu);
 }
+
+#[test]
+fn an_override_naming_a_device_that_is_not_there_falls_back_to_auto() {
+    let c = [gpu(IGPU, true, false, &["eDP-1"])];
+    let (id, automatic, reason) = picked(select(&c, Some(Some(99))));
+    assert_eq!(id, IGPU);
+    assert!(automatic);
+    assert_eq!(reason, "override not found");
+}
