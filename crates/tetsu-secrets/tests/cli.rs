@@ -121,14 +121,7 @@ fn no_flag_takes_the_value() {
 fn the_log_command_is_journalctl_for_the_audit_tag() {
     assert_eq!(
         log_argv(false, None),
-        [
-            "--user",
-            "-t",
-            "tetsu-secrets",
-            "-o",
-            "short-iso",
-            "--no-pager"
-        ]
+        ["--user", "-t", "tetsu-secrets", "-o", "short-iso"]
     );
     assert_eq!(
         log_argv(true, Some(50)),
