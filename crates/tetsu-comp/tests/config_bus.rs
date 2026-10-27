@@ -118,6 +118,27 @@ fn a_watch_without_more_is_refused() {
     assert_eq!(client.recv()["error"], "org.varlink.service.ExpectedMore");
 }
 
+/// One `GetConfig` over a fresh connection. Any failure (nobody listens
+/// yet, the old thread is dying and drops the connection) is `None`.
+fn try_get_config(path: &std::path::Path) -> Option<Value> {
+    use std::io::Read;
+    let mut stream = std::os::unix::net::UnixStream::connect(path).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
+    let mut call = serde_json::to_vec(&json!({ "method": GET_CONFIG, "parameters": {} })).ok()?;
+    call.push(0);
+    stream.write_all(&call).ok()?;
+    let mut reply = Vec::new();
+    let mut chunk = [0u8; 65536];
+    while !reply.contains(&0) {
+        match stream.read(&mut chunk).ok()? {
+            0 => return None,
+            n => reply.extend_from_slice(&chunk[..n]),
+        }
+    }
+    let end = reply.iter().position(|b| *b == 0)?;
+    serde_json::from_slice(&reply[..end]).ok()
+}
+
 #[test]
 fn a_restarted_bus_thread_serves_the_config_of_its_snapshot() {
     let contract = common::contract();
@@ -126,24 +147,16 @@ fn a_restarted_bus_thread_serves_the_config_of_its_snapshot() {
     publisher.crash_for_test();
     let later = config("[layout]\ngaps_outer = 8\n");
     let start = Instant::now();
-    loop {
+    // The crash is only queued: until the old thread is gone the socket
+    // answers with the old snapshot or drops the connection. Ask until the
+    // restarted thread answers.
+    let reply = loop {
         publisher.supervise(|| snapshot(later.clone()));
-        if let Ok(mut client) =
-            std::os::unix::net::UnixStream::connect(socket(&dir)).map(|stream| {
-                stream.set_read_timeout(Some(TIMEOUT)).unwrap();
-                Client {
-                    stream,
-                    buffer: Vec::new(),
-                }
-            })
-        {
-            client.send(GET_CONFIG, false);
-            if let Some(reply) = client.try_recv() {
-                common::check(&contract, GET_CONFIG, &reply["parameters"]);
-                let got: GetConfigReply =
-                    serde_json::from_value(reply["parameters"].clone()).unwrap();
-                assert_eq!(got, later);
-                break;
+        if let Some(reply) = try_get_config(&socket(&dir)) {
+            let got: Result<GetConfigReply, _> =
+                serde_json::from_value(reply["parameters"].clone());
+            if got.as_ref().is_ok_and(|got| *got == later) {
+                break reply;
             }
         }
         assert!(
@@ -151,7 +164,8 @@ fn a_restarted_bus_thread_serves_the_config_of_its_snapshot() {
             "the bus thread was not restarted"
         );
         std::thread::sleep(Duration::from_millis(50));
-    }
+    };
+    common::check(&contract, GET_CONFIG, &reply["parameters"]);
 }
 
 #[test]
