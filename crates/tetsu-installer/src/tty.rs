@@ -36,14 +36,15 @@ impl EchoOff {
         dup: impl FnOnce() -> std::io::Result<OwnedFd>,
     ) -> Option<Self> {
         let saved = tcgetattr(fd).ok()?;
+        // Copy first: nothing may fail once echo is off, or it stays off.
+        let owned = dup().ok()?;
         let mut quiet = saved.clone();
         quiet.local_modes.remove(LocalModes::ECHO);
         // The newline the user types is not echoed either; keep it so the
         // next line starts clean.
         quiet.local_modes.insert(LocalModes::ECHONL);
         tcsetattr(fd, OptionalActions::Flush, &quiet).ok()?;
-        let fd = dup().ok()?;
-        Some(Self { fd, saved })
+        Some(Self { fd: owned, saved })
     }
 }
 
