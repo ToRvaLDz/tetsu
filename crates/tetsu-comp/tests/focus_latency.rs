@@ -1,4 +1,21 @@
 //! Focus-to-bar latency, end to end on the headless compositor.
+//!
+//! - T0: just before the test writes `focus-next` to the compositor's stdin
+//!   hook, which runs the same `run_action` path as Super+J.
+//! - T1: `tetsu_bus::window::watch(..).next()` returns the `focused` event
+//!   naming the window just focused (the bar's bus-thread receive path).
+//!
+//! Both are `Instant`s of this process. The bar's redraw is left out: the
+//! measurement is about the bus, not the renderer. The test asserts p95 <
+//! 50 ms (max < 100 ms as CI tolerance) and prints the report line on
+//! every run.
+//!
+//! ```text
+//! cargo test -p tetsu-comp --test focus_latency -- --nocapture
+//! # the long run, as a tool (1..=10000 trials, default 60):
+//! TETSU_FOCUS_LATENCY_TRIALS=1000 cargo test -p tetsu-comp --release \
+//!     --test focus_latency -- --nocapture
+//! ```
 
 mod common;
 #[path = "common/latency.rs"]
