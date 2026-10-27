@@ -5,6 +5,7 @@ pub mod audit;
 pub mod auth;
 pub mod batch;
 pub mod catalog;
+pub mod cli;
 pub mod clock;
 pub mod decide;
 pub mod engine;
