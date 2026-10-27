@@ -43,6 +43,13 @@ impl Endpoint {
 
 /// Connects, then checks the server. A server that cannot be identified, or
 /// is not the expected one, is `PermissionDenied`, and nothing was sent.
+///
+/// The server is resolved from the credentials of the client socket, which
+/// for a stream socket identify the process that called `listen()`, not the
+/// one that `accept()`s. A socket-activated daemon (socket units, as planned
+/// in the bus-policy ticket #61) would be seen as the user manager and fail
+/// closed. Daemons verified this way must bind their own socket until a
+/// tested manager-aware [`ExpectedServer`] variant exists.
 pub async fn connect_verified(endpoint: &Endpoint) -> io::Result<Connection<Socket>> {
     let mut connection = zlink::tokio::unix::connect(endpoint.path())
         .await
