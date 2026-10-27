@@ -347,15 +347,22 @@ impl State {
                     self.send_frames(&output);
                 }
             }
-            Ok(false) => {
-                let retry = Timer::from_duration(IDLE_RETRY);
-                let _ = self.loop_handle.insert_source(retry, move |_, (), state| {
-                    state.render_crtc(crtc);
-                    TimeoutAction::Drop
-                });
+            Ok(false) => self.schedule_retry(crtc),
+            Err(e) => {
+                // No queued frame means no VBlank: without a retry the output stays frozen.
+                eprintln!("tetsu-comp: render failed: {e}");
+                self.schedule_retry(crtc);
             }
-            Err(e) => eprintln!("tetsu-comp: render failed: {e}"),
         }
+    }
+
+    /// Tries the CRTC again at the next frame time.
+    fn schedule_retry(&mut self, crtc: crtc::Handle) {
+        let retry = Timer::from_duration(IDLE_RETRY);
+        let _ = self.loop_handle.insert_source(retry, move |_, (), state| {
+            state.render_crtc(crtc);
+            TimeoutAction::Drop
+        });
     }
 
     /// The VT went away or came back.
