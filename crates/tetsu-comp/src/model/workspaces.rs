@@ -53,6 +53,36 @@ impl Workspaces {
         out_id
     }
 
+    /// The workspace of `output_id` at `index`, created (`added`, never
+    /// `activated`) when it does not exist. `None` for an unknown output.
+    pub(super) fn at(&mut self, output_id: &str, index: i64) -> Option<String> {
+        if !self.outputs.iter().any(|o| o.id == output_id) {
+            return None;
+        }
+        let found = self
+            .list
+            .iter()
+            .find(|w| w.output_id.as_deref() == Some(output_id) && w.index == index);
+        if let Some(workspace) = found {
+            return Some(workspace.id.clone());
+        }
+        self.next_workspace += 1;
+        let workspace = Workspace {
+            id: format!("ws-{}", self.next_workspace),
+            name: None,
+            output_id: Some(output_id.to_owned()),
+            index,
+        };
+        let id = workspace.id.clone();
+        self.events.push(WorkspaceEvent::added(workspace.clone()));
+        self.list.push(workspace);
+        Some(id)
+    }
+
+    pub(super) fn exists(&self, id: &str) -> bool {
+        self.list.iter().any(|w| w.id == id)
+    }
+
     /// Makes `id` the active workspace of its output and the focused one.
     pub(super) fn focus(&mut self, id: &str) {
         let Some(output) = self

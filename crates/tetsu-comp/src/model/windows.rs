@@ -74,6 +74,60 @@ impl Windows {
         id
     }
 
+    fn mark_dirty(&mut self, id: &str) {
+        if !self.dirty.iter().any(|d| d == id) {
+            self.dirty.push(id.to_owned());
+        }
+    }
+
+    /// The next window in the focus stack on `workspace_id`, skipping `except`.
+    fn next_on(&self, workspace_id: Option<&str>, except: &str) -> Option<String> {
+        self.stack
+            .iter()
+            .rev()
+            .find(|s| {
+                s.as_str() != except
+                    && self
+                        .list
+                        .iter()
+                        .any(|w| &w.id == *s && w.workspace_id.as_deref() == workspace_id)
+            })
+            .cloned()
+    }
+
+    /// The most recently focused window on a workspace.
+    pub(super) fn top_on(&self, workspace_id: &str) -> Option<String> {
+        self.next_on(Some(workspace_id), "")
+    }
+
+    /// Moves a window to a workspace. If it had the focus, the next
+    /// window of the old workspace gets it. Returns whether it moved.
+    pub(super) fn move_to(&mut self, id: &str, workspace_id: &str) -> bool {
+        let Some(window) = self.list.iter_mut().find(|w| w.id == id) else {
+            return false;
+        };
+        if window.workspace_id.as_deref() == Some(workspace_id) {
+            return false;
+        }
+        let old = window.workspace_id.replace(workspace_id.to_owned());
+        if self.focused.as_deref() == Some(id) {
+            let next = self.next_on(old.as_deref(), id);
+            self.set_focus(next);
+        }
+        self.mark_dirty(id);
+        true
+    }
+
+    pub(super) fn set_placement(&mut self, id: &str, placement: Placement) {
+        let Some(window) = self.list.iter_mut().find(|w| w.id == id) else {
+            return;
+        };
+        if window.placement != placement {
+            window.placement = placement;
+            self.mark_dirty(id);
+        }
+    }
+
     pub(super) fn update(&mut self, id: &str, update: WindowUpdate) {
         let Some(window) = self.list.iter_mut().find(|w| w.id == id) else {
             return;
@@ -87,8 +141,8 @@ impl Windows {
             changed |= window.title != title;
             window.title = title;
         }
-        if changed && !self.dirty.iter().any(|d| d == id) {
-            self.dirty.push(id.to_owned());
+        if changed {
+            self.mark_dirty(id);
         }
     }
 
@@ -101,16 +155,7 @@ impl Windows {
         self.dirty.retain(|d| d != id);
         if self.focused.as_deref() == Some(id) {
             // The next in the focus stack, on the same workspace.
-            let next = self
-                .stack
-                .iter()
-                .rev()
-                .find(|s| {
-                    self.list
-                        .iter()
-                        .any(|w| &w.id == *s && w.workspace_id == window.workspace_id)
-                })
-                .cloned();
+            let next = self.next_on(window.workspace_id.as_deref(), id);
             self.set_focus(next);
         }
         self.events.push(WindowEvent::closed(id));

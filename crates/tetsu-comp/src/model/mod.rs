@@ -8,7 +8,7 @@
 mod windows;
 mod workspaces;
 
-use tetsu_bus::window::{ListWindowsReply, WindowEvent};
+use tetsu_bus::window::{ListWindowsReply, Placement, WindowEvent};
 use tetsu_bus::workspace::{ListWorkspacesReply, WorkspaceEvent};
 
 use windows::Windows;
@@ -51,6 +51,35 @@ impl Model {
         self.windows.open(info, workspace)
     }
 
+    /// Maps a window on `workspace_id` (the focused workspace when it is
+    /// unknown). It is not focused: call `focus`.
+    pub fn open_on(&mut self, info: WindowInfo, workspace_id: &str) -> String {
+        if !self.workspaces.exists(workspace_id) {
+            return self.open(info);
+        }
+        self.windows.open(info, Some(workspace_id.to_owned()))
+    }
+
+    /// Moves a window to another workspace, which stays as it is. If the
+    /// window was focused, the next one on the old workspace is. Unknown
+    /// ids and a no-op move are ignored.
+    pub fn move_to_workspace(&mut self, id: &str, workspace_id: &str) {
+        if self.workspaces.exists(workspace_id) {
+            self.windows.move_to(id, workspace_id);
+        }
+    }
+
+    /// Sets a window's placement; nothing is emitted when it is the same.
+    pub fn set_placement(&mut self, id: &str, placement: Placement) {
+        self.windows.set_placement(id, placement);
+    }
+
+    /// The workspace of an output at an index, created on demand with an
+    /// `added` event. `None` for an unknown output.
+    pub fn workspace_at(&mut self, output_id: &str, index: i64) -> Option<String> {
+        self.workspaces.at(output_id, index)
+    }
+
     /// Changes a window's app_id or title. Unknown ids are ignored.
     pub fn update(&mut self, id: &str, update: WindowUpdate) {
         self.windows.update(id, update);
@@ -69,9 +98,15 @@ impl Model {
         }
     }
 
-    /// Makes a workspace the active one of its output and the focused one.
+    /// Makes a workspace the active one of its output and the focused one,
+    /// and focuses the most recently focused window on it, or nothing.
     pub fn focus_workspace(&mut self, id: &str) {
+        if !self.workspaces.exists(id) {
+            return;
+        }
         self.workspaces.focus(id);
+        let top = self.windows.top_on(id);
+        self.windows.focus(top.as_deref());
     }
 
     /// Takes the events since the last call.
