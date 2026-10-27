@@ -1,7 +1,7 @@
 //! Format negotiation: CCS filtering, linear-only, color formats, tranches.
 
 use smithay::backend::allocator::{Format, Fourcc, Modifier};
-use tetsu_comp::gpu::formats::{color_formats, invalid_only, render_formats, scanout_tranches};
+use tetsu_comp::gpu::formats::{color_formats, render_formats, scanout_tranches};
 
 fn f(code: Fourcc, modifier: Modifier) -> Format {
     Format { code, modifier }
@@ -59,19 +59,6 @@ fn linear_only_keeps_linear_alone() {
             f(Fourcc::Argb8888, Modifier::Linear),
             f(Fourcc::Xrgb8888, Modifier::Linear)
         ]
-    );
-}
-
-#[test]
-fn invalid_only_keeps_the_invalid_modifier_per_code() {
-    let input = vec![
-        f(Fourcc::Argb8888, Modifier::Linear),
-        f(Fourcc::Argb8888, Modifier::Invalid),
-        f(Fourcc::Xrgb8888, Modifier::Linear),
-    ];
-    assert_eq!(
-        invalid_only(&input),
-        vec![f(Fourcc::Argb8888, Modifier::Invalid)]
     );
 }
 

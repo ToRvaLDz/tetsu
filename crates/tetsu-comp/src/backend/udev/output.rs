@@ -3,8 +3,8 @@
 //! preferred mode.
 //!
 //! An output that cannot be created with the full modifier list is retried
-//! with the invalid modifier inside Smithay's `DrmOutputManager` itself (the
-//! equivalent of `gpu::formats::invalid_only`), so there is no retry here.
+//! with the invalid modifier inside Smithay's `DrmOutputManager` itself, so
+//! there is no retry here.
 //! Overlay planes are off everywhere (Smithay #2119, #2154).
 
 use std::error::Error;

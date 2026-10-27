@@ -51,16 +51,6 @@ pub fn render_formats(formats: &[Format], linear_only: bool) -> Vec<Format> {
         .collect()
 }
 
-/// The retry when creating an output fails: let the driver choose the
-/// modifier.
-pub fn invalid_only(formats: &[Format]) -> Vec<Format> {
-    formats
-        .iter()
-        .copied()
-        .filter(|format| format.modifier == Modifier::Invalid)
-        .collect()
-}
-
 /// The scanout color formats, in preference order.
 pub fn color_formats(cross_gpu: bool) -> &'static [Fourcc] {
     if cross_gpu {
