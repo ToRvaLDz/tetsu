@@ -27,7 +27,13 @@ impl Comp {
 
     /// Starts with extra arguments and, if given, a config file.
     pub fn start_with(args: &[&str], config: Option<&str>) -> Self {
-        Self::spawn(args, config, false)
+        Self::spawn(args, config, false, &[])
+    }
+
+    /// Like `start_with`, with extra environment variables. The helpers the
+    /// compositor starts inherit them.
+    pub fn start_with_env(args: &[&str], config: Option<&str>, env: &[(&str, &str)]) -> Self {
+        Self::spawn(args, config, false, env)
     }
 
     /// Starts with `--headless-hotplug` and a piped stdin; `control` writes
@@ -35,7 +41,7 @@ impl Comp {
     pub fn start_hotplug(args: &[&str], config: Option<&str>) -> Self {
         let mut all = vec!["--headless-hotplug"];
         all.extend_from_slice(args);
-        Self::spawn(&all, config, true)
+        Self::spawn(&all, config, true, &[])
     }
 
     /// Sends one hotplug command line.
@@ -45,7 +51,7 @@ impl Comp {
         stdin.flush().unwrap();
     }
 
-    fn spawn(args: &[&str], config: Option<&str>, piped_stdin: bool) -> Self {
+    fn spawn(args: &[&str], config: Option<&str>, piped_stdin: bool, env: &[(&str, &str)]) -> Self {
         let runtime = tempfile::tempdir().unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_tetsu-comp"));
         command.args(["--backend", "headless"]).args(args);
@@ -57,6 +63,7 @@ impl Comp {
         if piped_stdin {
             command.stdin(Stdio::piped());
         }
+        command.envs(env.iter().copied());
         let mut child = command
             .env("XDG_RUNTIME_DIR", runtime.path())
             .env_remove("WAYLAND_DISPLAY")
