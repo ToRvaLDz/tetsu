@@ -3,6 +3,7 @@
 //! see each module.
 
 pub mod audit;
+pub mod broker;
 pub mod caller;
 pub mod init;
 pub mod model;
