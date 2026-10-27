@@ -8,6 +8,7 @@ use toml::Value;
 use toml::de::{DeTable, DeValue};
 
 use super::keys::{self, TABLES};
+use crate::outputs::limits;
 use crate::settings::SettingsError;
 
 /// What a layer's text gave.
@@ -78,6 +79,8 @@ pub fn parse(text: &str) -> LayerParse {
         };
         if name == "window_rule" {
             window_rules(&mut out, text, value, node.get_ref());
+        } else if name == "output" {
+            outputs(&mut out, text, value, node.get_ref(), at);
         } else if TABLES.contains(&name) {
             subtable(&mut out, text, name, value, node.get_ref(), at);
         } else {
@@ -133,6 +136,56 @@ fn subtable(
                 out.values.insert(key, value.clone());
             }
             Err((_, error)) => out.problem(text, at, Some(&key), error.to_string()),
+        }
+    }
+}
+
+/// `[output.<connector>]` tables: each field becomes the key
+/// `output.<connector>.<field>`.
+fn outputs(out: &mut LayerParse, text: &str, value: &Value, node: &DeValue<'_>, at: usize) {
+    let (Some(entries), Some(nodes)) = (value.as_table(), node.as_table()) else {
+        out.problem(text, at, Some("output"), "output: expected a table".into());
+        return;
+    };
+    for (connector, connector_node) in nodes {
+        let (connector, at) = (connector.get_ref().as_ref(), connector.span().start);
+        let Some(value) = entries.get(connector) else {
+            continue;
+        };
+        let prefix = format!("output.{connector}");
+        if !limits::valid_connector(connector) {
+            let message = format!("{prefix}: a connector name is 1 to 32 letters, digits, - or _");
+            out.problem(text, at, Some(&prefix), message);
+            continue;
+        }
+        let (Some(fields), Some(field_nodes)) =
+            (value.as_table(), connector_node.get_ref().as_table())
+        else {
+            out.problem(
+                text,
+                at,
+                Some(&prefix),
+                format!("{prefix}: expected a table"),
+            );
+            continue;
+        };
+        for (field, _) in field_nodes {
+            let (field, at) = (field.get_ref().as_ref(), field.span().start);
+            let key = format!("{prefix}.{field}");
+            let Some(value) = fields.get(field) else {
+                continue;
+            };
+            if keys::lookup(&key).is_none() {
+                let message = SettingsError::UnknownKey(key.clone()).to_string();
+                out.problem(text, at, Some(&key), message);
+                continue;
+            }
+            match keys::validate(&key, value) {
+                Ok(()) => {
+                    out.values.insert(key, value.clone());
+                }
+                Err((_, error)) => out.problem(text, at, Some(&key), error.to_string()),
+            }
         }
     }
 }

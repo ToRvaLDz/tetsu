@@ -3,4 +3,5 @@
 
 pub mod edid;
 pub mod geometry;
+pub mod limits;
 pub mod modes;

@@ -5,6 +5,7 @@ pub mod glue;
 pub mod keys;
 pub mod layer;
 pub mod merge;
+pub mod output_keys;
 pub mod paths;
 pub mod set;
 pub mod store;

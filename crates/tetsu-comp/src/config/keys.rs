@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde::de::DeserializeOwned;
 use toml::Value;
 
+use super::output_keys;
 use crate::layout::Gaps;
 use crate::layout::LayoutKind;
 use crate::layout::master::{MAX_RATIO, MIN_RATIO};
@@ -74,11 +75,14 @@ pub const KEYS: [KeyDef; 10] = [
 
 /// The key called `name`.
 pub fn lookup(name: &str) -> Option<&'static KeyDef> {
+    if name.starts_with("output.") {
+        return output_keys::lookup(name);
+    }
     KEYS.iter().find(|key| key.name == name)
 }
 
 /// The table names of the user file; `window_rule` is a key by itself.
-pub const TABLES: [&str; 4] = ["layout", "render", "lock", "trust"];
+pub const TABLES: [&str; 5] = ["layout", "render", "lock", "trust", "output"];
 
 /// Why a value is refused: the rule's position for `window_rule`.
 pub type Invalid = (Option<usize>, SettingsError);
@@ -121,6 +125,9 @@ fn rules_of(value: &Value) -> Result<Vec<crate::rules::Rule>, Invalid> {
 
 /// Whether `value` is valid for the known key `name`.
 pub fn validate(name: &str, value: &Value) -> Result<(), Invalid> {
+    if name.starts_with("output.") {
+        return output_keys::validate(name, value).map_err(|e| (None, e));
+    }
     let result = match name {
         "layout.default" => layout_of(value).map(drop),
         "layout.gaps_inner" => gap_of("gaps_inner", value).map(drop),
