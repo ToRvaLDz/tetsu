@@ -1,6 +1,8 @@
 //! Keyboard step: the layout drives the default language and timezone.
 //! The RTC is always kept in UTC.
 
+use std::collections::BTreeSet;
+
 use crate::error::InstallError;
 use crate::frontend::{Frontend, ask_valid, choose_from};
 
@@ -197,6 +199,16 @@ pub fn validate_timezone(tz: &str) -> Result<(), String> {
         });
     ok.then_some(())
         .ok_or_else(|| format!("not a timezone name: {tz} (expected Area/City)"))
+}
+
+/// The locales the payload generates: the table's plus the fallback.
+pub fn pregenerated_locales() -> BTreeSet<&'static str> {
+    BTreeSet::new()
+}
+
+/// Whether the payload already generates `language`.
+pub fn is_pregenerated(language: &str) -> bool {
+    pregenerated_locales().contains(language)
 }
 
 /// Accepts `ll_CC.UTF-8` shaped locales.
