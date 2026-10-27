@@ -65,6 +65,55 @@ fn bad_arguments_are_errors() {
 }
 
 #[test]
+fn the_config_path_and_the_output_count_are_options() {
+    let cli = run(&["--config", "/etc/tetsu.toml"], false).unwrap();
+    assert_eq!(cli.config, Some("/etc/tetsu.toml".into()));
+    let cli = run(&["--config=rel.toml", "--backend=headless"], false).unwrap();
+    assert_eq!(cli.config, Some("rel.toml".into()));
+    assert_eq!(run(&[], false).unwrap().config, None);
+
+    assert_eq!(run(&[], false).unwrap().headless_outputs, 1);
+    let cli = run(&["--backend", "headless", "--headless-outputs", "2"], false).unwrap();
+    assert_eq!(cli.headless_outputs, 2);
+    let cli = run(&["--headless-outputs=4", "--backend=headless"], false).unwrap();
+    assert_eq!(cli.headless_outputs, 4);
+}
+
+#[test]
+fn bad_values_for_the_new_options_are_errors() {
+    assert_eq!(
+        run(&["--config"], false).unwrap_err(),
+        CliError::MissingValue("--config")
+    );
+    assert_eq!(
+        run(&["--headless-outputs"], false).unwrap_err(),
+        CliError::MissingValue("--headless-outputs")
+    );
+    for bad in ["0", "5", "two", "-1", ""] {
+        assert_eq!(
+            run(&["--backend", "headless", "--headless-outputs", bad], false).unwrap_err(),
+            CliError::BadNumber("--headless-outputs", bad.into()),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn extra_headless_outputs_need_the_headless_backend() {
+    for backend in ["winit", "tty"] {
+        assert_eq!(
+            run(&["--backend", backend, "--headless-outputs", "2"], false).unwrap_err(),
+            CliError::HeadlessOnly
+        );
+    }
+    // The default backend counts too.
+    assert_eq!(
+        run(&["--headless-outputs", "2"], true).unwrap_err(),
+        CliError::HeadlessOnly
+    );
+}
+
+#[test]
 fn help_is_not_a_run() {
     assert!(matches!(parse(args(&["--help"]), false), Ok(Parsed::Help)));
     assert!(matches!(parse(args(&["-h"]), true), Ok(Parsed::Help)));
