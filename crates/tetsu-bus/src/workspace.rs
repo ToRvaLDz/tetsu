@@ -1,9 +1,13 @@
 //! `org.tetsu.comp.workspace.v1`: the wire types, shaped exactly as the IDL.
 
 use std::collections::BTreeMap;
+use std::io;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use zlink::{Call, Connection};
 
+use crate::into_io;
 use crate::nullable::present;
 
 /// The interface name.
@@ -163,4 +167,75 @@ pub struct ListWorkspacesReply {
     /// The focused workspace, null when none.
     #[serde(default)]
     pub focused_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WatchCall {
+    method: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchReply {
+    event: WorkspaceEvent,
+}
+
+/// A Varlink error reply; `error` is required, so a reply never matches it.
+#[derive(Debug, Deserialize)]
+struct RemoteError {
+    error: String,
+}
+
+/// An open `WatchWorkspaces` stream.
+#[derive(Debug)]
+pub struct WorkspaceWatch {
+    connection: Connection<zlink::tokio::unix::Stream>,
+    ended: bool,
+}
+
+/// Connects to the compositor socket and starts `WatchWorkspaces`.
+pub async fn watch(path: &Path) -> io::Result<WorkspaceWatch> {
+    let mut connection = zlink::tokio::unix::connect(path).await.map_err(into_io)?;
+    let call = Call::new(WatchCall {
+        method: "org.tetsu.comp.workspace.v1.WatchWorkspaces",
+    })
+    .set_more(true);
+    connection
+        .send_call(&call, Vec::new())
+        .await
+        .map_err(into_io)?;
+    Ok(WorkspaceWatch {
+        connection,
+        ended: false,
+    })
+}
+
+impl WorkspaceWatch {
+    /// The next event. After the final reply, or once the compositor went
+    /// away, an `UnexpectedEof` error.
+    pub async fn next(&mut self) -> io::Result<WorkspaceEvent> {
+        if self.ended {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "WatchWorkspaces ended",
+            ));
+        }
+        let (reply, _fds) = self
+            .connection
+            .receive_reply::<WatchReply, RemoteError>()
+            .await
+            .map_err(into_io)?;
+        match reply {
+            Ok(reply) => {
+                self.ended = reply.continues() != Some(true);
+                reply
+                    .into_parameters()
+                    .map(|parameters| parameters.event)
+                    .ok_or_else(|| io::Error::other("WatchWorkspaces reply without parameters"))
+            }
+            Err(error) => Err(io::Error::other(format!(
+                "WatchWorkspaces failed: {}",
+                error.error
+            ))),
+        }
+    }
 }
