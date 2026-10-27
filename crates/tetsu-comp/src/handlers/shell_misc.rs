@@ -61,6 +61,11 @@ impl WaylandDndGrabHandler for State {
         serial: Serial,
         type_: GrabType,
     ) {
+        // Locked: no drag starts, whatever serial the client presents.
+        if self.lock.is_locked() {
+            source.cancel();
+            return;
+        }
         match type_ {
             GrabType::Pointer => {
                 let Some(pointer) = seat.get_pointer() else {

@@ -51,6 +51,10 @@ impl State {
         start_data: GrabStartData<State>,
         serial: Serial,
     ) {
+        // Locked: no client starts a grab, whatever serial it presents.
+        if self.lock.is_locked() {
+            return;
+        }
         if !self.engine.is_floating(id) {
             return;
         }
