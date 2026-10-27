@@ -12,6 +12,7 @@ description = "Tetsu Wayland compositor: Smithay backends, xdg-shell and the win
 workspace = true
 
 [dependencies]
+regex-lite = "0.1"
 serde = "1.0.228"
 serde_json = "1.0.154"
 smithay = { git = "https://github.com/Smithay/smithay", rev = "8a270232f1bfc416c781273c98a3f52a812a0bba", default-features = false, features = [
