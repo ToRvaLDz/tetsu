@@ -118,6 +118,31 @@ impl Windows {
         true
     }
 
+    /// Puts the windows on no workspace on `workspace_id`.
+    pub(super) fn adopt_orphans(&mut self, workspace_id: &str) {
+        let orphans: Vec<String> = self
+            .list
+            .iter()
+            .filter(|w| w.workspace_id.is_none())
+            .map(|w| w.id.clone())
+            .collect();
+        for id in orphans {
+            let Some(window) = self.list.iter_mut().find(|w| w.id == id) else {
+                continue;
+            };
+            window.workspace_id = Some(workspace_id.to_owned());
+            let current = window.clone();
+            // A window that has not been flushed yet opens on it.
+            let pending = self.events.iter_mut().find(|e| {
+                e.kind == WindowKind::Opened && e.window.as_ref().is_some_and(|w| w.id == id)
+            });
+            match pending {
+                Some(event) => event.window = Some(current),
+                None => self.mark_dirty(&id),
+            }
+        }
+    }
+
     pub(super) fn set_placement(&mut self, id: &str, placement: Placement) {
         let Some(window) = self.list.iter_mut().find(|w| w.id == id) else {
             return;

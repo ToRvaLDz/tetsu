@@ -60,6 +60,10 @@ impl Model {
         let before = self.workspaces.focused().map(str::to_owned);
         let id = self.outputs.add(info);
         self.workspaces.add_output(&id, &name);
+        // Windows opened while no output existed sit on no workspace.
+        if let Some(focused) = self.workspaces.focused().map(str::to_owned) {
+            self.windows.adopt_orphans(&focused);
+        }
         self.follow_focus(before);
         id
     }

@@ -816,3 +816,28 @@ fn a_mode_change_emits_changed_and_slides_the_outputs_to_its_right() {
     model.set_output_mode("out-9", vec![], None);
     assert!(model.flush().is_empty());
 }
+
+#[test]
+fn a_window_opened_with_no_output_lands_on_the_workspace_of_the_next_one() {
+    let mut model = Model::default();
+    let first = model.add_output("DP-1");
+    model.remove_output(&first);
+    model.flush();
+    let win = model.open(info("a", "orphan"));
+    model.flush();
+    assert_eq!(model.workspace_of(&win), None);
+
+    model.add_output("DP-2");
+    let events = check_all(&mut model);
+    let focused = model.focused_workspace().map(str::to_owned);
+    assert!(focused.is_some());
+    assert_eq!(model.workspace_of(&win), focused.as_deref());
+    assert_eq!(model.windows_on(focused.as_deref().unwrap()), [win.clone()]);
+    // The window event carries the workspace.
+    let on_ws = events
+        .window
+        .iter()
+        .filter_map(|e| e.window.as_ref())
+        .any(|w| w.id == win && w.workspace_id == focused);
+    assert!(on_ws);
+}
