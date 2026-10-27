@@ -86,6 +86,15 @@ mod tests {
     }
 
     #[test]
+    fn comp_forwards_its_arguments() {
+        assert_eq!(
+            parse_args(&["comp", "config", "--json"]),
+            Some(Command::Comp(vec!["config".into(), "--json".into()]))
+        );
+        assert_eq!(parse_args(&["comp"]), Some(Command::Comp(vec![])));
+    }
+
+    #[test]
     fn anything_else_is_a_usage_error() {
         for args in [
             &[][..],
