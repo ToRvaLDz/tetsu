@@ -260,3 +260,41 @@ fn a_hotplug_line_is_read_lossily_and_capped() {
     );
     assert_eq!(read_command_line(&mut reader).unwrap(), None);
 }
+
+#[test]
+fn add_modes_names_an_output_and_its_sizes() {
+    assert_eq!(
+        parse_command("add-modes HEADLESS-9 1920x1080,1280x720\n"),
+        Ok(HotplugCommand::AddModes {
+            name: "HEADLESS-9".into(),
+            sizes: vec![(1920, 1080), (1280, 720)],
+        })
+    );
+    assert_eq!(
+        parse_command("add-modes DP-1 800x600"),
+        Ok(HotplugCommand::AddModes {
+            name: "DP-1".into(),
+            sizes: vec![(800, 600)],
+        })
+    );
+}
+
+#[test]
+fn add_modes_refuses_an_empty_list_a_bad_size_and_too_many_modes() {
+    let too_many = format!("add-modes DP-1 {}", vec!["800x600"; 17].join(","));
+    let sixteen = format!("add-modes DP-1 {}", vec!["800x600"; 16].join(","));
+    for line in [
+        "add-modes",
+        "add-modes DP-1",
+        "add-modes DP-1 ",
+        "add-modes DP-1 1920x1080,",
+        "add-modes DP-1 ,1920x1080",
+        "add-modes DP-1 1920x1080,0x0",
+        "add-modes DP-1 1920x1080,abc",
+        "add-modes DP-1 1920x1080 extra",
+        too_many.as_str(),
+    ] {
+        assert!(parse_command(line).is_err(), "{line:?} should be refused");
+    }
+    assert!(parse_command(&sixteen).is_ok());
+}
