@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub const USAGE: &str = "\
 usage: tetsu secureboot enroll [--without-microsoft]
        tetsu secureboot trust <cert>
+       tetsu secrets add|rotate|rm|list|log ...
 
   secureboot enroll   enroll the Secure Boot keys of /var/lib/tetsu/keys
                       together with the Microsoft certificates (the
@@ -14,12 +15,21 @@ usage: tetsu secureboot enroll [--without-microsoft]
   secureboot trust    trust one more certificate in the db: a .der, .crt or
                       .pem certificate, or a pre-signed .auth file
 
+  secrets             the secrets vault: add, rotate and rm read the value
+                      from a hidden prompt or from stdin; list shows names
+                      and bindings, never values; log shows the audit
+                      trail (`tetsu secrets` alone prints its usage)
+
 exit status: 0 done, 1 failed, 2 usage error";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    Enroll { without_microsoft: bool },
+    Enroll {
+        without_microsoft: bool,
+    },
     Trust(PathBuf),
+    /// The arguments after `secrets`, run by `tetsu-secrets`.
+    Secrets(Vec<String>),
     Help,
 }
 
@@ -28,6 +38,9 @@ pub fn parse(args: &[String]) -> Option<Command> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["-h" | "--help"] | ["secureboot", "-h" | "--help"] => Some(Command::Help),
+        ["secrets", rest @ ..] => Some(Command::Secrets(
+            rest.iter().map(|arg| (*arg).to_owned()).collect(),
+        )),
         ["secureboot", "enroll"] => Some(Command::Enroll {
             without_microsoft: false,
         }),

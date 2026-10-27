@@ -1399,6 +1399,7 @@ dependencies = [
  "rustix",
  "tempfile",
  "tetsu-installer-core",
+ "tetsu-secrets",
  "tetsu-tx",
 ]
 

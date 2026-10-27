@@ -15,6 +15,9 @@ pub fn main(args: impl IntoIterator<Item = String>) -> ExitCode {
         eprintln!("tetsu: unknown command\n{USAGE}");
         return ExitCode::from(2);
     };
+    if let Command::Secrets(rest) = &command {
+        return tetsu_secrets::cli::main(rest);
+    }
     let ctx = Context {
         paths: Paths::system(),
         is_root: rustix::process::geteuid().is_root(),
@@ -28,6 +31,7 @@ pub fn main(args: impl IntoIterator<Item = String>) -> ExitCode {
         }
         Command::Enroll { without_microsoft } => secureboot::enroll(&ctx, without_microsoft),
         Command::Trust(cert) => secureboot::trust(&ctx, &cert),
+        Command::Secrets(_) => unreachable!("handled before the secure boot context"),
     };
     match result {
         Ok(message) => {

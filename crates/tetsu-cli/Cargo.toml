@@ -21,6 +21,7 @@ path = "src/main.rs"
 [dependencies]
 rustix = { version = "1.1.5", features = ["process"] }
 tetsu-installer-core = { path = "../tetsu-installer-core" }
+tetsu-secrets = { path = "../tetsu-secrets" }
 tetsu-tx = { path = "../tetsu-tx" }
 
 [dev-dependencies]
