@@ -640,7 +640,9 @@ fn two_outputs(settings: Settings) -> (Engine, String, String, Views) {
 
 #[test]
 fn after_an_unplug_the_moved_windows_are_hidden_and_the_target_keeps_its_tiles() {
-    let (mut engine, first, second, views) = two_outputs(settings(LayoutKind::Dwindle));
+    let (mut engine, first, second, views) = two_outputs(with_rules(
+        "[[window_rule]]\napp_id = \"^b$\"\noutput = \"HEADLESS-2\"\n",
+    ));
     let on_first = engine.open(info("a"), None, &views);
     engine.focus(Some(&on_first));
     let on_second = engine.open(info("b"), None, &views);

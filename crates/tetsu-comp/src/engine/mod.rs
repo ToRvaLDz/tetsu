@@ -9,6 +9,7 @@ mod workspace;
 
 use std::collections::BTreeMap;
 
+use tetsu_bus::output::Mode;
 use tetsu_bus::window::Placement;
 
 pub use action::{Action, Effect};
@@ -17,7 +18,7 @@ use crate::layout::dwindle::dwindle;
 use crate::layout::floating::{centered, clamp_into, from_tile};
 use crate::layout::master::{clamp_ratio, master};
 use crate::layout::{LayoutKind, Rect};
-use crate::model::{Events, Model, WindowInfo, WindowUpdate};
+use crate::model::{Events, Model, OutputInfo, WindowInfo, WindowUpdate};
 use crate::rules::{Decision, resolve};
 use crate::settings::Settings;
 use workspace::WorkspaceState;
@@ -98,6 +99,22 @@ impl Engine {
     /// Adds an output with its first workspace; returns the output id.
     pub fn add_output(&mut self, name: &str) -> String {
         self.model.add_output(name)
+    }
+
+    /// Adds an output described by the backend; returns the output id.
+    pub fn add_output_info(&mut self, info: OutputInfo) -> String {
+        self.model.add_output_info(info)
+    }
+
+    /// Unplugs an output: its workspaces, and their layout state, move to
+    /// another output. Unknown ids are ignored.
+    pub fn remove_output(&mut self, id: &str) {
+        self.model.remove_output(id);
+    }
+
+    /// Replaces an output's modes and current mode.
+    pub fn set_output_mode(&mut self, id: &str, modes: Vec<Mode>, current: Option<usize>) {
+        self.model.set_output_mode(id, modes, current);
     }
 
     /// Changes a window's app_id or title.
