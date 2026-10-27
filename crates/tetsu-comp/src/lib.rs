@@ -7,6 +7,7 @@ pub mod input;
 pub mod layout;
 pub mod model;
 pub mod render;
+pub mod rules;
 pub mod run;
 pub mod socket;
 pub mod state;
