@@ -2118,6 +2118,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tetsu-capd"
+version = "0.0.0"
+dependencies = [
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tetsu-bus",
+ "tetsu-bus-contract",
+ "tetsu-tx",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "tetsu-cli"
 version = "0.0.0"
 dependencies = [
