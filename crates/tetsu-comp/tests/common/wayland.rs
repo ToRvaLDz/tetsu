@@ -55,6 +55,8 @@ struct App {
     /// Keyboard enter (`true`) and leave (`false`) by surface.
     keys: Vec<(ObjectId, bool)>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// `wl_output`s kept by name, to use after their global is gone.
+    kept: Vec<(String, wl_output::WlOutput)>,
 }
 
 /// A layer surface this client made.
@@ -328,6 +330,7 @@ impl WlClient {
             frames: Vec::new(),
             keys: Vec::new(),
             keyboard: None,
+            kept: Vec::new(),
         };
         let xdg = XdgShell::bind(&globals, &qh).unwrap();
         queue.roundtrip(&mut app).unwrap();
@@ -472,6 +475,31 @@ impl WlClient {
             .outputs()
             .find(|o| self.app.output_name(o).as_deref() == Some(name))
             .unwrap_or_else(|| panic!("no output {name}"));
+        self.app.add_bar(&qh, &output);
+        self.queue.roundtrip(&mut self.app).unwrap();
+    }
+
+    /// Remembers the `wl_output` called `name`, for `bar_on_kept` later.
+    pub fn keep_output(&mut self, name: &str) {
+        let output = self
+            .app
+            .outputs
+            .outputs()
+            .find(|o| self.app.output_name(o).as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no output {name}"));
+        self.app.kept.push((name.to_owned(), output));
+    }
+
+    /// A bar on a kept `wl_output`, even if the compositor retired it since.
+    pub fn bar_on_kept(&mut self, name: &str) {
+        let qh = self.queue.handle();
+        let output = self
+            .app
+            .kept
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, o)| o.clone())
+            .unwrap_or_else(|| panic!("no kept output {name}"));
         self.app.add_bar(&qh, &output);
         self.queue.roundtrip(&mut self.app).unwrap();
     }

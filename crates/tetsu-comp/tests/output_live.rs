@@ -265,6 +265,24 @@ fn disabling_an_output_unplugs_it_and_enabling_brings_it_back() {
     wl.wait_for_outputs(&["HEADLESS-1", "HEADLESS-2"]);
 }
 
+#[test]
+fn a_layer_surface_on_a_stale_dark_output_is_closed() {
+    let comp = Comp::start_with(&TWO, None);
+    let mut client = Client::connect(&comp.bus);
+    let mut wl = WlClient::connect(&comp.wayland_socket());
+    wl.wait_for_outputs(&["HEADLESS-1", "HEADLESS-2"]);
+    wl.keep_output("HEADLESS-1");
+
+    configure(&mut client, &json!({ "out-1": { "enabled": false } }));
+    wl.wait_for_outputs(&["HEADLESS-2"]);
+
+    // The global stays bound for a while: a bar made now on the stale
+    // wl_output must not land on the dark output.
+    wl.bar_on_kept("HEADLESS-1");
+    wl.wait_for_closed(1);
+    assert_eq!(wl.closed_count(), 1);
+}
+
 const PERSISTED: &str = "[output.HEADLESS-2]\nscale = 2.0\nposition = { x = 0, y = 1080 }\n";
 
 #[test]
