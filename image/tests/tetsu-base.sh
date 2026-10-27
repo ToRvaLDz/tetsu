@@ -8,7 +8,7 @@ set -uo pipefail
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 PKGBUILD="$REPO/image/tetsu-base/PKGBUILD"
 CONF="$REPO/image/mkosi.profiles/payload/mkosi.conf"
-CRITICAL=(base linux systemd pacman sudo btrfs-progs cryptsetup archlinux-keyring)
+CRITICAL=(base linux systemd pacman polkit sudo btrfs-progs cryptsetup archlinux-keyring)
 
 fails=0
 pass() { printf 'ok   %s\n' "$1"; }
