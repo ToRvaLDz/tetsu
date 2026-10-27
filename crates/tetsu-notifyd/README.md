@@ -55,5 +55,5 @@ bus.
 
 ## Installing
 
-- `dist/tetsu-notifyd.service` → `/usr/lib/systemd/user/`
+- `dist/tetsu-notifyd.socket` and `dist/tetsu-notifyd.service` → `/usr/lib/systemd/user/`; the socket is enabled by the user preset and passed in by systemd (`server::listen`)
 - `dist/org.freedesktop.Notifications.service` → `/usr/share/dbus-1/services/`

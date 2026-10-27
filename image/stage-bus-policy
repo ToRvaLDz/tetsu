@@ -13,9 +13,13 @@ root=$1
 
 units="$root/usr/lib/systemd/system"
 actions="$root/usr/share/polkit-1/actions"
-mkdir -p "$units" "$actions"
+user_units="$root/usr/lib/systemd/user"
+mkdir -p "$units" "$user_units" "$actions"
 for u in tetsu-tx.socket tetsu-tx.service; do
   install -m 0644 "$REPO/crates/tetsu-tx/systemd/$u" "$units/$u"
+done
+for u in tetsu-notifyd.socket tetsu-notifyd.service; do
+  install -m 0644 "$REPO/crates/tetsu-notifyd/dist/$u" "$user_units/$u"
 done
 cargo "$RUST" run --quiet --locked --manifest-path "$REPO/Cargo.toml" -p xtask -- \
   polkit-policy "$actions/org.tetsu.policy"

@@ -1,0 +1,2 @@
+# The notification server starts on the first call to its socket.
+enable tetsu-notifyd.socket
