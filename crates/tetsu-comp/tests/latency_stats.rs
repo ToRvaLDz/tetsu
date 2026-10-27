@@ -24,7 +24,10 @@ fn no_samples_have_no_summary() {
 #[test]
 fn one_sample_is_every_statistic() {
     let s = Summary::of(&[ms(7)]).unwrap();
-    assert_eq!((s.n, s.min, s.p50, s.p95, s.max), (1, ms(7), ms(7), ms(7), ms(7)));
+    assert_eq!(
+        (s.n, s.min, s.p50, s.p95, s.max),
+        (1, ms(7), ms(7), ms(7), ms(7))
+    );
     assert_eq!(s.mean, ms(7));
 }
 

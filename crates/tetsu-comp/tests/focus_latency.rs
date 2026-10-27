@@ -41,9 +41,7 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(2);
 /// The bar's receive path: a current-thread runtime following
 /// `WatchWindows`. Sends `(focused_id, receive time)` per `focused` event,
 /// and a unit once `initial` was seen.
-fn subscribe(
-    bus: std::path::PathBuf,
-) -> (mpsc::Receiver<(String, Instant)>, mpsc::Receiver<()>) {
+fn subscribe(bus: std::path::PathBuf) -> (mpsc::Receiver<(String, Instant)>, mpsc::Receiver<()>) {
     let (focused_tx, focused_rx) = mpsc::channel();
     let (ready_tx, ready_rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -60,10 +58,10 @@ fn subscribe(
                         let _ = ready_tx.send(());
                     }
                     WindowKind::Focused => {
-                        if let Some(Some(id)) = event.focused_id {
-                            if focused_tx.send((id, at)).is_err() {
-                                return;
-                            }
+                        if let Some(Some(id)) = event.focused_id
+                            && focused_tx.send((id, at)).is_err()
+                        {
+                            return;
                         }
                     }
                     _ => {}
