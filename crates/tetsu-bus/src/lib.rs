@@ -5,6 +5,7 @@
 
 pub mod access;
 pub mod cap;
+pub mod dynamic;
 pub mod endpoint;
 pub mod gate;
 pub mod notify;
