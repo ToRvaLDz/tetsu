@@ -424,6 +424,7 @@ mod tests {
             WriteFstab,
             WriteCmdline,
             WriteUnlockLevel,
+            InitKeyring,
             BuildInitrd,
             GenerateKey(KeyKind::Pk),
             GenerateKey(KeyKind::Kek),
@@ -441,6 +442,21 @@ mod tests {
             Finish,
         ]);
         assert_eq!(plan.actions(), want);
+    }
+
+    #[test]
+    fn the_keyring_is_made_before_the_initrd_and_the_seal() {
+        let plan = InstallPlan::build(
+            &answers(UnlockLevel::Paranoid),
+            &target(SecureBoot::SetupMode),
+        );
+        let at = |x: Action| plan.actions().iter().position(|a| *a == x).unwrap();
+        assert_eq!(at(InitKeyring), at(WriteUnlockLevel) + 1);
+        assert!(at(InitKeyring) < at(BuildInitrd));
+        assert!(at(InitKeyring) < at(SealSnapshot));
+        assert_eq!(InitKeyring.programs(), ["systemd-nspawn"]);
+        assert!(plan.programs().contains(&"systemd-nspawn"));
+        assert_eq!(InitKeyring.describe(), "initialise the pacman keyring");
     }
 
     #[test]

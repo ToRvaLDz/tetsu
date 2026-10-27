@@ -89,6 +89,8 @@ pub struct Machine {
     pub fail_containing: RefCell<Vec<String>>,
     /// Programs `check_tool` reports as missing.
     pub missing: RefCell<Vec<String>>,
+    /// `pacman-key --populate` succeeds but leaves no trust database.
+    pub no_trustdb: std::cell::Cell<bool>,
 }
 
 impl Machine {
@@ -100,6 +102,7 @@ impl Machine {
             fail: RefCell::default(),
             fail_containing: RefCell::default(),
             missing: RefCell::default(),
+            no_trustdb: std::cell::Cell::default(),
             esp_partuuid: RefCell::new(ESP_PARTUUID.to_owned()),
             present_partuuids: RefCell::new(vec![ESP_PARTUUID.to_owned()]),
             boot_output: RefCell::new((FIRMWARE_BEFORE.to_owned(), FIRMWARE_AFTER.to_owned())),
@@ -156,6 +159,12 @@ impl Machine {
             "tar" => payload(Path::new(Self::after(args, "-C").unwrap())),
             "cryptsetup" if args.first().map(String::as_str) == Some("luksUUID") => {
                 return format!("{LUKS_UUID}\n");
+            }
+            "systemd-nspawn"
+                if args.iter().any(|a| a == "--populate") && !self.no_trustdb.get() =>
+            {
+                let root = Self::after(args, "-D").unwrap();
+                Self::write(&format!("{root}/etc/pacman.d/gnupg/trustdb.gpg"), "trust");
             }
             "systemd-nspawn" if args.iter().any(|a| a == "mkinitcpio") => {
                 let root = Self::after(args, "-D").unwrap();
