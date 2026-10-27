@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
+use tetsu_bus::config::{ConfigEvent, GetConfigReply};
 use tetsu_bus::output::{ListOutputsReply, Output, OutputEvent, OutputKind};
 use tetsu_bus::server::StreamItem;
 use tetsu_bus::session::{GetSessionReply, SessionEvent, SessionKind};
@@ -12,6 +13,7 @@ use tetsu_bus::workspace::{ListWorkspacesReply, Workspace, WorkspaceEvent, Works
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
+use super::config::ConfigMirror;
 use crate::model::{Events, Model};
 
 /// Events a watcher may have queued before it is cut.
@@ -28,6 +30,8 @@ pub struct Snapshot {
     pub outputs: ListOutputsReply,
     /// For `GetSession`.
     pub locked: bool,
+    /// For `GetConfig`.
+    pub config: GetConfigReply,
 }
 
 impl Snapshot {
@@ -38,7 +42,14 @@ impl Snapshot {
             workspaces: model.workspaces_snapshot(),
             outputs: model.outputs_snapshot(),
             locked: false,
+            config: GetConfigReply::default(),
         }
+    }
+
+    /// The same state with the config.
+    #[must_use]
+    pub fn with_config(self, config: GetConfigReply) -> Self {
+        Self { config, ..self }
     }
 
     /// The same state with the session lock state.
@@ -58,6 +69,7 @@ pub struct Mirror {
     focused_workspace: Option<String>,
     outputs: Vec<Output>,
     locked: bool,
+    config: ConfigMirror,
 }
 
 impl Mirror {
@@ -71,7 +83,18 @@ impl Mirror {
             focused_workspace: snapshot.workspaces.focused_id.clone(),
             outputs: snapshot.outputs.outputs.clone(),
             locked: snapshot.locked,
+            config: ConfigMirror::new(snapshot.config.clone()),
         }
+    }
+
+    /// Applies one config event.
+    pub fn apply_config(&mut self, event: &ConfigEvent) {
+        self.config.apply(event);
+    }
+
+    /// For `GetConfig`.
+    pub fn config(&self) -> GetConfigReply {
+        self.config.reply()
     }
 
     /// Applies one window event.
@@ -244,6 +267,7 @@ pub struct Hub {
     workspace_watchers: Watchers,
     output_watchers: Watchers,
     session_watchers: Watchers,
+    config_watchers: Watchers,
 }
 
 impl Hub {
@@ -255,6 +279,7 @@ impl Hub {
             workspace_watchers: Vec::new(),
             output_watchers: Vec::new(),
             session_watchers: Vec::new(),
+            config_watchers: Vec::new(),
         }
     }
 
@@ -283,6 +308,19 @@ impl Hub {
             self.mirror.apply_session(event);
             fan_out(&mut self.session_watchers, event);
         }
+    }
+
+    /// Applies config events to the mirror and sends them to the watchers.
+    pub fn publish_config(&mut self, events: &[ConfigEvent]) {
+        for event in events {
+            self.mirror.apply_config(event);
+            fan_out(&mut self.config_watchers, event);
+        }
+    }
+
+    /// A new `WatchConfig` stream, `initial` already queued.
+    pub fn watch_config(&mut self) -> mpsc::Receiver<StreamItem> {
+        watch(&mut self.config_watchers, &self.mirror.config.initial())
     }
 
     /// A new `WatchWindows` stream, `initial` already queued.

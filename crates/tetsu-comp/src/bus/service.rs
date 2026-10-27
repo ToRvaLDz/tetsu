@@ -1,26 +1,72 @@
-//! The Varlink methods of the window, workspace and output interfaces.
+//! The Varlink methods of the window, workspace, output, session and
+//! config interfaces.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use serde_json::{Value, json};
+use tetsu_bus::config::{self, SetManagedParams};
 use tetsu_bus::peer::Peer;
 use tetsu_bus::server::{ErrorReply, Handler, Request, Response};
 use tetsu_bus::{output, session, window, workspace};
+use tokio::sync::oneshot;
 
+use super::config::{CommandSink, SetManaged};
 use super::hub::Hub;
+use crate::config::set;
 
-/// Serves the reads of the four interfaces from the hub. They are open to every
-/// caller (#22.8 gates mutating calls only, and there are none yet).
+/// Serves the reads of the five interfaces from the hub, and `SetManaged`
+/// through the sink to the loop. The gate in front of it (#28) decides who
+/// may call the mutating methods.
 pub struct BusService {
     hub: Rc<RefCell<Hub>>,
+    commands: Option<CommandSink>,
 }
 
 impl BusService {
-    /// A service over `hub`.
-    pub fn new(hub: Rc<RefCell<Hub>>) -> Self {
-        Self { hub }
+    /// A service over `hub`. `commands` reaches the loop; without it
+    /// `SetManaged` is not implemented.
+    pub fn new(hub: Rc<RefCell<Hub>>, commands: Option<CommandSink>) -> Self {
+        Self { hub, commands }
     }
+
+    /// `SetManaged`: the loop owns the layers, so the call goes there and
+    /// its answer comes back later.
+    fn set_managed(&self, request: &Request) -> Response {
+        let Some(sink) = self.commands.clone() else {
+            return not_implemented(&request.method);
+        };
+        let params: SetManagedParams = match serde_json::from_value(request.parameters.clone()) {
+            Ok(params) => params,
+            Err(_) => return Response::Error(ErrorReply::invalid_parameter("values")),
+        };
+        let (reply, answer) = oneshot::channel();
+        let command = SetManaged {
+            values: params.values,
+            remove: params.remove.unwrap_or_default(),
+            reply,
+        };
+        if sink(command).is_err() {
+            return Response::Error(set::state_write_failed("the compositor is stopping"));
+        }
+        let (tx, rx) = oneshot::channel();
+        tokio::task::spawn_local(async move {
+            let response = match answer.await {
+                Ok(Ok(())) => Response::Reply(json!({})),
+                Ok(Err(error)) => Response::Error(error),
+                Err(_) => Response::Error(set::state_write_failed("the compositor is stopping")),
+            };
+            let _ = tx.send(response);
+        });
+        Response::Deferred(rx)
+    }
+}
+
+fn not_implemented(method: &str) -> Response {
+    Response::Error(ErrorReply::new(
+        "org.varlink.service.MethodNotImplemented",
+        json!({ "method": method }),
+    ))
 }
 
 fn value<T: serde::Serialize>(reply: &T) -> Response {
@@ -48,11 +94,13 @@ impl Handler for BusService {
             "org.tetsu.comp.session.v1.WatchSession" => {
                 Response::BoundedStream(self.hub.borrow_mut().watch_session())
             }
+            "org.tetsu.comp.config.v1.GetConfig" => value(&self.hub.borrow().mirror().config()),
+            "org.tetsu.comp.config.v1.WatchConfig" => {
+                Response::BoundedStream(self.hub.borrow_mut().watch_config())
+            }
+            "org.tetsu.comp.config.v1.SetManaged" => self.set_managed(&request),
             // #97 serves it.
-            "org.tetsu.comp.output.v1.ConfigureOutputs" => Response::Error(ErrorReply::new(
-                "org.varlink.service.MethodNotImplemented",
-                json!({ "method": request.method }),
-            )),
+            "org.tetsu.comp.output.v1.ConfigureOutputs" => not_implemented(&request.method),
             "org.varlink.service.GetInfo" => Response::Reply(json!({
                 "vendor": "Tetsu",
                 "product": "tetsu-comp",
@@ -64,6 +112,7 @@ impl Handler for BusService {
                     workspace::INTERFACE,
                     output::INTERFACE,
                     session::INTERFACE,
+                    config::INTERFACE,
                 ],
             })),
             "org.varlink.service.GetInterfaceDescription" => {
@@ -79,6 +128,9 @@ impl Handler for BusService {
                     }
                     Some(session::INTERFACE) => {
                         Response::Reply(json!({ "description": session::IDL }))
+                    }
+                    Some(config::INTERFACE) => {
+                        Response::Reply(json!({ "description": config::IDL }))
                     }
                     Some(other) => Response::Error(ErrorReply::new(
                         "org.varlink.service.InterfaceNotFound",
