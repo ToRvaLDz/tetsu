@@ -10,7 +10,7 @@ use tetsu_tx::boot::install::write_uki;
 use tetsu_tx::boot::keys::SigningKeys;
 use tetsu_tx::boot::uki::{UkiSpec, sign_efi, verify_signature};
 use tetsu_tx::store::btrfs::CliBtrfs;
-use tetsu_tx::store::record::{Record, Records};
+use tetsu_tx::store::record::{Record, Records, TxKind};
 use tetsu_tx::store::snapshot::{FIRST_COUNTER, capture_etc_base, mark_committed, seal};
 
 use crate::error::InstallError;
@@ -225,6 +225,7 @@ impl Executor<'_> {
             .map_or(0, |d| d.as_secs());
         let record = Record {
             counter: FIRST_COUNTER,
+            kind: Some(TxKind::InitialInstall),
             finished_at: Some(now),
             log: vec!["created by the installer".to_owned()],
             ..Record::default()
