@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - run: pacman -Syu --noconfirm --needed systemd systemd-ukify sbsigntools openssl binutils rustup gcc git pkgconf libinput seatd libxkbcommon xkeyboard-config mesa libdrm wayland
+      - run: pacman -Syu --noconfirm --needed systemd systemd-ukify sbsigntools openssl binutils rustup gcc git pkgconf libinput seatd libxkbcommon xkeyboard-config mesa libdrm wayland libxml2
       - uses: actions/checkout@v4
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -49,6 +49,7 @@ jobs:
       # The contract suite validates the IDL with systemd's varlinkctl and
       # fails instead of skipping when it is missing.
       - run: cargo test --workspace --locked
+      - run: image/tests/bus-policy.sh
 
   # IDL validation with a current varlinkctl (Arch Linux systemd).
   varlinkctl:
@@ -71,7 +72,7 @@ jobs:
       - name: Syntax-check every script
         run: |
           fail=0
-          for f in tools/vm/tetsu-vm tools/vm/fetch-arch-iso tools/vm/lib/*.sh tools/vm/tests/*.sh image/build image/tests/*.sh; do
+          for f in tools/vm/tetsu-vm tools/vm/fetch-arch-iso tools/vm/lib/*.sh tools/vm/tests/*.sh image/build image/stage-bus-policy image/tests/*.sh; do
             bash -n "$f" || fail=1
           done
           exit "$fail"

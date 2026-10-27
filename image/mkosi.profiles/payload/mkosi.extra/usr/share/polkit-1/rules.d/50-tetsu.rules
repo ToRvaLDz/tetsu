@@ -1,0 +1,16 @@
+// Who may do what the org.tetsu.* actions guard. The actions themselves are
+// generated from the bus IDL (cargo xtask polkit-policy) and default to
+// auth_admin.
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.tetsu.") !== 0) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!subject.isInGroup("wheel")) {
+        // Falls to the action default; a later admin rule can still decide.
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.AUTH_ADMIN_KEEP;
+});

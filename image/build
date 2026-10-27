@@ -128,6 +128,7 @@ stage_payload() {
   install -m 0644 "$txinitrd/tetsu-etc-sync.service" "$root/usr/lib/systemd/system/"
   install -m 0644 "$REPO/crates/tetsu-tx/systemd/tetsu-boot-check.service" "$root/usr/lib/systemd/system/"
   install -m 0644 "$txinitrd/tetsu.install" "$root/usr/lib/initcpio/install/tetsu"
+  "$IMAGE/stage-bus-policy" "$root"
   locale_gen | sort -u >"$root/etc/locale.gen"
   stage_certs "$root"
 }

@@ -1,0 +1,17 @@
+# Installed as /usr/lib/systemd/system/tetsu-tx.socket. systemd binds the bus
+# socket and passes it to `tetsu-tx serve` by name (LISTEN_FDNAMES).
+[Unit]
+Description=Tetsu transaction facade socket (org.tetsu.tx.v1)
+Documentation=https://github.com/ToRvaLDz/tetsu
+
+[Socket]
+ListenStream=/run/tetsu/org.tetsu.tx.v1
+FileDescriptorName=org.tetsu.tx.v1
+# Anyone may connect; who may call is decided per call.
+SocketMode=0666
+DirectoryMode=0755
+Symlinks=/run/tetsu/registry/org.tetsu.tx.v1
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -2,6 +2,7 @@
 # enabled is declared here.
 enable tetsu-keyring-init.service
 enable tetsu-boot-check.service
+enable tetsu-tx.socket
 enable systemd-networkd.service
 enable systemd-resolved.service
 enable systemd-timesyncd.service

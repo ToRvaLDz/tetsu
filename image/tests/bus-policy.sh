@@ -87,7 +87,9 @@ rules="$EXTRA/usr/share/polkit-1/rules.d/50-tetsu.rules"
   && grep -q 'polkit.Result.YES' "$rules" && grep -q 'polkit.Result.AUTH_ADMIN_KEEP' "$rules"
 expect "50-tetsu.rules handles org.tetsu.* for wheel" $?
 if command -v node >/dev/null && [ -f "$rules" ]; then
-  node --check "$rules" 2>/dev/null; expect "50-tetsu.rules is valid JavaScript" $?
+  # node judges by the extension: check a .js copy.
+  cp "$rules" "$ROOT/50-tetsu.js"
+  node --check "$ROOT/50-tetsu.js" 2>/dev/null; expect "50-tetsu.rules is valid JavaScript" $?
 fi
 
 if [ "$fails" -ne 0 ]; then

@@ -1,0 +1,10 @@
+# Installed as /usr/lib/systemd/system/tetsu-tx.service. Started by
+# tetsu-tx.socket on the first call; it has no [Install] of its own.
+[Unit]
+Description=Tetsu transaction facade (org.tetsu.tx.v1)
+Documentation=https://github.com/ToRvaLDz/tetsu
+Requires=tetsu-tx.socket
+After=tetsu-tx.socket
+
+[Service]
+ExecStart=/usr/bin/tetsu-tx serve

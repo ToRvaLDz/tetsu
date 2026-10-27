@@ -24,6 +24,7 @@ depends=(
   efibootmgr
   util-linux
   sudo
+  polkit
   archlinux-keyring
   pacman
   dosfstools

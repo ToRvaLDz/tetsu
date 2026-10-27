@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Stage the bus access policy files into ROOT: the socket and service units
+# of the crates and the polkit actions generated from the bus IDL.
+# usage: image/stage-bus-policy ROOT
+# Environment: TETSU_RUST_TOOLCHAIN (default +1.99.1), like image/build.
+set -euo pipefail
+
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+RUST=${TETSU_RUST_TOOLCHAIN:-+1.99.1}
+
+[ $# -eq 1 ] || { echo "usage: image/stage-bus-policy ROOT" >&2; exit 2; }
+root=$1
+
+units="$root/usr/lib/systemd/system"
+actions="$root/usr/share/polkit-1/actions"
+mkdir -p "$units" "$actions"
+for u in tetsu-tx.socket tetsu-tx.service; do
+  install -m 0644 "$REPO/crates/tetsu-tx/systemd/$u" "$units/$u"
+done
+cargo "$RUST" run --quiet --locked --manifest-path "$REPO/Cargo.toml" -p xtask -- \
+  polkit-policy "$actions/org.tetsu.policy"
+chmod 0644 "$actions/org.tetsu.policy"

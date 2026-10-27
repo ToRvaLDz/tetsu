@@ -102,6 +102,18 @@ set is defined in one place; `image/tests/tetsu-base.sh` pins that shape.
   `tx update` has a network. The pacman mirror is
   `https://geo.mirror.pkgbuild.com`.
 - Locales named by the installer's keyboard table are generated.
+- Bus access policy files (`image/stage-bus-policy`, called by `image/build`;
+  `image/tests/bus-policy.sh` pins them without root):
+  - `tetsu-tx.socket` binds `/run/tetsu/org.tetsu.tx.v1` (0666) with a link in
+    `/run/tetsu/registry`, and starts `tetsu-tx.service`, which adopts the
+    socket systemd passes in. The preset enables the socket.
+  - tmpfiles make `/run/tetsu` and its `registry` 0755 root, and
+    `$XDG_RUNTIME_DIR/tetsu` with its `registry` 0700 per user.
+  - polkit: `org.tetsu.policy` is generated from the `@capability` classes of
+    the IDL (`cargo xtask polkit-policy`), one `auth_admin` action per class,
+    `_` written `-`. `50-tetsu.rules` lets `wheel` users through: `YES` when
+    local and active, `AUTH_ADMIN_KEEP` otherwise. The postinst keeps
+    `rules.d` at 0750 `root:polkitd`.
 
 ## Installer medium
 
