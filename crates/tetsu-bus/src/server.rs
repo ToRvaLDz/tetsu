@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use zlink::connection::{ReadConnection, WriteConnection};
 use zlink::{Call, Connection, Listener as _, Reply};
 
@@ -115,6 +115,22 @@ pub enum Response {
     /// end of file and has to call again. Dropping the receiver (the
     /// caller went away) closes the sender, as with `Stream`.
     BoundedStream(mpsc::Receiver<StreamItem>),
+    /// One reply the handler sends later, from a task of its own. While it
+    /// is pending the connection keeps being read: if the caller goes away
+    /// the receiver is dropped, so the handler sees its sender close and
+    /// can cancel. Calls pipelined meanwhile are answered afterwards. If
+    /// the handler drops the sender without an answer, the connection is
+    /// dropped: the caller sees end of file.
+    Pending(oneshot::Receiver<Result<Value, ErrorReply>>),
+}
+
+/// How a pending reply ended.
+enum Pended {
+    /// The handler answered.
+    Answer(Result<Value, ErrorReply>),
+    /// The handler dropped its sender, or the caller went away or
+    /// pipelined without end: the connection must be dropped.
+    Drop,
 }
 
 /// Where a relayed stream's items come from.
@@ -330,6 +346,13 @@ async fn run_connection<H: Handler>(
                 let error = ErrorReply::new("org.varlink.service.ExpectedMore", json!({}));
                 send_error(&mut write, &error).await?;
             }
+            Response::Pending(pending) => {
+                match wait_pending(pending, &mut read, &mut queued).await {
+                    Pended::Answer(Ok(value)) => send_reply(&mut write, value, false).await?,
+                    Pended::Answer(Err(error)) => send_error(&mut write, &error).await?,
+                    Pended::Drop => return Ok(()),
+                }
+            }
             Response::Stream(stream) => {
                 let source = Source::Unbounded(stream);
                 if !relay(source, &mut read, &mut write, &mut queued).await? {
@@ -374,6 +397,28 @@ async fn relay(
                 Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
                 // Gone, or pipelining without end: drop the connection.
                 _ => return Ok(false),
+            },
+        }
+    }
+}
+
+/// Waits for a pending answer while still reading the connection. End of
+/// file drops `pending` on return, which the handler sees as its sender
+/// closing.
+async fn wait_pending(
+    mut pending: oneshot::Receiver<Result<Value, ErrorReply>>,
+    read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
+    queued: &mut VecDeque<Request>,
+) -> Pended {
+    loop {
+        tokio::select! {
+            answer = &mut pending => {
+                return answer.map_or(Pended::Drop, Pended::Answer);
+            }
+            call = receive(read) => match call {
+                Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
+                // Gone, or pipelining without end: drop the connection.
+                _ => return Pended::Drop,
             },
         }
     }
