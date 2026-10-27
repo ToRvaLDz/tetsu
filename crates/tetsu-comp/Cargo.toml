@@ -26,6 +26,7 @@ smithay = { git = "https://github.com/Smithay/smithay", rev = "8a270232f1bfc416c
     "backend_libinput",
     "backend_session_libseat",
     "renderer_gl",
+    "renderer_multi",
 ] }
 tetsu-bus = { path = "../tetsu-bus" }
 toml = "1.1.8"
