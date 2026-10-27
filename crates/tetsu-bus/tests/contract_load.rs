@@ -11,7 +11,7 @@ fn idl_dir() -> PathBuf {
 #[test]
 fn current_idl_loads() {
     let contract = load_dir(&idl_dir()).expect("idl loads");
-    assert_eq!(contract.interfaces.len(), 10);
+    assert_eq!(contract.interfaces.len(), 11);
     assert!(contract.is_streaming("org.tetsu.notify.v1", "Show"));
 }
 

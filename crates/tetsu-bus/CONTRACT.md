@@ -21,6 +21,7 @@ and [Define the bus contract v1](https://github.com/ToRvaLDz/tetsu/issues/16).
 | `org.tetsu.tx.v1` | `tetsu-tx` | system |
 | `org.tetsu.notify.v1` | `tetsu-notifyd` | session |
 | `org.tetsu.cap.v1` | `tetsu-capd` | session |
+| `org.tetsu.secrets.v1` | `tetsu-secrets` | session |
 
 The compositor serves its interfaces on one per-instance socket; every
 other service has one socket. Sockets and the registries follow #15.
@@ -148,11 +149,26 @@ Decided in [Add the capability surface to the bus contract](https://github.com/T
 | `display.render` | `comp.render.v1` `SetRenderDevice`, `SetExplicitSync` |
 | `comp.configure` | `comp.config.v1` `SetManaged` |
 | `notify.send` | `notify.v1` `Show`, `Close`, `OpenPanel` |
+| `secrets.manage` | `secrets.v1` `Add`, `Rotate`, `Remove` |
 
 - `Check` is callable by Tetsu daemons only. The calling daemon fills
   `peer` from its own socket credentials, and `tetsu-capd` authorises
   the caller by its own credentials, never by `peer`.
 - `Set` and `Check` are not agent tools: the agent can never call them.
+
+## Secrets
+
+Decided in [the secrets vault decision](https://github.com/ToRvaLDz/tetsu/issues/25).
+
+- No call of `org.tetsu.secrets.v1` returns a secret value, and none ever
+  will: a value leaves the vault only inside the broker, for a use bound
+  to the host or tool it was stored for. `ListSecrets` and `WatchSecrets`
+  carry metadata and in-memory usage counters only.
+- `Add`, `Rotate` and `Remove` from the agent unit are rejected with
+  `PermissionDenied`, and are not agent tools. The caller is judged by the
+  socket credentials, never by a field.
+- A `@sensitive` input parameter is never echoed in a reply or an error
+  and never logged or traced, by the server or by the facade.
 
 ## Client obligations
 

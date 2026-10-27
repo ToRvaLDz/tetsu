@@ -5,6 +5,7 @@
 
 pub mod notify;
 pub mod peer;
+pub mod secrets;
 pub mod server;
 pub mod session;
 pub mod tx;
