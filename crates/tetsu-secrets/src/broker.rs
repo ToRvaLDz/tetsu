@@ -167,15 +167,21 @@ impl Broker {
             .retain(|w| w.send(item.clone()).is_ok());
     }
 
+    /// Audits a write refused to the agent, for the secret `id` when the
+    /// call named a valid one.
+    pub fn deny_write(&self, caller: &Caller, id: Option<&SecretId>) {
+        let mut entry = AuditEntry::new(Action::Denied, Outcome::Denied, caller.clone());
+        entry.secret_id = id.map(ToString::to_string);
+        entry.reason = Some(AGENT_DENIED.to_owned());
+        let _ = self.sink.record(&entry);
+    }
+
     /// Refuses the agent a write, and audits the refusal.
     fn refuse_agent(&self, caller: &Caller, id: &SecretId) -> Result<(), BrokerError> {
         if !caller.agent {
             return Ok(());
         }
-        let mut entry = AuditEntry::new(Action::Denied, Outcome::Denied, caller.clone());
-        entry.secret_id = Some(id.to_string());
-        entry.reason = Some(AGENT_DENIED.to_owned());
-        let _ = self.sink.record(&entry);
+        self.deny_write(caller, Some(id));
         Err(BrokerError::Denied(AGENT_DENIED))
     }
 

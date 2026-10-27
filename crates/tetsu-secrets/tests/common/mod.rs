@@ -47,7 +47,7 @@ pub struct Rig {
     pub broker: Rc<Broker>,
     pub sink: Rc<Recording>,
     pub clock: Rc<Fixed>,
-    pub dir: tempfile::TempDir,
+    pub dir: Rc<tempfile::TempDir>,
 }
 
 pub async fn rig() -> Rig {
@@ -62,7 +62,7 @@ pub async fn rig() -> Rig {
         broker,
         sink,
         clock,
-        dir,
+        dir: Rc::new(dir),
     }
 }
 
@@ -78,6 +78,8 @@ where
         .unwrap();
     LocalSet::new().block_on(&runtime, async {
         let rig = rig().await;
+        // The directory outlives a test that does not use its rig.
+        let _keep = rig.dir.clone();
         let path = rig.dir.path().join("run/tetsu/org.tetsu.secrets.v1");
         let listener = server::bind(&path).unwrap();
         let service = Rc::new(SecretsService::new(rig.broker.clone()));
