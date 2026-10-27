@@ -1,6 +1,6 @@
 //! The settings: what the engine runs with, and the checks of each config
 //! value. `--config <file>` is a TOML with `[layout]`, `[render]`, `[lock]`,
-//! `[trust]` and `[[window_rule]]`; `parse` and `load` read one file whole
+//! `[trust]`, `[decorations]` and `[[window_rule]]`; `parse` and `load` read one file whole
 //! and stop at the first problem. The layers (defaults, managed, user), the
 //! live reload and `config.v1` are in `crate::config`, which reuses these
 //! checks key by key.
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::decor::{Color, Decorations, MAX_BORDER_WIDTH, parse_color};
 use crate::layout::master::{DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
 use crate::layout::{Gaps, LayoutKind};
 use crate::rules::{Pattern, Rule};
@@ -31,6 +32,8 @@ pub struct Settings {
     pub lock: LockSettings,
     /// Helpers the compositor starts with trust.
     pub trust: TrustSettings,
+    /// The window borders.
+    pub decorations: Decorations,
 }
 
 /// The `[lock]` table.
@@ -100,6 +103,7 @@ impl Default for Settings {
             render: RenderSettings::default(),
             lock: LockSettings::default(),
             trust: TrustSettings::default(),
+            decorations: Decorations::default(),
         }
     }
 }
@@ -141,6 +145,11 @@ pub enum SettingsError {
     BlankLockCommand,
     /// `trust.input[n]` is empty or starts with a blank program.
     BadTrustCommand(usize),
+    /// `decorations.width` outside 0..=32.
+    BadBorderWidth(i64),
+    /// A colour that is not `#rrggbb` or `#rrggbbaa`; the key is
+    /// `active_color` or `inactive_color`.
+    BadColor(&'static str, String),
     /// A key no layer knows (the layers' registry, `config::keys`).
     UnknownKey(String),
 }
@@ -188,6 +197,13 @@ impl fmt::Display for SettingsError {
             Self::BadTrustCommand(at) => {
                 write!(f, "trust.input[{at}]: needs a command with a program name")
             }
+            Self::BadBorderWidth(width) => write!(
+                f,
+                "decorations.width: {width} is outside 0..={MAX_BORDER_WIDTH}"
+            ),
+            Self::BadColor(key, text) => {
+                write!(f, "decorations.{key}: {text:?} is not #rrggbb or #rrggbbaa")
+            }
             Self::UnknownKey(key) => write!(f, "{key}: unknown key"),
         }
     }
@@ -207,7 +223,17 @@ struct RawFile {
     #[serde(default)]
     trust: RawTrust,
     #[serde(default)]
+    decorations: RawDecorations,
+    #[serde(default)]
     window_rule: Vec<RawRule>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawDecorations {
+    width: Option<i64>,
+    active_color: Option<String>,
+    inactive_color: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -364,6 +390,32 @@ pub(crate) fn trust_input(input: &[Vec<String>]) -> Result<(), SettingsError> {
     Ok(())
 }
 
+pub(crate) fn border_width(width: i64) -> Result<i32, SettingsError> {
+    match i32::try_from(width) {
+        Ok(w) if (0..=MAX_BORDER_WIDTH as i32).contains(&w) => Ok(w),
+        _ => Err(SettingsError::BadBorderWidth(width)),
+    }
+}
+
+pub(crate) fn border_color(key: &'static str, text: &str) -> Result<Color, SettingsError> {
+    parse_color(text).ok_or_else(|| SettingsError::BadColor(key, text.to_owned()))
+}
+
+fn decorations(raw: RawDecorations) -> Result<Decorations, SettingsError> {
+    let base = Decorations::default();
+    Ok(Decorations {
+        width: raw.width.map_or(Ok(base.width), border_width)?,
+        active: raw
+            .active_color
+            .as_deref()
+            .map_or(Ok(base.active), |c| border_color("active_color", c))?,
+        inactive: raw
+            .inactive_color
+            .as_deref()
+            .map_or(Ok(base.inactive), |c| border_color("inactive_color", c))?,
+    })
+}
+
 fn lock(raw: RawLock) -> Result<LockSettings, SettingsError> {
     let command = raw
         .command
@@ -410,6 +462,7 @@ pub fn parse(text: &str) -> Result<Settings, SettingsError> {
         render: render(raw.render)?,
         lock: lock(raw.lock)?,
         trust: trust(raw.trust)?,
+        decorations: decorations(raw.decorations)?,
     })
 }
 

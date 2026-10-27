@@ -41,10 +41,7 @@ fn width_zero_leaves_the_tile_alone() {
 
 #[test]
 fn a_border_shrinks_the_tile_on_every_side() {
-    assert_eq!(
-        inset(rect(0, 0, 1920, 1080), 3),
-        rect(3, 3, 1914, 1074)
-    );
+    assert_eq!(inset(rect(0, 0, 1920, 1080), 3), rect(3, 3, 1914, 1074));
 }
 
 #[test]

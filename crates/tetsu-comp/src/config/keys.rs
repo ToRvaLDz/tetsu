@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use toml::Value;
 
 use super::output_keys;
+use crate::decor::{Color, Decorations};
 use crate::layout::Gaps;
 use crate::layout::LayoutKind;
 use crate::layout::master::{MAX_RATIO, MIN_RATIO};
@@ -57,13 +58,16 @@ const fn command(name: &'static str) -> KeyDef {
 }
 
 /// Every key, in the order `GetConfig` lists them.
-pub const KEYS: [KeyDef; 10] = [
+pub const KEYS: [KeyDef; 13] = [
     writable("layout.default"),
     writable("layout.gaps_inner"),
     writable("layout.gaps_outer"),
     writable("layout.master_ratio"),
     writable("render.wait_for_frame_completion"),
     writable("window_rule"),
+    writable("decorations.width"),
+    writable("decorations.active_color"),
+    writable("decorations.inactive_color"),
     via("render.device", "org.tetsu.comp.render.v1.SetRenderDevice"),
     via(
         "render.explicit_sync",
@@ -82,7 +86,7 @@ pub fn lookup(name: &str) -> Option<&'static KeyDef> {
 }
 
 /// The table names of the user file; `window_rule` is a key by itself.
-pub const TABLES: [&str; 5] = ["layout", "render", "lock", "trust", "output"];
+pub const TABLES: [&str; 6] = ["layout", "render", "lock", "trust", "decorations", "output"];
 
 /// Why a value is refused: the rule's position for `window_rule`.
 pub type Invalid = (Option<usize>, SettingsError);
@@ -123,6 +127,16 @@ fn rules_of(value: &Value) -> Result<Vec<crate::rules::Rule>, Invalid> {
     Ok(rules)
 }
 
+fn width_of(value: &Value) -> Result<i32, SettingsError> {
+    let raw: i64 = typed("decorations.width", value)?;
+    settings::border_width(raw)
+}
+
+fn color_of(name: &'static str, value: &Value) -> Result<Color, SettingsError> {
+    let text: String = typed(&format!("decorations.{name}"), value)?;
+    settings::border_color(name, &text)
+}
+
 /// Whether `value` is valid for the known key `name`.
 pub fn validate(name: &str, value: &Value) -> Result<(), Invalid> {
     if name.starts_with("output.") {
@@ -146,6 +160,9 @@ pub fn validate(name: &str, value: &Value) -> Result<(), Invalid> {
         "trust.input" => {
             typed::<Vec<Vec<String>>>(name, value).and_then(|i| settings::trust_input(&i))
         }
+        "decorations.width" => width_of(value).map(drop),
+        "decorations.active_color" => color_of("active_color", value).map(drop),
+        "decorations.inactive_color" => color_of("inactive_color", value).map(drop),
         "window_rule" => return rules_of(value).map(drop),
         other => Err(SettingsError::UnknownKey(other.to_owned())),
     };
@@ -154,6 +171,10 @@ pub fn validate(name: &str, value: &Value) -> Result<(), Invalid> {
 
 fn s(text: &str) -> Value {
     Value::String(text.to_owned())
+}
+
+fn hex(c: Color) -> String {
+    format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a)
 }
 
 /// The built-in value of every key: the bottom of the stack.
@@ -179,6 +200,18 @@ pub fn builtin() -> BTreeMap<String, Value> {
         ),
         ("trust.input", Value::Array(Vec::new())),
         ("window_rule", Value::Array(Vec::new())),
+        (
+            "decorations.width",
+            Value::Integer(i64::from(defaults.decorations.width)),
+        ),
+        (
+            "decorations.active_color",
+            s(&hex(defaults.decorations.active)),
+        ),
+        (
+            "decorations.inactive_color",
+            s(&hex(defaults.decorations.inactive)),
+        ),
     ];
     entries
         .into_iter()
@@ -220,6 +253,17 @@ impl Settings {
         let input = get("trust.input")
             .and_then(|v| typed::<Vec<Vec<String>>>("trust.input", v).ok())
             .unwrap_or_default();
+        let decorations = Decorations {
+            width: get("decorations.width")
+                .and_then(|v| width_of(v).ok())
+                .unwrap_or(base.decorations.width),
+            active: get("decorations.active_color")
+                .and_then(|v| color_of("active_color", v).ok())
+                .unwrap_or(base.decorations.active),
+            inactive: get("decorations.inactive_color")
+                .and_then(|v| color_of("inactive_color", v).ok())
+                .unwrap_or(base.decorations.inactive),
+        };
         Self {
             layout,
             gaps: Gaps {
@@ -235,6 +279,7 @@ impl Settings {
             render,
             lock: LockSettings { command },
             trust: TrustSettings { input },
+            decorations,
         }
     }
 }
