@@ -8,6 +8,7 @@ pub mod caller;
 pub mod init;
 pub mod model;
 pub mod paths;
+pub mod service;
 pub mod staging;
 pub mod store;
 pub mod unlock;
