@@ -1,9 +1,15 @@
 //! `org.tetsu.comp.config.v1`: the wire types, shaped exactly as the IDL.
 
 use std::collections::BTreeMap;
+use std::io;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use zlink::Call;
+
+use crate::cap::ClientError;
+use crate::into_io;
 
 /// The interface name.
 pub const INTERFACE: &str = "org.tetsu.comp.config.v1";
@@ -13,6 +19,9 @@ pub const IDL: &str = include_str!("../idl/org.tetsu.comp.config.v1.varlink");
 pub const PERMISSION_DENIED: &str = "org.tetsu.comp.config.v1.PermissionDenied";
 /// The fully qualified `SetManaged`, the method the gate asks capd about.
 pub const SET_MANAGED: &str = "org.tetsu.comp.config.v1.SetManaged";
+
+/// The fully qualified `GetConfig`.
+pub const GET_CONFIG: &str = "org.tetsu.comp.config.v1.GetConfig";
 
 /// `ConfigEntry.origin`: the layer the effective value comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,4 +172,40 @@ pub struct SetManagedParams {
     /// Keys whose managed value is removed.
     #[serde(default)]
     pub remove: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct GetConfigCall {
+    method: &'static str,
+}
+
+/// A Varlink error reply; `error` is required, so a reply never matches it.
+#[derive(Debug, Deserialize)]
+struct RemoteError {
+    error: String,
+    #[serde(default)]
+    parameters: Value,
+}
+
+/// Connects to the compositor socket and calls `GetConfig`.
+pub async fn get_config(path: &Path) -> Result<GetConfigReply, ClientError> {
+    let mut connection = zlink::tokio::unix::connect(path).await.map_err(into_io)?;
+    let call = Call::new(GetConfigCall { method: GET_CONFIG });
+    connection
+        .send_call(&call, Vec::new())
+        .await
+        .map_err(into_io)?;
+    let (reply, _fds) = connection
+        .receive_reply::<GetConfigReply, RemoteError>()
+        .await
+        .map_err(into_io)?;
+    match reply {
+        Ok(reply) => reply
+            .into_parameters()
+            .ok_or_else(|| io::Error::other("GetConfig reply without parameters").into()),
+        Err(e) => Err(ClientError::Remote {
+            error: e.error,
+            parameters: e.parameters,
+        }),
+    }
 }
