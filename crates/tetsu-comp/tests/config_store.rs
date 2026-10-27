@@ -1,6 +1,8 @@
 //! The store: the three files read, watched by polling, and the managed
 //! file written. Every path is under a temporary directory.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -287,4 +289,100 @@ fn an_unreadable_file_is_read_again_once_it_can_be() {
     store.poll();
     assert_eq!(outer(&store), (Origin::User, json!(5)));
     assert!(store.diagnostics().is_empty());
+}
+
+const USER_OUTPUT: &str = "[output.DP-1]\nscale = 1.5\nenabled = true\n";
+
+fn mirror_of(store: &Store) -> tetsu_comp::bus::ConfigMirror {
+    tetsu_comp::bus::ConfigMirror::new(tetsu_comp::config::glue::config_reply(Some(store)))
+}
+
+fn mirror_keys(mirror: &tetsu_comp::bus::ConfigMirror) -> Vec<String> {
+    let mut keys: Vec<_> = mirror.reply().entries.into_iter().map(|e| e.key).collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn deleting_an_output_table_removes_its_keys_and_the_mirror_drops_them() {
+    let d = dirs();
+    put(&user(&d), USER_OUTPUT);
+    let mut store = Store::new(d.paths.clone());
+    let mut mirror = mirror_of(&store);
+    assert!(mirror_keys(&mirror).contains(&"output.DP-1.scale".to_owned()));
+    put(&user(&d), "");
+    assert!(store.poll().is_empty(), "an emptied file waits one poll");
+    let events = store.poll();
+    let removed: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == ConfigKind::Removed)
+        .filter_map(|e| e.key.as_deref())
+        .collect();
+    assert_eq!(removed, ["output.DP-1.enabled", "output.DP-1.scale"]);
+    for event in &events {
+        common::check_config_event(&common::contract(), event);
+        mirror.apply(event);
+    }
+    assert!(
+        !mirror_keys(&mirror)
+            .iter()
+            .any(|k| k.starts_with("output."))
+    );
+}
+
+#[test]
+fn a_key_the_managed_layer_still_sets_is_changed_not_removed() {
+    let d = dirs();
+    put(&managed(&d), "[output.DP-1]\nscale = 2.0\n");
+    put(&user(&d), USER_OUTPUT);
+    let mut store = Store::new(d.paths.clone());
+    put(&user(&d), "# nothing\n");
+    let events = store.poll();
+    let scale = events
+        .iter()
+        .find(|e| {
+            e.entry
+                .as_ref()
+                .is_some_and(|x| x.key == "output.DP-1.scale")
+        })
+        .expect("scale is reported");
+    assert_eq!(scale.kind, ConfigKind::Changed);
+    assert_eq!(scale.entry.as_ref().unwrap().origin, Origin::Managed);
+    let gone: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == ConfigKind::Removed)
+        .filter_map(|e| e.key.as_deref())
+        .collect();
+    assert_eq!(gone, ["output.DP-1.enabled"]);
+}
+
+#[test]
+fn write_managed_nests_the_connector_table_and_parses_back() {
+    let d = dirs();
+    let mut store = Store::new(d.paths.clone());
+    let at = toml::Value::Table(
+        [
+            ("x".to_owned(), toml::Value::Integer(-1920)),
+            ("y".to_owned(), toml::Value::Integer(0)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let values: BTreeMap<String, toml::Value> = [
+        ("output.DP-1.position".to_owned(), at),
+        ("output.DP-1.scale".to_owned(), toml::Value::Float(1.25)),
+        ("layout.gaps_outer".to_owned(), toml::Value::Integer(4)),
+    ]
+    .into();
+    let events = store.write_managed(&values).unwrap();
+    for event in &events {
+        common::check_config_event(&common::contract(), event);
+    }
+    let text = fs::read_to_string(managed(&d)).unwrap();
+    assert!(text.contains("[output.DP-1]"), "{text}");
+    assert!(!text.contains("\"output.DP-1"), "{text}");
+    let parsed = tetsu_comp::config::layer::parse(&text);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(parsed.values, values);
+    assert!(store.poll().is_empty());
 }

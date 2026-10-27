@@ -199,3 +199,93 @@ fn an_explicit_user_file_replaces_the_user_layer_path() {
     let paths = Paths::from_env(env(&[("HOME", "/home/u")])).with_user("/x/y.toml".into());
     assert_eq!(paths.user, Some(PathBuf::from("/x/y.toml")));
 }
+
+const CONFIGURE: &str = "org.tetsu.comp.output.v1.ConfigureOutputs";
+
+#[test]
+fn output_keys_follow_the_registry_keys_sorted_with_their_layers() {
+    let view = view(
+        "",
+        "[output.HDMI-1]\nscale = 2.0\n[output.DP-1]\nposition = { x = 0, y = 0 }\n",
+        "[output.DP-1]\nscale = 1.5\n",
+    );
+    let entries = view.entries();
+    assert_eq!(entries.len(), KEYS.len() + 3);
+    let names: Vec<_> = entries[KEYS.len()..]
+        .iter()
+        .map(|e| e.key.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "output.DP-1.position",
+            "output.DP-1.scale",
+            "output.HDMI-1.scale"
+        ]
+    );
+    let scale = view.entry("output.DP-1.scale").unwrap();
+    assert_eq!(scale.origin, Origin::User);
+    assert_eq!(scale.value, json!(1.5));
+    assert_eq!(scale.default_value, None);
+    assert_eq!(scale.managed_value, None);
+    assert_eq!(scale.user_value, Some(json!(1.5)));
+    assert!(!scale.writable);
+    assert_eq!(scale.method.as_deref(), Some(CONFIGURE));
+    let at = view.entry("output.DP-1.position").unwrap();
+    assert_eq!(at.origin, Origin::Managed);
+    assert_eq!(at.managed_value, Some(json!({ "x": 0, "y": 0 })));
+    assert_eq!(view.user_keys(), ["output.DP-1.scale"]);
+    assert_eq!(
+        view.values()["output.HDMI-1.scale"],
+        toml::Value::Float(2.0)
+    );
+}
+
+#[test]
+fn output_entries_pass_the_get_config_contract() {
+    let view = view(
+        "",
+        "[output.DP-1]\nmode = { width = 1920, height = 1080, refresh_mhz = 60000 }\nenabled = false\n",
+        "[output.DP-1]\ntransform = \"rotate_90\"\nscale = 2\n",
+    );
+    let reply = GetConfigReply {
+        entries: view.entries().to_vec(),
+        diagnostics: vec![],
+    };
+    common::check(
+        &common::contract(),
+        "org.tetsu.comp.config.v1.GetConfig",
+        &serde_json::to_value(&reply).unwrap(),
+    );
+}
+
+#[test]
+fn a_diff_has_a_removed_for_a_key_no_layer_sets_any_more() {
+    use tetsu_bus::config::ConfigKind;
+    let before = view("", "", "[output.DP-1]\nscale = 1.5\nenabled = true\n");
+    let after = view("", "", "");
+    let events = diff(&before, &after);
+    let removed: Vec<_> = events
+        .iter()
+        .map(|e| (e.kind, e.key.clone().unwrap_or_default()))
+        .collect();
+    assert_eq!(
+        removed,
+        [
+            (ConfigKind::Removed, "output.DP-1.enabled".to_owned()),
+            (ConfigKind::Removed, "output.DP-1.scale".to_owned()),
+        ]
+    );
+    for event in &events {
+        common::check_config_event(&common::contract(), event);
+    }
+}
+
+#[test]
+fn changed_events_come_before_removed_ones() {
+    use tetsu_bus::config::ConfigKind;
+    let before = view("", "", "[output.DP-1]\nscale = 1.5\n");
+    let after = view("", "[layout]\ngaps_outer = 9\n", "");
+    let kinds: Vec<_> = diff(&before, &after).iter().map(|e| e.kind).collect();
+    assert_eq!(kinds, [ConfigKind::Changed, ConfigKind::Removed]);
+}
