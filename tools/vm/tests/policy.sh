@@ -26,6 +26,14 @@ bus_policy_checks() {
   # Session registry.
   check "the session directories are 0700 of the user" "^700 $USER_NAME directory\$" \
     "stat -c '%a %U %F' \"\$XDG_RUNTIME_DIR/tetsu\" \"\$XDG_RUNTIME_DIR/tetsu/registry\" | sort -u"
+  # The notifyd socket in the session registry. Never connect: that would
+  # activate notifyd without Wayland.
+  gexec "systemctl --user start tetsu-notifyd.socket"
+  check "the session registry links the notify socket" '^ok$' \
+    "[ \"\$(readlink \"\$XDG_RUNTIME_DIR/tetsu/registry/org.tetsu.notify.v1\")\" = \"\$XDG_RUNTIME_DIR/tetsu/org.tetsu.notify.v1\" ] && echo ok"
+  check "the notify socket is 0600 of the user" "^600 $USER_NAME socket\$" \
+    "stat -L -c '%a %U %F' \"\$XDG_RUNTIME_DIR/tetsu/registry/org.tetsu.notify.v1\""
+  gexec "systemctl --user stop tetsu-notifyd.socket"
   # polkit.
   want=$(expected_polkit_actions)
   gexec "pkaction | grep '^org\\.tetsu\\.' | sort | tr -d '\\r'"

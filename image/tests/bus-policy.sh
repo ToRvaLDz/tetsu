@@ -28,6 +28,8 @@ expect "image/stage-bus-policy runs" $?
 # Staged files, all 0644.
 for f in usr/lib/systemd/system/tetsu-tx.socket \
   usr/lib/systemd/system/tetsu-tx.service \
+  usr/lib/systemd/user/tetsu-notifyd.socket \
+  usr/lib/systemd/user/tetsu-notifyd.service \
   usr/share/polkit-1/actions/org.tetsu.policy; do
   [ -f "$ROOT/$f" ] && [ "$(stat -c %a "$ROOT/$f" 2>/dev/null)" = 644 ]
   expect "$f is staged 0644" $?
@@ -62,6 +64,8 @@ svc="$ROOT/usr/lib/systemd/system/tetsu-tx.service"
 ! grep -q '^\[Install\]' "$svc"; expect "tetsu-tx.service has no [Install]" $?
 grep -qx 'enable tetsu-tx.socket' "$EXTRA/usr/lib/systemd/system-preset/50-tetsu.preset"
 expect "50-tetsu.preset enables tetsu-tx.socket" $?
+grep -qx 'enable tetsu-notifyd.socket' "$EXTRA/usr/lib/systemd/user-preset/50-tetsu.preset"
+expect "the user preset enables tetsu-notifyd.socket" $?
 
 # tmpfiles.
 tf() { # FILE EXPECTED-CONTENT
