@@ -3,6 +3,7 @@
 //! The only crate that imports zlink (#15): daemons use these types and
 //! functions, never zlink directly.
 
+mod activation;
 pub mod notify;
 mod nullable;
 pub mod peer;
