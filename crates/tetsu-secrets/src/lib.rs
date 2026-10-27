@@ -4,4 +4,5 @@
 
 pub mod model;
 pub mod staging;
+pub mod unlock;
 pub mod vault;
