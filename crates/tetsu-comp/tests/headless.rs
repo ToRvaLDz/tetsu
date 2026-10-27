@@ -190,6 +190,18 @@ fn a_mapped_window_is_opened_focused_changed_and_closed_on_the_bus() {
 }
 
 #[test]
+fn headless_advertises_neither_dmabuf_nor_explicit_sync() {
+    let comp = Comp::start();
+    let globals = wayland::globals(&comp.wayland_socket());
+    assert!(globals.iter().any(|g| g == "wl_compositor"), "{globals:?}");
+    assert!(!globals.iter().any(|g| g == "zwp_linux_dmabuf_v1"), "{globals:?}");
+    assert!(
+        !globals.iter().any(|g| g == "wp_linux_drm_syncobj_manager_v1"),
+        "{globals:?}"
+    );
+}
+
+#[test]
 fn a_second_window_is_tiled_beside_the_first() {
     let comp = Comp::start();
     let mut wl = WlClient::connect(&comp.wayland_socket());

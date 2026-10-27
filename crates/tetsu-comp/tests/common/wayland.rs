@@ -110,6 +110,19 @@ impl ProvidesRegistryState for App {
 delegate_registry!(App);
 delegate_dispatch2!(App);
 
+/// The interface names of the globals the compositor advertises.
+pub fn globals(socket: &Path) -> Vec<String> {
+    let stream = UnixStream::connect(socket).unwrap();
+    let conn = Connection::from_socket(stream).unwrap();
+    let (globals, _queue) = registry_queue_init::<App>(&conn).unwrap();
+    globals
+        .contents()
+        .clone_list()
+        .into_iter()
+        .map(|g| g.interface)
+        .collect()
+}
+
 /// A mapped toplevel.
 pub struct Toplevel {
     window: Window,
