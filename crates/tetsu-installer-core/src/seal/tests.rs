@@ -557,3 +557,28 @@ fn has_tpm2_slot_reads_the_type_column() {
         assert_eq!(has_tpm2_slot(listing), expect, "{listing:?}");
     }
 }
+
+#[test]
+fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
+    use UnlockLevel::{Balanced, Comfort};
+    let other = r#"{"tokens":{"0":{"type":"systemd-fido2"},"1":{"type":"systemd-tpm2","tpm2-pubkey":"QUJD"}}}"#;
+    let empty_key = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pubkey":"","tpm2-pin":true}}}"#;
+    let wrong_type = r#"{"tokens":{"0":{"type":"other","tpm2-pubkey":"QUJD","tpm2-pin":true}}}"#;
+    for (json, level, expect) in [
+        (TOKEN_PIN, Balanced, true),
+        (TOKEN_PIN, Comfort, false),
+        (TOKEN_NO_PIN, Comfort, true),
+        (TOKEN_NO_PIN, Balanced, false),
+        (other, Comfort, true),
+        (other, Balanced, false),
+        (TOKEN_NO_PUBKEY, Balanced, false),
+        (empty_key, Balanced, false),
+        (wrong_type, Balanced, false),
+        (r#"{"tokens":{}}"#, Comfort, false),
+        (r#"{"keyslots":{}}"#, Comfort, false),
+        ("", Comfort, false),
+        ("[]", Comfort, false),
+    ] {
+        assert_eq!(has_tetsu_token(json, level), expect, "{json} {level:?}");
+    }
+}

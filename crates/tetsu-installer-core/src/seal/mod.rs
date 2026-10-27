@@ -16,9 +16,15 @@
 //!   one. The file lives inside the snapshot, so a rollback to a snapshot
 //!   taken before the seal brings back `pending` while the LUKS header
 //!   already holds the TPM2 slot. The header is the source of truth: when
-//!   the file says `pending` and `systemd-cryptenroll <device>` lists a
-//!   `tpm2` slot, the file is rewritten to `sealed` with no prompt and no
-//!   `@var` mount. A failing listing changes nothing and the seal goes on.
+//!   the file says `pending`, `systemd-cryptenroll <device>` lists a `tpm2`
+//!   slot and `cryptsetup luksDump --dump-json-metadata <device>` shows a
+//!   systemd-tpm2 token with Tetsu's policy (a `tpm2-pubkey` and a
+//!   `tpm2-pin` that is true for Balanced and false for Comfort), the file
+//!   is rewritten to `sealed` with no prompt and no `@var` mount. A tpm2
+//!   slot without that policy (added by hand, stale, or forged in the
+//!   unauthenticated header) does not count: the normal seal runs and
+//!   `--wipe-slot=tpm2` replaces it. A failing listing or dump changes
+//!   nothing and the seal goes on.
 //! * **Where the keys live.** `/var` is the `@var` subvolume, mounted only
 //!   after the switch. The service mounts that subvolume from the opened
 //!   root mapper under `<work>/var` and unmounts it before it returns. It
@@ -146,7 +152,7 @@ pub fn run(paths: &SealPaths, runner: &dyn SealRunner) -> Result<Outcome, Instal
     let cmdline =
         fs::read_to_string(&cmdline_path).map_err(|e| InstallError::io(&cmdline_path, e))?;
     let luks = cmdline::luks_root(&cmdline)?;
-    if header_has_tpm2_slot(runner, &luks.device) {
+    if header_has_tetsu_seal(runner, &luks.device, file.level) {
         UnlockFile {
             state: SealState::Sealed,
             ..file
@@ -179,12 +185,22 @@ pub fn run(paths: &SealPaths, runner: &dyn SealRunner) -> Result<Outcome, Instal
     }
 }
 
-/// Whether the LUKS header lists a TPM2 slot. The listing needs no unlock;
-/// a failure means "unknown" and counts as no.
-fn header_has_tpm2_slot(runner: &dyn Runner, device: &Path) -> bool {
-    runner
+/// Whether the header already holds Tetsu's seal for `level`. The slot
+/// listing needs no unlock; a tpm2 row is then checked against its token
+/// (`cryptsetup luksDump --dump-json-metadata`), so a hand-added or stale
+/// token does not stand in for the seal. Any failure means "unknown" and
+/// counts as no.
+fn header_has_tetsu_seal(runner: &dyn Runner, device: &Path, level: UnlockLevel) -> bool {
+    let listed = runner
         .output("systemd-cryptenroll", &argv(&[&device]))
-        .is_ok_and(|listing| has_tpm2_slot(&listing))
+        .is_ok_and(|listing| has_tpm2_slot(&listing));
+    listed
+        && runner
+            .output(
+                "cryptsetup",
+                &argv(&[&"luksDump", &"--dump-json-metadata", &device]),
+            )
+            .is_ok_and(|json| has_tetsu_token(&json, level))
 }
 
 /// Whether a `systemd-cryptenroll` slot listing has a `tpm2` row. Rows are
@@ -194,6 +210,31 @@ fn has_tpm2_slot(listing: &str) -> bool {
         .lines()
         .filter_map(|row| row.split_whitespace().nth(1))
         .any(|kind| kind == "tpm2")
+}
+
+/// Whether the LUKS JSON metadata has a systemd-tpm2 token with Tetsu's
+/// policy: a signed-PCR public key, and a PIN exactly when the level is
+/// Balanced. Anything unparsable is no.
+fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
+    let Ok(metadata) = serde_json::from_str::<serde_json::Value>(json) else {
+        return false;
+    };
+    let Some(tokens) = metadata.get("tokens").and_then(|t| t.as_object()) else {
+        return false;
+    };
+    let wants_pin = level == UnlockLevel::Balanced;
+    tokens.values().any(|token| {
+        token.get("type").and_then(|t| t.as_str()) == Some("systemd-tpm2")
+            && token
+                .get("tpm2-pubkey")
+                .and_then(|k| k.as_str())
+                .is_some_and(|k| !k.is_empty())
+            && token
+                .get("tpm2-pin")
+                .and_then(|p| p.as_bool())
+                .unwrap_or(false)
+                == wants_pin
+    })
 }
 
 /// The part that needs the keys mounted.
