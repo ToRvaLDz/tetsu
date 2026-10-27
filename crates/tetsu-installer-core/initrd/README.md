@@ -18,6 +18,10 @@ stop a seal still running.
 It reads `/sysroot/etc/tetsu/unlock-level.toml`, and for a pending Comfort or
 Balanced level with Secure Boot on and Tetsu's PK enrolled it runs
 `systemd-cryptenroll` for the TPM2 slot, then writes `state = "sealed"`.
+Before that it lists the LUKS slots (`systemd-cryptenroll <device>`, no unlock
+needed): after a rollback to a snapshot taken before the seal the file says
+`pending` while the header already holds a TPM2 slot, so the file is set back
+to `sealed` and nothing is asked.
 It always exits 0. The design decisions (where the state is written, how the
 keys under `@var` are reached, how the passphrase and the PIN are passed) are
 documented in `src/seal/mod.rs`.

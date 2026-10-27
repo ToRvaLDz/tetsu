@@ -13,7 +13,12 @@
 //!   and the file is rewritten in place. The seal goes first and the state
 //!   second; if the state cannot be written the next boot seals again, and
 //!   `--wipe-slot=tpm2` makes that replace the old slot instead of adding
-//!   one.
+//!   one. The file lives inside the snapshot, so a rollback to a snapshot
+//!   taken before the seal brings back `pending` while the LUKS header
+//!   already holds the TPM2 slot. The header is the source of truth: when
+//!   the file says `pending` and `systemd-cryptenroll <device>` lists a
+//!   `tpm2` slot, the file is rewritten to `sealed` with no prompt and no
+//!   `@var` mount. A failing listing changes nothing and the seal goes on.
 //! * **Where the keys live.** `/var` is the `@var` subvolume, mounted only
 //!   after the switch. The service mounts that subvolume from the opened
 //!   root mapper under `<work>/var` and unmounts it before it returns. It
@@ -101,6 +106,9 @@ pub enum Outcome {
     NotNeeded,
     /// Sealed this boot.
     Sealed,
+    /// The header already held a TPM2 slot (a rollback brought `pending`
+    /// back); the file now says `sealed` again.
+    AlreadySealed,
     /// Still pending, with the reason for the one status line.
     Waiting(String),
 }
@@ -138,6 +146,14 @@ pub fn run(paths: &SealPaths, runner: &dyn SealRunner) -> Result<Outcome, Instal
     let cmdline =
         fs::read_to_string(&cmdline_path).map_err(|e| InstallError::io(&cmdline_path, e))?;
     let luks = cmdline::luks_root(&cmdline)?;
+    if header_has_tpm2_slot(runner, &luks.device) {
+        UnlockFile {
+            state: SealState::Sealed,
+            ..file
+        }
+        .write(&paths.level_file())?;
+        return Ok(Outcome::AlreadySealed);
+    }
 
     let run_dir = RunDir::create(&paths.work_dir)?;
     let var = paths.var_mount();
@@ -161,6 +177,23 @@ pub fn run(paths: &SealPaths, runner: &dyn SealRunner) -> Result<Outcome, Instal
         (Err(e), _) => Err(e),
         (Ok(_), Err(e)) => Err(e.into()),
     }
+}
+
+/// Whether the LUKS header lists a TPM2 slot. The listing needs no unlock;
+/// a failure means "unknown" and counts as no.
+fn header_has_tpm2_slot(runner: &dyn Runner, device: &Path) -> bool {
+    runner
+        .output("systemd-cryptenroll", &argv(&[&device]))
+        .is_ok_and(|listing| has_tpm2_slot(&listing))
+}
+
+/// Whether a `systemd-cryptenroll` slot listing has a `tpm2` row. Rows are
+/// `<slot> <type>`; the header row has the type `TYPE`.
+fn has_tpm2_slot(listing: &str) -> bool {
+    listing
+        .lines()
+        .filter_map(|row| row.split_whitespace().nth(1))
+        .any(|kind| kind == "tpm2")
 }
 
 /// The part that needs the keys mounted.
