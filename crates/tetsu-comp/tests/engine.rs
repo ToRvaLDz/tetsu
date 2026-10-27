@@ -8,7 +8,7 @@ use tetsu_bus::workspace::{WorkspaceEvent, WorkspaceKind};
 use tetsu_comp::bus::Snapshot;
 use tetsu_comp::engine::{Action, Engine};
 use tetsu_comp::layout::dwindle::dwindle;
-use tetsu_comp::layout::floating::{MIN_VISIBLE, centered, from_tile};
+use tetsu_comp::layout::floating::{MIN_VISIBLE, centered, clamp_into, from_tile};
 use tetsu_comp::layout::master::master;
 use tetsu_comp::layout::{Gaps, LayoutKind, Rect};
 use tetsu_comp::model::{Events, WindowInfo};
@@ -580,4 +580,45 @@ fn floating_rects_follow_their_viewport() {
         [(id, centered(VIEW, (200, 100)))]
     );
     assert!(engine.arrange(&second, at).floating.is_empty());
+}
+
+#[test]
+fn a_window_a_bind_moved_away_can_no_longer_be_moved() {
+    let (mut engine, _out, views) = started(settings(LayoutKind::Dwindle));
+    let w = open_n(&mut engine, &views, 2);
+    engine.apply(Action::ToggleFloating, &views);
+    assert!(engine.move_floating(&w[1], (100, 50), VIEW).is_some());
+    engine.apply(Action::MoveToWorkspace(2), &views);
+    assert_eq!(engine.move_floating(&w[1], (200, 80), VIEW), None);
+}
+
+#[test]
+fn toggling_floating_in_the_floating_layout_changes_nothing() {
+    let (mut engine, out, views) = started(settings(LayoutKind::Floating));
+    let w = open_n(&mut engine, &views, 1);
+    let effect = engine.apply(Action::ToggleFloating, &views);
+    assert!(!effect.relayout);
+    // Back in dwindle the window tiles: no hidden floated flag was set.
+    engine.apply(Action::CycleLayout, &views);
+    let arrangement = engine.arrange(&out, VIEW);
+    assert_eq!(ids(&arrangement.tiled), [w[0].as_str()]);
+    assert!(arrangement.floating.is_empty());
+}
+
+#[test]
+fn floating_rects_are_clamped_into_a_shrunk_viewport() {
+    let (mut engine, out, views) = started(settings(LayoutKind::Floating));
+    let id = engine.open(info("a"), Some((400, 300)), &views);
+    engine.move_floating(&id, (1500, 800), VIEW).unwrap();
+    let small = Rect {
+        x: 0,
+        y: 0,
+        w: 800,
+        h: 600,
+    };
+    let floating = engine.arrange(&out, small).floating;
+    let stored = engine.arrange(&out, VIEW).floating[0].1;
+    assert_eq!(floating, [(id, clamp_into(small, stored))]);
+    assert_eq!(floating[0].1.x, 800 - MIN_VISIBLE);
+    assert_eq!(floating[0].1.y, 600 - MIN_VISIBLE);
 }
