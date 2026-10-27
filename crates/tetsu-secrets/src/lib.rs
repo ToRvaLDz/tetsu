@@ -6,5 +6,6 @@ pub mod init;
 pub mod model;
 pub mod paths;
 pub mod staging;
+pub mod store;
 pub mod unlock;
 pub mod vault;
