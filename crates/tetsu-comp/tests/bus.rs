@@ -370,7 +370,7 @@ fn a_new_watch_after_a_crash_gets_the_current_snapshot() {
 fn the_mirror_equals_the_model_after_any_sequence() {
     let mut model = Model::default();
     let mut mirror = Mirror::from_snapshot(&Snapshot::of(&model));
-    let mut check = |model: &mut Model, mirror: &mut Mirror| {
+    let check = |model: &mut Model, mirror: &mut Mirror| {
         let events = model.flush();
         for event in &events.window {
             mirror.apply_window(event);

@@ -12,6 +12,7 @@ description = "Tetsu Wayland compositor: Smithay backends, xdg-shell and the win
 workspace = true
 
 [dependencies]
+serde = "1.0.228"
 serde_json = "1.0.154"
 smithay = { git = "https://github.com/Smithay/smithay", rev = "8a270232f1bfc416c781273c98a3f52a812a0bba", default-features = false, features = [
     "wayland_frontend",
@@ -30,7 +31,6 @@ tokio = { version = "1.54.1", features = ["rt", "sync", "macros", "time"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 
 [dev-dependencies]
-serde = "1.0.228"
 smithay-client-toolkit = { version = "0.21.1", default-features = false }
 tempfile = "3"
 tetsu-bus-contract = { path = "../tetsu-bus-contract" }
