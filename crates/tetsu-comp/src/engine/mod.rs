@@ -16,6 +16,7 @@ use tetsu_bus::window::Placement;
 
 pub use action::{Action, Effect};
 
+use crate::decor::inset;
 use crate::layout::dwindle::dwindle;
 use crate::layout::floating::{centered, clamp_into, from_tile};
 use crate::layout::master::{clamp_ratio, master};
@@ -55,7 +56,7 @@ pub struct Plan {
 /// Where every window of one output goes. Rects are absolute.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Arrangement {
-    /// Tiled windows with their tiles.
+    /// Tiled windows with their content rects: the tile minus the border.
     pub tiled: Vec<(String, Rect)>,
     /// Floating windows with their rects, in layout order.
     pub floating: Vec<(String, Rect)>,
@@ -170,10 +171,13 @@ impl Engine {
 
     fn tile_rects(&self, state: &WorkspaceState, view: Rect, n: usize) -> Vec<Rect> {
         let gaps = self.settings.gaps;
-        match state.layout {
+        let width = self.settings.decorations.width;
+        let tiles = match state.layout {
             LayoutKind::Master => master(view, gaps, n, state.ratio),
             _ => dwindle(view, gaps, n),
-        }
+        };
+        // Il bordo sta dentro la tile: qui plan e arrange concordano.
+        tiles.into_iter().map(|tile| inset(tile, width)).collect()
     }
 
     /// The tiles of a workspace, absolute.
