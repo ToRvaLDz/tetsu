@@ -120,9 +120,69 @@ impl AuditEntry {
 
     /// The datagram in the native journal protocol.
     pub fn encode(&self) -> Vec<u8> {
-        let _ = self.event;
-        unimplemented!()
+        let mut out = Vec::new();
+        let event = self.event;
+        field(&mut out, "SYSLOG_IDENTIFIER", IDENTIFIER);
+        field(&mut out, "MESSAGE_ID", event.message_id());
+        field(&mut out, "PRIORITY", "6");
+        let message = match &self.class {
+            Some(class) => format!("tetsu-capd: {} {class}", event.name()),
+            None => format!("tetsu-capd: {}", event.name()),
+        };
+        field(&mut out, "MESSAGE", &message);
+        let text = [
+            ("TETSU_METHOD", &self.method),
+            ("TETSU_CLASS", &self.class),
+            ("TETSU_SCOPE", &self.scope),
+            ("TETSU_STATE", &self.state),
+            ("TETSU_LAYER", &self.layer),
+            ("TETSU_DECISION", &self.decision),
+            ("TETSU_DENIED_BY", &self.denied_by),
+        ];
+        for (key, value) in text {
+            if let Some(value) = value {
+                field(&mut out, key, value);
+            }
+        }
+        if self.cancelled {
+            field(&mut out, "TETSU_CANCELLED", "true");
+        }
+        if let Some(pid) = self.peer_pid {
+            field(&mut out, "TETSU_PEER_PID", &pid.to_string());
+        }
+        let more = [
+            ("TETSU_PEER_UNIT", &self.peer_unit),
+            ("TETSU_CALLER_UNIT", &self.caller_unit),
+        ];
+        for (key, value) in more {
+            if let Some(value) = value {
+                field(&mut out, key, value);
+            }
+        }
+        if let Some(args) = &self.args {
+            field(&mut out, "TETSU_ARGS", &truncate(args, MAX_ARGS));
+        }
+        if let Some(reason) = &self.reason {
+            field(&mut out, "TETSU_REASON", reason);
+        }
+        for (key, value) in &self.extra {
+            field(&mut out, key, value);
+        }
+        out
     }
+}
+
+/// Appends one field. A value with a newline is length-framed.
+fn field(out: &mut Vec<u8>, key: &str, value: &str) {
+    out.extend_from_slice(key.as_bytes());
+    if value.contains('\n') {
+        out.push(b'\n');
+        out.extend_from_slice(&(value.len() as u64).to_le_bytes());
+    } else {
+        out.push(b'=');
+    }
+    out.extend_from_slice(value.as_bytes());
+    out.push(b'\n');
 }
 
 /// Where entries go.
@@ -150,8 +210,7 @@ impl JournalSink {
 
 impl AuditSink for JournalSink {
     fn record(&self, entry: &AuditEntry) -> io::Result<()> {
-        let _ = (&self.socket, &self.path, entry);
-        unimplemented!()
+        self.socket.send_to(&entry.encode(), &self.path).map(drop)
     }
 }
 
@@ -179,9 +238,4 @@ impl<T: AuditSink + ?Sized> AuditSink for std::rc::Rc<T> {
     fn record(&self, entry: &AuditEntry) -> io::Result<()> {
         (**self).record(entry)
     }
-}
-
-#[allow(dead_code)]
-fn _keep(text: &str) -> String {
-    truncate(text, MAX_ARGS)
 }
