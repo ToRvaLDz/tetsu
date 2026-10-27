@@ -99,6 +99,8 @@ pub struct State {
     pub mapped: Vec<Mapped>,
     /// The bus thread, once bound.
     pub publisher: Option<Publisher>,
+    /// The tty backend, once started.
+    pub tty: Option<crate::backend::udev::Tty>,
     /// Switches to a VT (tty only).
     pub vt_switch: Option<Box<dyn FnMut(i32)>>,
 }
@@ -136,6 +138,7 @@ impl State {
             unmapped: Vec::new(),
             mapped: Vec::new(),
             publisher: None,
+            tty: None,
             vt_switch: None,
         })
     }
