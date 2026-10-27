@@ -40,6 +40,9 @@ fn fingerprint(path: &Path) -> Option<Fingerprint> {
 struct Source {
     path: Option<PathBuf>,
     seen: Option<Fingerprint>,
+    /// An emptied or missing state of the file, seen once and not adopted
+    /// yet: an editor that truncates in place passes through it.
+    pending: Option<Option<Fingerprint>>,
     values: Values,
     diagnostics: Vec<Diagnostic>,
 }
@@ -49,6 +52,7 @@ impl Source {
         Self {
             path,
             seen: None,
+            pending: None,
             values: Values::new(),
             diagnostics: Vec::new(),
         }
@@ -62,8 +66,17 @@ impl Source {
         };
         let now = fingerprint(&path);
         if now == self.seen {
+            self.pending = None;
             return false;
         }
+        // A file that went empty or missing is adopted only when it is the
+        // same on two consecutive polls.
+        let emptied = self.seen.is_some_and(|s| s.size > 0) && now.is_none_or(|n| n.size == 0);
+        if emptied && self.pending != Some(now) {
+            self.pending = Some(now);
+            return false;
+        }
+        self.pending = None;
         self.seen = now;
         match fs::read_to_string(&path) {
             Ok(text) => self.adopt(layer::parse(&text)),
@@ -72,12 +85,17 @@ impl Source {
                 self.diagnostics.clear();
             }
             Err(e) => {
-                // The last good values stay.
-                self.diagnostics = vec![Diagnostic {
+                // The last good values stay. The version is not recorded,
+                // so the next poll reads it again.
+                self.seen = None;
+                let unreadable = vec![Diagnostic {
                     line: None,
                     key: None,
                     message: format!("the file is not readable: {e}"),
                 }];
+                let changed = self.diagnostics != unreadable;
+                self.diagnostics = unreadable;
+                return changed;
             }
         }
         true

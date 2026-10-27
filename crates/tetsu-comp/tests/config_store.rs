@@ -78,6 +78,8 @@ fn a_poll_sees_create_edit_rename_and_delete_of_the_user_file() {
     assert_eq!(outer(&store), (Origin::User, json!(9)));
 
     fs::remove_file(user(&d)).unwrap();
+    // A deletion is adopted on the second poll (see the debounce tests).
+    assert!(store.poll().is_empty());
     let events = store.poll();
     assert_eq!(
         kinds(&events),
@@ -229,4 +231,60 @@ fn with_no_home_there_is_nowhere_to_write() {
     });
     assert!(store.poll().is_empty());
     assert!(store.write_managed(&BTreeMap::new()).is_err());
+}
+
+#[test]
+fn a_file_emptied_in_place_is_not_adopted_until_it_stays_so() {
+    let d = dirs();
+    put(&user(&d), "[layout]\ngaps_outer = 5\n");
+    let mut store = Store::new(d.paths.clone());
+
+    // A save that truncates, then writes: the poll lands in between.
+    put(&user(&d), "");
+    assert!(store.poll().is_empty(), "the empty file waits one poll");
+    assert_eq!(outer(&store), (Origin::User, json!(5)));
+
+    put(&user(&d), "[layout]\ngaps_outer = 6\n");
+    store.poll();
+    assert_eq!(outer(&store), (Origin::User, json!(6)));
+
+    // A file that stays empty is adopted on the second poll.
+    put(&user(&d), "");
+    assert!(store.poll().is_empty());
+    let events = store.poll();
+    assert_eq!(
+        kinds(&events),
+        [ConfigKind::Changed, ConfigKind::Diagnostics]
+    );
+    assert_eq!(outer(&store), (Origin::Default, json!(0)));
+}
+
+#[test]
+fn a_deleted_file_is_dropped_on_the_second_poll() {
+    let d = dirs();
+    put(&user(&d), "[layout]\ngaps_outer = 5\n");
+    let mut store = Store::new(d.paths.clone());
+    fs::remove_file(user(&d)).unwrap();
+    assert!(store.poll().is_empty());
+    assert_eq!(outer(&store), (Origin::User, json!(5)));
+    assert!(!store.poll().is_empty());
+    assert_eq!(outer(&store), (Origin::Default, json!(0)));
+}
+
+#[test]
+fn an_unreadable_file_is_read_again_once_it_can_be() {
+    let d = dirs();
+    put(&user(&d), "[layout]\ngaps_outer = 5\n");
+    fs::set_permissions(user(&d), fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_to_string(user(&d)).is_ok() {
+        return; // root reads anything
+    }
+    let mut store = Store::new(d.paths.clone());
+    assert_eq!(store.diagnostics().len(), 1, "the file is not readable");
+
+    // Only the ctime moves: the fingerprint does not.
+    fs::set_permissions(user(&d), fs::Permissions::from_mode(0o644)).unwrap();
+    store.poll();
+    assert_eq!(outer(&store), (Origin::User, json!(5)));
+    assert!(store.diagnostics().is_empty());
 }
