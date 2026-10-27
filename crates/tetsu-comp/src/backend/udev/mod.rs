@@ -5,8 +5,14 @@
 //! cross-GPU copy (`MultiRenderer`). Every decision (which device renders,
 //! how an output is served, which formats, whether explicit sync is on) lives
 //! in the pure `crate::gpu` modules; this module only gathers the facts and
-//! acts on the answers. There is no hotplug yet (#71): cards and connectors
-//! are enumerated once, at start.
+//! acts on the answers.
+//!
+//! Connectors are hotplugged: a udev `Changed` on a known card, and a session
+//! resume, look at its connectors again; a lit one that is no longer
+//! connected loses its output, a newly connected one is lit. A card that goes
+//! away takes its heads with it. Cards are fixed at start: one added later is
+//! only logged, and the render device is not chosen again (#70's hot-switch
+//! follow-up).
 //!
 //! The multi-GPU policy is ported from niri `src/backend/tty.rs` at commit
 //! `fcbc971cf49a987b1e8d5ff1d64da6b1f61a1787` (GPL-3.0-or-later); the
@@ -31,9 +37,11 @@ use smithay::backend::renderer::multigpu::gbm::GbmGlesBackend;
 use smithay::backend::renderer::multigpu::{GpuManager, MultiRenderer};
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};
+use smithay::backend::udev::{UdevBackend, UdevEvent};
 use smithay::output::Output;
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::reexports::drm::control::crtc;
+use smithay::reexports::drm::control::{connector, crtc};
 use smithay::reexports::input::Libinput;
 use smithay::utils::Point;
 
@@ -64,12 +72,16 @@ struct Device {
     render_node: Option<DrmNode>,
     plan: OutputPlan,
     manager: Manager,
+    /// The VBlank source of the card.
+    events: RegistrationToken,
 }
 
 /// A lit connector.
 struct Head {
     node: DrmNode,
     crtc: crtc::Handle,
+    /// The connector it lights.
+    connector: connector::Handle,
     output: Output,
     drm_output: Lit,
     /// Where this output's buffers are scanned out from.
@@ -134,6 +146,19 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn Error>> {
         .insert_source(notifier, |event, (), state| state.session_event(&event))
         .map_err(|e| e.to_string())?;
 
+    let udev = UdevBackend::new(&seat).map_err(|e| format!("udev: {e}"))?;
+    state
+        .loop_handle
+        .insert_source(udev, |event, _, state| match event {
+            UdevEvent::Changed { device_id } => state.card_changed(device_id),
+            UdevEvent::Removed { device_id } => state.card_removed(device_id),
+            UdevEvent::Added { path, .. } => eprintln!(
+                "tetsu-comp: card {} added; restart tetsu-comp to use it",
+                path.display()
+            ),
+        })
+        .map_err(|e| e.to_string())?;
+
     let mut switcher = session;
     state.vt_switch = Some(Box::new(move |vt| {
         if let Err(e) = switcher.change_vt(vt) {
@@ -187,6 +212,7 @@ impl State {
             .map_or_else(Point::default, |p| p.current_location());
         let rendered = tty.render(&self.space, pointer, node, crtc);
         let head = tty.heads.iter().find(|h| h.node == node && h.crtc == crtc);
+        let known = head.is_some();
         let output = head.map(|h| h.output.clone());
         let feedback = head.and_then(|h| h.feedback.clone());
         self.tty = Some(tty);
@@ -197,7 +223,10 @@ impl State {
                     self.send_dmabuf_feedback(&output, feedback.as_ref(), &states);
                 }
             }
+            // The output was unplugged meanwhile: nothing left to retry.
+            Ok(None) if !known => {}
             Ok(None) => self.schedule_retry(node, crtc),
+            Err(e) if !known => eprintln!("tetsu-comp: render of an unplugged output: {e}"),
             Err(e) => {
                 // No queued frame means no VBlank: without a retry the output stays frozen.
                 eprintln!("tetsu-comp: render failed: {e}");
@@ -237,6 +266,8 @@ impl State {
                     }
                 }
                 self.loop_handle.insert_idle(|state| state.render_all());
+                // The cabling may have changed while the VT was away.
+                self.rescan_all();
             }
         }
     }
