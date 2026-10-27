@@ -57,7 +57,7 @@ impl Supported {
 }
 
 /// Whether `language` can be installed: well shaped, then pregenerated or
-/// listed in `supported`. The refusals never repeat the value.
+/// listed in `supported`. The SUPPORTED refusals never repeat the value.
 pub fn check_language(
     language: &str,
     supported: Result<&Supported, &String>,
