@@ -38,13 +38,19 @@ struct Fake {
     enroll_fails: bool,
     /// Put the key files in the mount point, as a real mount would.
     keys: Option<(&'static str, &'static str)>,
+    /// What `systemd-cryptenroll <device>` lists; `None` makes it fail.
+    listing: Option<&'static str>,
 }
+
+const PASSWORDS_ONLY: &str = "SLOT TYPE\n   0 password\n   1 password\n";
+const WITH_TPM2: &str = "SLOT TYPE\n   0 password\n   1 password\n   2 tpm2\n";
 
 impl Fake {
     fn with_answers(answers: &[&str]) -> Self {
         Self {
             answers: RefCell::new(answers.iter().map(|a| (*a).to_owned()).collect()),
             keys: Some((PEM, "PUBLIC KEY")),
+            listing: Some(PASSWORDS_ONLY),
             ..Self::default()
         }
     }
@@ -65,12 +71,32 @@ impl Fake {
         args
     }
 
+    fn enrolled(&self) -> bool {
+        self.calls.borrow().iter().any(|c| {
+            c.program == "systemd-cryptenroll"
+                && c.args.iter().any(|a| a.starts_with("--unlock-key-file="))
+        })
+    }
+
     fn programs(&self) -> Vec<String> {
         self.calls
             .borrow()
             .iter()
             .map(|c| c.program.clone())
             .collect()
+    }
+
+    /// The enrollment itself, not the slot listing before it.
+    fn enroll_call(&self) -> Call {
+        self.calls
+            .borrow()
+            .iter()
+            .find(|c| {
+                c.program == "systemd-cryptenroll"
+                    && c.args.iter().any(|a| a.starts_with("--unlock-key-file="))
+            })
+            .cloned()
+            .expect("no enrollment ran")
     }
 
     fn call(&self, program: &str) -> Call {
@@ -127,8 +153,15 @@ impl Runner for Fake {
     }
 
     fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
-        assert_eq!(program, "systemd-ask-password");
         self.record(program, args, &[]);
+        if program == "systemd-cryptenroll" {
+            return self.listing.map(str::to_owned).ok_or(BootError::Tool {
+                tool: program.to_owned(),
+                status: "exit status: 1".into(),
+                stderr: "cannot read the header".into(),
+            });
+        }
+        assert_eq!(program, "systemd-ask-password");
         let answer = self
             .answers
             .borrow_mut()
@@ -216,13 +249,14 @@ fn comfort_asks_the_passphrase_only_and_seals() {
     assert_eq!(
         f.programs(),
         [
+            "systemd-cryptenroll",
             "mount",
             "systemd-ask-password",
             "systemd-cryptenroll",
             "umount"
         ]
     );
-    let enroll = f.call("systemd-cryptenroll");
+    let enroll = f.enroll_call();
     let key_file = enroll.args[0]
         .strip_prefix("--unlock-key-file=")
         .unwrap()
@@ -266,7 +300,7 @@ fn balanced_asks_the_pin_twice_and_passes_it_in_the_environment() {
     let m = Machine::new("balanced");
     let f = Fake::with_answers(&["correct horse", "2468", "2468"]);
     assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed);
-    let enroll = f.call("systemd-cryptenroll");
+    let enroll = f.enroll_call();
     assert!(enroll.args.contains(&"--tpm2-with-pin=yes".to_owned()));
     assert_eq!(enroll.env, [("NEWPIN".to_owned(), "2468".to_owned())]);
     for call in f.calls.borrow().iter() {
@@ -297,7 +331,7 @@ fn a_pin_mismatch_asks_again_and_gives_up_after_three() {
         run(&m.paths(), &f).unwrap_err().to_string(),
         "the PINs did not match"
     );
-    assert!(!f.programs().contains(&"systemd-cryptenroll".to_owned()));
+    assert!(!f.enrolled());
     assert!(m.level_text().contains("pending"));
     assert!(!m.work_exists());
     assert_eq!(f.programs().last().unwrap(), "umount");
@@ -305,7 +339,7 @@ fn a_pin_mismatch_asks_again_and_gives_up_after_three() {
     let m = Machine::new("balanced");
     let f = Fake::with_answers(&["pw", "1", "2", "7", "7"]);
     assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed);
-    assert_eq!(f.call("systemd-cryptenroll").env[0].1, "7");
+    assert_eq!(f.enroll_call().env[0].1, "7");
 }
 
 #[test]
@@ -327,7 +361,7 @@ fn waits_for(m: &Machine, why: &str) {
         panic!("expected a pending level");
     };
     assert!(got.contains(why), "{got}");
-    assert!(!f.programs().contains(&"systemd-cryptenroll".to_owned()));
+    assert!(!f.enrolled());
     assert!(m.level_text().contains("pending"));
 }
 
@@ -402,5 +436,55 @@ fn an_empty_answer_is_refused() {
     let m = Machine::new("comfort");
     let f = Fake::with_answers(&[""]);
     assert!(run(&m.paths(), &f).is_err());
-    assert!(!f.programs().contains(&"systemd-cryptenroll".to_owned()));
+    assert!(!f.enrolled());
+}
+
+#[test]
+fn a_tpm2_slot_in_the_header_means_sealed_whatever_the_file_says() {
+    let m = Machine::new("balanced");
+    let f = Fake {
+        listing: Some(WITH_TPM2),
+        ..Fake::with_answers(&[])
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::AlreadySealed);
+    assert_eq!(f.programs(), ["systemd-cryptenroll"]);
+    let list = f.call("systemd-cryptenroll");
+    assert_eq!(list.args, ["/dev/disk/by-uuid/ab-12"]);
+    assert_eq!(
+        m.level_text(),
+        "level = \"balanced\"\nstate = \"sealed\"\n",
+        "the level is kept"
+    );
+    assert!(!m.work_exists());
+}
+
+#[test]
+fn a_failing_listing_falls_through_to_the_normal_seal() {
+    let m = Machine::new("comfort");
+    let f = Fake {
+        listing: None,
+        ..Fake::with_answers(&["pw"])
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed);
+    assert!(f.enrolled());
+}
+
+#[test]
+fn has_tpm2_slot_reads_the_type_column() {
+    for (listing, expect) in [
+        ("", false),
+        ("SLOT TYPE\n", false),
+        (PASSWORDS_ONLY, false),
+        (WITH_TPM2, true),
+        ("SLOT TYPE\n   0 tpm2\n", true),
+        (
+            "SLOT TYPE\n   0 password\n   1 recovery\n   3 fido2\n",
+            false,
+        ),
+        ("  1 tpm2  \n", true),
+        ("tpm2\n", false),
+        ("SLOT TYPE\n   0 tpm2-like\n", false),
+    ] {
+        assert_eq!(has_tpm2_slot(listing), expect, "{listing:?}");
+    }
 }
