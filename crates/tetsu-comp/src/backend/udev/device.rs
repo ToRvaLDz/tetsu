@@ -63,8 +63,8 @@ pub(super) struct Selected {
     pub driver: String,
 }
 
-/// `EGLContext::new_with_priority` and `GlesRenderer::new` are unsafe: the
-/// renderer must be the only user of the context it is given.
+/// `GlesRenderer::new` is unsafe: the renderer must be the only user of the
+/// context it is given.
 #[expect(unsafe_code)]
 fn gles_factory(display: &EGLDisplay) -> Result<GlesRenderer, FactoryError> {
     let context = EGLContext::new_with_priority(display, ContextPriority::High)?;
