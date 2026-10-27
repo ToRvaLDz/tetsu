@@ -25,13 +25,36 @@ window and workspace interfaces of the bus (`org.tetsu.comp.window.v1`,
 
       cargo test -p tetsu-comp
 
-- **On a VT** (`--backend tty`): DRM/KMS on a single GPU, libinput through
-  libseat. Run it from a free VT, not inside another session.
+- **On a VT** (`--backend tty`): DRM/KMS on every GPU of the seat, libinput
+  through libseat. Run it from a free VT, not inside another session.
 
       tetsu-comp --backend tty -- foot
 
-  Ctrl+Alt+F1..F12 switch VT, Ctrl+Alt+Backspace quits. Hotplug, multiple
-  GPUs and explicit sync are not handled yet.
+  Ctrl+Alt+F1..F12 switch VT, Ctrl+Alt+Backspace quits.
+
+  **Multi-GPU.** One render device composes every output; an output on
+  another card gets a cross-GPU copy (8-bit formats only, linear buffers
+  for a display-only card, no overlay planes). The render device is chosen
+  once, at start: `render.device` if it names a present GPU, else the
+  hardware GPU that drives a connected external output, then the one with
+  most connected outputs, then the udev primary, then the lowest id. A
+  software renderer (llvmpipe, as on QEMU's std VGA) is used only when it
+  is the only device. The log says what was chosen:
+
+      tetsu-comp: render device /dev/dri/renderD128 (i915), automatic: only device
+      tetsu-comp: output eDP-1 on /dev/dri/card0, cross-gpu=false
+
+  There is no hotplug yet: cards and monitors must be connected before
+  start, and plugging an external monitor later does not move the render
+  device.
+
+  **Dmabuf and explicit sync.** `zwp_linux_dmabuf_v1` is advertised with
+  default and per-output feedback; `wl_drm` is not. With
+  `wp_linux_drm_syncobj_manager_v1` a client's acquire point holds its
+  commit back until it signals, else the dmabuf's implicit fence does.
+  Explicit sync is on when the render device supports `syncobj_eventfd`
+  and, on NVIDIA, the driver is 555 or newer; otherwise the log says why
+  (`tetsu-comp: explicit sync disabled (no syncobj_eventfd)`).
 
 - **`--headless-outputs <n>`** (headless only, 1 to 4): adds
   `HEADLESS-2`.. to the right of the first output. It exists so that tests
@@ -106,6 +129,11 @@ values stop the start with a message naming the key (exit code 2).
     # workspace = 3              # open on workspace 3 (1..9), unfocused
     # output    = "HEADLESS-2"   # open on that output's active workspace
 
+    [render]
+    device                    = "auto"  # or "/dev/dri/renderD129" (a node under /dev/dri/)
+    explicit_sync             = "auto"  # auto | on | off; "on" cannot force an unsupported device
+    wait_for_frame_completion = false   # wait for each frame before queueing it
+
 A window that opens on another workspace or output than the focused one
 does not take the focus. Rules are evaluated at the first configure and at
 map, not on later title changes.
@@ -117,6 +145,10 @@ map, not on later title changes.
 - `layout/`: the algorithms (`dwindle`, `master`, `floating`). Pure.
 - `rules`: app_id and title patterns to a decision. Pure.
 - `settings`: the config file.
+- `gpu/`: the tty backend's decisions, pure and tested first. `select`
+  (the render device), `assign` (how each output is served), `formats`
+  (CCS filter, color formats, scanout tranches) and `sync` (explicit sync
+  and how a commit is gated).
 - `engine`: the model plus per-workspace layout state; `apply(Action)`
   and `arrange` give events and rects. Pure.
 - `grab`: the pointer grab that moves a floating window.
@@ -124,3 +156,12 @@ map, not on later title changes.
   unbounded channel and never waits on it; a watcher that falls 256 events
   behind is disconnected, and a dead thread is restarted.
 - `state`, `handlers`, `input`, `render`, `backend`: the Smithay side.
+
+## Credits
+
+`gpu/` and `backend/udev/` port the multi-GPU policy of niri
+(`src/backend/tty.rs` at commit `fcbc971cf49a987b1e8d5ff1d64da6b1f61a1787`,
+GPL-3.0-or-later, like this crate): the render node probe, display-only
+devices, the CCS modifier filter, the color formats, the per-output dmabuf
+feedback, the NVIDIA >= 555 rule and the frame flags. The `MultiRenderer`
+plumbing follows Smithay's `anvil` (MIT).
