@@ -6,13 +6,11 @@ mod common;
 #[path = "common/wayland.rs"]
 mod wayland;
 
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use common::Client;
+use common::comp::Comp;
 use serde_json::{Value, json};
 use tetsu_comp::layout::dwindle::dwindle;
 use tetsu_comp::layout::master::master;
@@ -22,92 +20,6 @@ use wayland::WlClient;
 const WATCH_WINDOWS: &str = "org.tetsu.comp.window.v1.WatchWindows";
 const LIST_WINDOWS: &str = "org.tetsu.comp.window.v1.ListWindows";
 const LIST_WORKSPACES: &str = "org.tetsu.comp.workspace.v1.ListWorkspaces";
-/// A hung compositor is killed after this.
-const WATCHDOG: Duration = Duration::from_secs(60);
-
-/// A running compositor, killed when dropped or when it hangs.
-struct Comp {
-    child: Child,
-    runtime: tempfile::TempDir,
-    display: String,
-    bus: PathBuf,
-    cancel: mpsc::Sender<()>,
-}
-
-impl Comp {
-    fn start() -> Self {
-        Self::start_with(&[], None)
-    }
-
-    /// Starts with extra arguments and, if given, a config file.
-    fn start_with(args: &[&str], config: Option<&str>) -> Self {
-        let runtime = tempfile::tempdir().unwrap();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_tetsu-comp"));
-        command.args(["--backend", "headless"]).args(args);
-        if let Some(text) = config {
-            let path = runtime.path().join("config.toml");
-            std::fs::write(&path, text).unwrap();
-            command.arg("--config").arg(path);
-        }
-        let mut child = command
-            .env("XDG_RUNTIME_DIR", runtime.path())
-            .env_remove("WAYLAND_DISPLAY")
-            .env_remove("DISPLAY")
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let pid = child.id();
-        let (cancel, cancelled) = mpsc::channel();
-        std::thread::spawn(move || {
-            if cancelled.recv_timeout(WATCHDOG).is_err() {
-                let _ = Command::new("kill")
-                    .args(["-KILL", &pid.to_string()])
-                    .status();
-            }
-        });
-        let mut line = String::new();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        stdout.read_line(&mut line).unwrap();
-        let (display, bus) = parse_ready(&line);
-        // The compositor writes nothing else; keep the pipe open.
-        std::mem::forget(stdout);
-        Self {
-            child,
-            runtime,
-            display,
-            bus,
-            cancel,
-        }
-    }
-
-    fn wayland_socket(&self) -> PathBuf {
-        self.runtime.path().join(&self.display)
-    }
-}
-
-impl Drop for Comp {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = self.cancel.send(());
-    }
-}
-
-/// `ready WAYLAND_DISPLAY=<n> TETSU_COMP_SOCKET=<p>`
-fn parse_ready(line: &str) -> (String, PathBuf) {
-    let mut words = line.split_whitespace();
-    assert_eq!(words.next(), Some("ready"), "readiness line: {line:?}");
-    let display = words
-        .next()
-        .and_then(|w| w.strip_prefix("WAYLAND_DISPLAY="))
-        .unwrap_or_else(|| panic!("no WAYLAND_DISPLAY in {line:?}"));
-    let socket = words
-        .next()
-        .and_then(|w| w.strip_prefix("TETSU_COMP_SOCKET="))
-        .unwrap_or_else(|| panic!("no TETSU_COMP_SOCKET in {line:?}"));
-    (display.to_owned(), PathBuf::from(socket))
-}
-
 #[test]
 fn an_empty_compositor_lists_nothing_and_one_workspace() {
     let comp = Comp::start();

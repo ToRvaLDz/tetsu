@@ -12,6 +12,8 @@ use tetsu_bus::window::{ListWindowsReply, WindowEvent};
 use tetsu_bus::workspace::{ListWorkspacesReply, WorkspaceEvent};
 use tetsu_bus_contract::{Contract, check_reply, load_dir};
 
+pub mod comp;
+
 pub fn contract() -> Contract {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tetsu-bus/idl");
     load_dir(&dir).expect("the bus contract loads")
