@@ -81,10 +81,7 @@ fn color_formats_allow_ten_bit_only_on_the_same_gpu() {
         color_formats(false),
         &[Fourcc::Abgr2101010, Fourcc::Argb8888, Fourcc::Abgr8888]
     );
-    assert_eq!(
-        color_formats(true),
-        &[Fourcc::Abgr8888, Fourcc::Argb8888]
-    );
+    assert_eq!(color_formats(true), &[Fourcc::Abgr8888, Fourcc::Argb8888]);
 }
 
 #[test]

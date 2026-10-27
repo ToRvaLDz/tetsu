@@ -56,7 +56,11 @@ pub fn decide(mode: SyncMode, support: Support) -> ExplicitSync {
     let is_nvidia = support.driver.contains("nvidia");
     let unsupported = if !support.eventfd {
         Some("no syncobj_eventfd")
-    } else if is_nvidia && support.version.is_none_or(|(major, _, _)| major < NVIDIA_MIN_MAJOR) {
+    } else if is_nvidia
+        && support
+            .version
+            .is_none_or(|(major, _, _)| major < NVIDIA_MIN_MAJOR)
+    {
         Some("nvidia < 555")
     } else {
         None

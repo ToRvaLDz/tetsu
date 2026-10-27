@@ -1,6 +1,8 @@
 //! Explicit sync decision and the commit gate.
 
-use tetsu_comp::gpu::sync::{BufferKind, ExplicitSync, Gate, Support, commit_gate, decide, parse_driver_version};
+use tetsu_comp::gpu::sync::{
+    BufferKind, ExplicitSync, Gate, Support, commit_gate, decide, parse_driver_version,
+};
 use tetsu_comp::settings::SyncMode;
 
 fn support(eventfd: bool, driver: &str, version: Option<(u32, u32, u32)>) -> Support {

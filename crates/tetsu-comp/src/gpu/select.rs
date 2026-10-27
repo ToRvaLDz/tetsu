@@ -52,14 +52,14 @@ pub fn select(candidates: &[Candidate], override_id: Option<Option<u64>>) -> Sel
     if candidates.is_empty() {
         return Selection::NoGpu;
     }
-    if let Some(Some(id)) = override_id {
-        if candidates.iter().any(|c| c.id == id) {
-            return Selection::Device {
-                id,
-                automatic: false,
-                reason: "set in config",
-            };
-        }
+    if let Some(Some(id)) = override_id
+        && candidates.iter().any(|c| c.id == id)
+    {
+        return Selection::Device {
+            id,
+            automatic: false,
+            reason: "set in config",
+        };
     }
 
     let mut pool: Vec<&Candidate> = candidates.iter().filter(|c| !c.software).collect();

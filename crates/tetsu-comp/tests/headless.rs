@@ -194,9 +194,14 @@ fn headless_advertises_neither_dmabuf_nor_explicit_sync() {
     let comp = Comp::start();
     let globals = wayland::globals(&comp.wayland_socket());
     assert!(globals.iter().any(|g| g == "wl_compositor"), "{globals:?}");
-    assert!(!globals.iter().any(|g| g == "zwp_linux_dmabuf_v1"), "{globals:?}");
     assert!(
-        !globals.iter().any(|g| g == "wp_linux_drm_syncobj_manager_v1"),
+        !globals.iter().any(|g| g == "zwp_linux_dmabuf_v1"),
+        "{globals:?}"
+    );
+    assert!(
+        !globals
+            .iter()
+            .any(|g| g == "wp_linux_drm_syncobj_manager_v1"),
         "{globals:?}"
     );
 }
