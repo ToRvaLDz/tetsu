@@ -8,4 +8,5 @@
 //! crate).
 
 pub mod assign;
+pub mod formats;
 pub mod select;
