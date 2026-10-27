@@ -19,8 +19,10 @@ pub const BACKOFF: [Duration; 3] = [
 
 /// Longest rendered value or name, in characters.
 pub const MAX_VALUE: usize = 200;
-/// Arguments shown; more are summarised by `…`.
+/// Arguments shown; the rest are counted in a closing line.
 pub const MAX_ARGS: usize = 10;
+/// Prefix of every argument line.
+const ARG_INDENT: &str = "  ";
 
 /// What an ask is about.
 #[derive(Debug, Clone, Copy)]
@@ -37,20 +39,27 @@ pub struct AskRequest<'a> {
     pub buttons: Buttons,
 }
 
-/// The notification of an ask.
+/// The notification of an ask. When any part of the arguments or the
+/// reason is cut, the view is partial: *Always allow* is not offered, so a
+/// grant is never made permanent from a truncated view.
 pub fn render(request: &AskRequest<'_>) -> ShowParams {
+    let mut cut_any = false;
     let mut lines = vec![
         format!("Method: {}", request.method),
         format!("Class: {}", request.class),
     ];
-    lines.extend(argument_lines(request.args));
+    lines.extend(argument_lines(request.args, &mut cut_any));
     if let Some(reason) = request.reason {
         lines.push(format!(
             "Reason given by the agent (unverified): {}",
-            fence(&Value::String(reason.to_owned()))
+            fence(&Value::String(reason.to_owned()), &mut cut_any)
         ));
     }
     let actions = match request.buttons {
+        Buttons::Three if cut_any => vec![
+            Action::new(ALLOW_ONCE, "Allow once"),
+            Action::new(DENY, "Deny"),
+        ],
         Buttons::Three => vec![
             Action::new(ALLOW_ONCE, "Allow once"),
             Action::new(ALWAYS_ALLOW, "Always allow"),
@@ -67,31 +76,38 @@ pub fn render(request: &AskRequest<'_>) -> ShowParams {
     }
 }
 
-/// The `Arguments:` block: one line per top-level argument.
-fn argument_lines(args: &Value) -> Vec<String> {
+/// The `Arguments:` block: one indented line per top-level argument, so
+/// none can start at column 0 like a label of the prompt.
+fn argument_lines(args: &Value, cut_any: &mut bool) -> Vec<String> {
     let map = match args {
         Value::Object(map) if !map.is_empty() => map,
-        Value::Null => return vec!["Arguments: none".to_owned()],
-        Value::Object(_) => return vec!["Arguments: none".to_owned()],
+        Value::Null | Value::Object(_) => return vec!["Arguments: none".to_owned()],
         other => {
-            return vec!["Arguments:".to_owned(), format!("value: {}", fence(other))];
+            return vec![
+                "Arguments:".to_owned(),
+                format!("{ARG_INDENT}value: {}", fence(other, cut_any)),
+            ];
         }
     };
     let mut lines = vec!["Arguments:".to_owned()];
     for (name, value) in map.iter().take(MAX_ARGS) {
-        let name = cut(&clean(name));
-        lines.push(format!("{name}: {}", fence(value)));
+        let name = cut(&clean(name), cut_any);
+        lines.push(format!("{ARG_INDENT}{name}: {}", fence(value, cut_any)));
     }
     if map.len() > MAX_ARGS {
-        lines.push("…".to_owned());
+        *cut_any = true;
+        lines.push(format!(
+            "… ({} more arguments not shown)",
+            map.len() - MAX_ARGS
+        ));
     }
     lines
 }
 
 /// A value as one safe line: JSON-rendered, so a string is quoted and its
 /// newlines are escapes, then stripped of control characters and cut.
-fn fence(value: &Value) -> String {
-    cut(&clean(&value.to_string()))
+fn fence(value: &Value, cut_any: &mut bool) -> String {
+    cut(&clean(&value.to_string()), cut_any)
 }
 
 /// Drops control characters, line and paragraph separators and the bidi
@@ -105,10 +121,15 @@ fn clean(text: &str) -> String {
         .collect()
 }
 
-/// At most `MAX_VALUE` characters, then `…`.
-fn cut(text: &str) -> String {
+/// At most `MAX_VALUE` characters; a longer text ends with the count of
+/// the characters left out, and `cut_any` is set.
+fn cut(text: &str, cut_any: &mut bool) -> String {
     match text.char_indices().nth(MAX_VALUE) {
-        Some((end, _)) => format!("{}…", &text[..end]),
+        Some((end, _)) => {
+            *cut_any = true;
+            let left_out = text[end..].chars().count();
+            format!("{}… ({left_out} more characters)", &text[..end])
+        }
         None => text.to_owned(),
     }
 }
