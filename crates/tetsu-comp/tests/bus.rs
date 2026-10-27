@@ -474,7 +474,7 @@ fn watch_outputs_without_more_is_refused() {
 }
 
 #[test]
-fn configure_outputs_is_not_implemented_yet() {
+fn configure_outputs_without_a_loop_is_not_implemented() {
     let dir = tempfile::tempdir().unwrap();
     let (model, _) = model_with_window();
     let _publisher = Publisher::spawn(&socket(&dir), Snapshot::of(&model)).unwrap();

@@ -16,7 +16,7 @@ use tetsu_bus::endpoint::Endpoint;
 use tetsu_bus::gate::{GateConfig, RootOnly};
 use tetsu_bus::peer::Peer;
 use tetsu_bus::server::{self, Handler, Request, Response};
-use tetsu_comp::bus::{CommandSink, Hub, Snapshot, handler};
+use tetsu_comp::bus::{Command, CommandSink, Hub, Snapshot, handler};
 
 /// What the fakes saw, in order.
 pub type Log = Arc<Mutex<Vec<String>>>;
@@ -67,7 +67,7 @@ pub struct GatedComp {
     pub socket: PathBuf,
     /// The `Check` calls capd saw.
     pub capd: Log,
-    /// The `SetManaged` calls that reached the compositor loop.
+    /// The commands that reached the compositor loop, one line each.
     pub sink: Log,
     /// Whether capd allows.
     pub allow: Arc<Mutex<bool>>,
@@ -107,10 +107,24 @@ impl GatedComp {
                 ));
                 let endpoint = Endpoint::new(&cp, ExpectedServer::Cgroup(own_cgroup()));
                 let commands: CommandSink = Arc::new(move |command| {
-                    sl.lock()
-                        .unwrap()
-                        .push(serde_json::to_string(&command.values).unwrap());
-                    let _ = command.reply.send(Ok(()));
+                    let (line, reply) = match command {
+                        Command::SetManaged(call) => (
+                            format!(
+                                "SetManaged:{}",
+                                serde_json::to_string(&call.values).unwrap()
+                            ),
+                            call.reply,
+                        ),
+                        Command::ConfigureOutputs(call) => (
+                            format!(
+                                "ConfigureOutputs:{}",
+                                serde_json::to_string(&call.configs).unwrap()
+                            ),
+                            call.reply,
+                        ),
+                    };
+                    sl.lock().unwrap().push(line);
+                    let _ = reply.send(Ok(()));
                     Ok(())
                 });
                 let hub = Rc::new(RefCell::new(Hub::new(&snapshot)));

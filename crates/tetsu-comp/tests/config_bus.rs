@@ -13,7 +13,7 @@ use common::Client;
 use common::capd::GatedComp;
 use serde_json::{Value, json};
 use tetsu_bus::config::{ConfigEvent, GetConfigReply, Origin};
-use tetsu_comp::bus::{CommandSink, Publisher, Snapshot};
+use tetsu_comp::bus::{Command, CommandSink, Publisher, Snapshot};
 use tetsu_comp::config::layer::parse;
 use tetsu_comp::config::merge::{Values, merge};
 use tetsu_comp::model::Model;
@@ -188,6 +188,9 @@ fn set_managed_forwards_to_the_loop_and_maps_its_answer() {
     let seen: Arc<Mutex<Calls>> = Arc::default();
     let log = seen.clone();
     let commands: CommandSink = Arc::new(move |command| {
+        let Command::SetManaged(command) = command else {
+            panic!("expected SetManaged");
+        };
         let bad = command.values.contains_key("layout.nope");
         log.lock()
             .unwrap()
@@ -228,7 +231,9 @@ fn set_managed_forwards_to_the_loop_and_maps_its_answer() {
 fn set_managed_with_bad_parameters_is_an_invalid_parameter() {
     let dir = tempfile::tempdir().unwrap();
     let commands: CommandSink = Arc::new(|command| {
-        let _ = command.reply.send(Ok(()));
+        if let Command::SetManaged(call) = command {
+            let _ = call.reply.send(Ok(()));
+        }
         Ok(())
     });
     let _publisher =
@@ -296,21 +301,39 @@ fn a_denied_agent_set_managed_is_permission_denied_and_nothing_is_forwarded() {
 }
 
 #[test]
-fn an_agents_configure_outputs_asks_capd_too() {
+fn an_agents_configure_outputs_asks_capd_and_runs_on_allow() {
     let contract = common::contract();
     let comp = gated(true);
     let mut client = Client::connect(&comp.socket);
-    client.send_with(CONFIGURE_OUTPUTS, &json!({ "configs": {} }), false);
-    // Allowed, and then the service has not implemented it yet (#97).
-    assert_eq!(
-        client.recv()["error"],
-        "org.varlink.service.MethodNotImplemented"
-    );
+    let reply = client.call_with(&contract, CONFIGURE_OUTPUTS, &json!({ "configs": {} }));
+    assert_eq!(reply, json!({}));
     assert_eq!(checks(&comp.capd), [format!("Check:{CONFIGURE_OUTPUTS}")]);
+    assert_eq!(checks(&comp.sink), ["ConfigureOutputs:{}"]);
+}
 
+#[test]
+fn a_denied_agent_configure_outputs_is_permission_denied_and_nothing_is_forwarded() {
+    let contract = common::contract();
+    let comp = gated(true);
     comp.deny();
-    let (name, _) = client.call_error(&contract, CONFIGURE_OUTPUTS, &json!({ "configs": {} }));
+    let mut client = Client::connect(&comp.socket);
+    let (name, params) = client.call_error(&contract, CONFIGURE_OUTPUTS, &json!({ "configs": {} }));
     assert_eq!(name, "org.tetsu.comp.output.v1.PermissionDenied");
+    assert_eq!(params, json!({}));
+    assert_eq!(checks(&comp.capd), [format!("Check:{CONFIGURE_OUTPUTS}")]);
+    assert!(checks(&comp.sink).is_empty());
+}
+
+#[test]
+fn an_owners_configure_outputs_passes_without_capd() {
+    let contract = common::contract();
+    let comp = gated(false);
+    comp.deny();
+    let mut client = Client::connect(&comp.socket);
+    let reply = client.call_with(&contract, CONFIGURE_OUTPUTS, &json!({ "configs": {} }));
+    assert_eq!(reply, json!({}));
+    assert!(checks(&comp.capd).is_empty());
+    assert_eq!(checks(&comp.sink).len(), 1);
 }
 
 #[test]
