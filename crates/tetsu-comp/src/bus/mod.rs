@@ -3,6 +3,7 @@
 //! over deltas through an unbounded channel, and a supervisor restarts the
 //! thread when it dies.
 
+mod command;
 mod config;
 mod hub;
 mod service;
@@ -22,7 +23,8 @@ use tetsu_bus::server;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 
-pub use config::{CommandSink, ConfigMirror, SetManaged};
+pub use command::{Command, CommandSink, ConfigureOutputs};
+pub use config::{ConfigMirror, SetManaged};
 pub use hub::{Hub, Mirror, Snapshot, WATCH_QUEUE};
 pub use service::BusService;
 
@@ -76,8 +78,8 @@ impl Publisher {
         Self::spawn_with(path, reset, None)
     }
 
-    /// Like [`Publisher::spawn`], with the way `SetManaged` reaches the
-    /// loop. Without one the method is not implemented.
+    /// Like [`Publisher::spawn`], with the way the mutating calls reach
+    /// the loop. Without one they are not implemented.
     pub fn spawn_with(
         path: &Path,
         reset: Snapshot,

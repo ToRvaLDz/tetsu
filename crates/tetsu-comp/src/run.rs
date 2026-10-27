@@ -13,7 +13,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::Display;
 
 use crate::backend::{headless, udev, winit};
-use crate::bus::{CommandSink, Publisher, SetManaged, Snapshot};
+use crate::bus::{Command as BusCommand, CommandSink, Publisher, Snapshot};
 use crate::cli::{Backend, Cli};
 use crate::config::glue::{RELOAD_POLL, config_reply};
 use crate::config::store::Store;
@@ -46,12 +46,15 @@ pub fn run(cli: &Cli, store: Store) -> Result<(), Box<dyn Error>> {
     let wayland = state.socket_name.to_string_lossy().into_owned();
     let bus_path = bus_socket_path(runtime_dir.as_deref(), &wayland)?;
     state.config = Some(store);
-    let (sender, commands) = channel::channel::<SetManaged>();
+    let (sender, commands) = channel::channel::<BusCommand>();
     state
         .loop_handle
         .insert_source(commands, |event, (), state| {
             if let Event::Msg(command) = event {
-                state.handle_config_command(command);
+                match command {
+                    BusCommand::SetManaged(call) => state.handle_config_command(call),
+                    BusCommand::ConfigureOutputs(call) => state.handle_output_command(call),
+                }
             }
         })
         .map_err(|e| e.error)?;

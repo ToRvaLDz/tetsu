@@ -6,18 +6,20 @@ use std::rc::Rc;
 
 use serde_json::{Value, json};
 use tetsu_bus::config::{self, SetManagedParams};
+use tetsu_bus::output::ConfigureOutputsParams;
 use tetsu_bus::peer::Peer;
 use tetsu_bus::server::{ErrorReply, Handler, Request, Response};
 use tetsu_bus::{output, session, window, workspace};
 use tokio::sync::oneshot;
 
-use super::config::{CommandSink, SetManaged};
+use super::command::{Command, CommandSink, ConfigureOutputs};
+use super::config::SetManaged;
 use super::hub::Hub;
 use crate::config::set;
 
 /// Serves the reads of the five interfaces from the hub, and `SetManaged`
-/// through the sink to the loop. The gate in front of it (#28) decides who
-/// may call the mutating methods.
+/// and `ConfigureOutputs` through the sink to the loop. The gate in front
+/// of it (#28) decides who may call the mutating methods.
 pub struct BusService {
     hub: Rc<RefCell<Hub>>,
     commands: Option<CommandSink>,
@@ -25,7 +27,7 @@ pub struct BusService {
 
 impl BusService {
     /// A service over `hub`. `commands` reaches the loop; without it
-    /// `SetManaged` is not implemented.
+    /// the mutating methods are not implemented.
     pub fn new(hub: Rc<RefCell<Hub>>, commands: Option<CommandSink>) -> Self {
         Self { hub, commands }
     }
@@ -41,25 +43,55 @@ impl BusService {
             Err(_) => return Response::Error(ErrorReply::invalid_parameter("values")),
         };
         let (reply, answer) = oneshot::channel();
-        let command = SetManaged {
+        let command = Command::SetManaged(SetManaged {
             values: params.values,
             remove: params.remove.unwrap_or_default(),
             reply,
-        };
-        if sink(command).is_err() {
-            return Response::Error(set::state_write_failed("the compositor is stopping"));
-        }
-        let (tx, rx) = oneshot::channel();
-        tokio::task::spawn_local(async move {
-            let response = match answer.await {
-                Ok(Ok(())) => Response::Reply(json!({})),
-                Ok(Err(error)) => Response::Error(error),
-                Err(_) => Response::Error(set::state_write_failed("the compositor is stopping")),
-            };
-            let _ = tx.send(response);
         });
-        Response::Deferred(rx)
+        defer(&sink, command, answer)
     }
+
+    /// `ConfigureOutputs`: the loop owns the outputs and the managed
+    /// file, so the call goes there like `SetManaged`.
+    fn configure_outputs(&self, request: &Request) -> Response {
+        let Some(sink) = self.commands.clone() else {
+            return not_implemented(&request.method);
+        };
+        let params: ConfigureOutputsParams =
+            match serde_json::from_value(request.parameters.clone()) {
+                Ok(params) => params,
+                Err(_) => return Response::Error(ErrorReply::invalid_parameter("configs")),
+            };
+        let (reply, answer) = oneshot::channel();
+        let command = Command::ConfigureOutputs(ConfigureOutputs {
+            configs: params.configs,
+            reply,
+        });
+        defer(&sink, command, answer)
+    }
+}
+
+/// Sends a command to the loop and answers when the loop does. The error
+/// of a write that cannot happen (the loop is gone) is `StateWriteFailed`.
+fn defer(
+    sink: &CommandSink,
+    command: Command,
+    answer: oneshot::Receiver<Result<(), ErrorReply>>,
+) -> Response {
+    let stopping = || Response::Error(set::state_write_failed("the compositor is stopping"));
+    if sink(command).is_err() {
+        return stopping();
+    }
+    let (tx, rx) = oneshot::channel();
+    tokio::task::spawn_local(async move {
+        let response = match answer.await {
+            Ok(Ok(())) => Response::Reply(json!({})),
+            Ok(Err(error)) => Response::Error(error),
+            Err(_) => Response::Error(set::state_write_failed("the compositor is stopping")),
+        };
+        let _ = tx.send(response);
+    });
+    Response::Deferred(rx)
 }
 
 fn not_implemented(method: &str) -> Response {
@@ -99,8 +131,7 @@ impl Handler for BusService {
                 Response::BoundedStream(self.hub.borrow_mut().watch_config())
             }
             "org.tetsu.comp.config.v1.SetManaged" => self.set_managed(&request),
-            // #97 serves it.
-            "org.tetsu.comp.output.v1.ConfigureOutputs" => not_implemented(&request.method),
+            "org.tetsu.comp.output.v1.ConfigureOutputs" => self.configure_outputs(&request),
             "org.varlink.service.GetInfo" => Response::Reply(json!({
                 "vendor": "Tetsu",
                 "product": "tetsu-comp",

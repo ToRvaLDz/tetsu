@@ -5,6 +5,7 @@
 pub mod configure;
 pub mod edid;
 pub mod geometry;
+mod glue;
 pub mod limits;
 pub mod modes;
 pub mod prefs;

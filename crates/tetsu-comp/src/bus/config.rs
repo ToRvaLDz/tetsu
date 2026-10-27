@@ -2,7 +2,6 @@
 //! to the calloop loop, and the mirror of the config the reads serve.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use serde_json::Value;
 use tetsu_bus::config::{ConfigEntry, ConfigEvent, ConfigKind, GetConfigReply};
@@ -20,10 +19,6 @@ pub struct SetManaged {
     /// is going away.
     pub reply: oneshot::Sender<Result<(), ErrorReply>>,
 }
-
-/// Hands a command to the loop; gives it back when the loop is gone.
-/// Callable from the bus thread.
-pub type CommandSink = Arc<dyn Fn(SetManaged) -> Result<(), SetManaged> + Send + Sync>;
 
 /// The config as the events built it.
 #[derive(Debug, Clone, Default)]
