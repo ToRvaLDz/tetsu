@@ -45,8 +45,25 @@ pub fn decide(
     suppressed_until: Option<SystemTime>,
     now: SystemTime,
 ) -> Verdict {
-    let _ = (state, destructive, suppressed_until, now);
-    unimplemented!()
+    let needs_ask = match state {
+        State::Off | State::Unknown => return Verdict::Deny(DeniedBy::Off),
+        State::Unset | State::Ask => true,
+        State::Automatic | State::Notify => destructive,
+    };
+    if needs_ask {
+        if suppressed_until.is_some_and(|until| now < until) {
+            return Verdict::Deny(DeniedBy::Suppressed);
+        }
+        let buttons = if state == State::Unset && !destructive {
+            Buttons::Three
+        } else {
+            Buttons::Two
+        };
+        return Verdict::Ask(buttons);
+    }
+    Verdict::Allow {
+        notify: state == State::Notify,
+    }
 }
 
 /// How an ask ended.
@@ -75,8 +92,16 @@ pub enum Outcome {
 
 /// Maps an answer to what happens. Anything not understood denies.
 pub fn answer_effect(buttons: Buttons, answer: &Answer) -> Outcome {
-    let _ = (buttons, answer);
-    unimplemented!()
+    match (buttons, answer) {
+        (Buttons::Two, Answer::Invoked(id)) if id == APPROVE => Outcome::Allow,
+        (Buttons::Three, Answer::Invoked(id)) if id == ALLOW_ONCE => Outcome::Allow,
+        (Buttons::Three, Answer::Invoked(id)) if id == ALWAYS_ALLOW => Outcome::AllowAndAlways,
+        (_, Answer::Invoked(id)) if id == DENY => Outcome::DenyAndSuppress,
+        (_, Answer::Dismissed(DismissReason::User | DismissReason::Expired)) => {
+            Outcome::DenyAndSuppress
+        }
+        _ => Outcome::DenyUnavailable,
+    }
 }
 
 #[cfg(test)]
