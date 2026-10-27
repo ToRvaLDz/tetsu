@@ -11,9 +11,14 @@ use std::error::Error;
 use smithay::backend::allocator::Format;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::drm::DrmNode;
-use smithay::backend::renderer::element::RenderElementStates;
+use smithay::backend::renderer::element::{
+    RenderElementStates, default_primary_scanout_output_compare,
+};
 use smithay::backend::renderer::element::utils::select_dmabuf_feedback;
 use smithay::backend::renderer::{ImportDma, ImportMemWl};
+use smithay::desktop::utils::{
+    surface_primary_scanout_output, update_surface_primary_scanout_output,
+};
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1::TrancheFlags;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -125,13 +130,22 @@ impl State {
             return;
         };
         for window in self.space.elements() {
-            window.send_dmabuf_feedback(
-                output,
-                |_, _| Some(output.clone()),
-                |surface, _| {
-                    select_dmabuf_feedback(surface, states, &feedback.render, &feedback.scanout)
-                },
-            );
+            // The surface's primary scanout output follows what this frame
+            // showed; feedback then goes only to the surfaces whose primary
+            // output is `output` (Smithay filters on it).
+            window.with_surfaces(|surface, data| {
+                update_surface_primary_scanout_output(
+                    surface,
+                    output,
+                    data,
+                    None,
+                    states,
+                    default_primary_scanout_output_compare,
+                );
+            });
+            window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
+                select_dmabuf_feedback(surface, states, &feedback.render, &feedback.scanout)
+            });
         }
     }
 }
