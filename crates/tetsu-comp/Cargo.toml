@@ -6,7 +6,7 @@ rust-version.workspace = true
 license = "GPL-3.0-or-later"
 repository.workspace = true
 publish.workspace = true
-description = "Tetsu Wayland compositor: Smithay backends, xdg-shell and the window and workspace bus"
+description = "Tetsu Wayland compositor: Smithay backends, a layout engine (dwindle, master, floating, rules) and the window and workspace bus"
 
 [lints]
 workspace = true
