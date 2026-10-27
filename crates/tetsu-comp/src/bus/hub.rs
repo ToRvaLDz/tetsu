@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
+use tetsu_bus::output::{ListOutputsReply, Output, OutputEvent, OutputKind};
 use tetsu_bus::server::StreamItem;
 use tetsu_bus::window::{ListWindowsReply, Window, WindowEvent, WindowKind};
 use tetsu_bus::workspace::{ListWorkspacesReply, Workspace, WorkspaceEvent, WorkspaceKind};
@@ -16,12 +17,14 @@ use crate::model::{Events, Model};
 pub const WATCH_QUEUE: usize = 256;
 
 /// The full state, to start a mirror from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
     /// For `ListWindows`.
     pub windows: ListWindowsReply,
     /// For `ListWorkspaces`.
     pub workspaces: ListWorkspacesReply,
+    /// For `ListOutputs`.
+    pub outputs: ListOutputsReply,
 }
 
 impl Snapshot {
@@ -30,6 +33,7 @@ impl Snapshot {
         Self {
             windows: model.windows_snapshot(),
             workspaces: model.workspaces_snapshot(),
+            outputs: model.outputs_snapshot(),
         }
     }
 }
@@ -42,6 +46,7 @@ pub struct Mirror {
     workspaces: Vec<Workspace>,
     active: BTreeMap<String, String>,
     focused_workspace: Option<String>,
+    outputs: Vec<Output>,
 }
 
 impl Mirror {
@@ -53,6 +58,7 @@ impl Mirror {
             workspaces: snapshot.workspaces.workspaces.clone(),
             active: snapshot.workspaces.active.clone(),
             focused_workspace: snapshot.workspaces.focused_id.clone(),
+            outputs: snapshot.outputs.outputs.clone(),
         }
     }
 
@@ -129,6 +135,38 @@ impl Mirror {
         }
     }
 
+    /// Applies one output event.
+    pub fn apply_output(&mut self, event: &OutputEvent) {
+        match event.kind {
+            OutputKind::Initial => self.outputs = event.outputs.clone().unwrap_or_default(),
+            OutputKind::Added => {
+                if let Some(output) = &event.output {
+                    self.outputs.push(output.clone());
+                }
+            }
+            OutputKind::Changed => {
+                if let Some(output) = &event.output
+                    && let Some(slot) = self.outputs.iter_mut().find(|o| o.id == output.id)
+                {
+                    *slot = output.clone();
+                }
+            }
+            OutputKind::Removed => {
+                if let Some(id) = &event.id {
+                    self.outputs.retain(|o| &o.id != id);
+                }
+            }
+            OutputKind::Unknown => {}
+        }
+    }
+
+    /// For `ListOutputs`.
+    pub fn outputs(&self) -> ListOutputsReply {
+        ListOutputsReply {
+            outputs: self.outputs.clone(),
+        }
+    }
+
     /// For `ListWindows`.
     pub fn windows(&self) -> ListWindowsReply {
         ListWindowsReply {
@@ -150,6 +188,10 @@ impl Mirror {
         WindowEvent::initial(self.windows.clone(), self.focused_window.clone())
     }
 
+    fn outputs_initial(&self) -> OutputEvent {
+        OutputEvent::initial(self.outputs.clone())
+    }
+
     fn workspaces_initial(&self) -> WorkspaceEvent {
         WorkspaceEvent::initial(
             self.workspaces.clone(),
@@ -161,12 +203,13 @@ impl Mirror {
 
 type Watchers = Vec<mpsc::Sender<StreamItem>>;
 
-/// The mirror and the watchers of both interfaces.
+/// The mirror and the watchers of the three interfaces.
 #[derive(Debug)]
 pub struct Hub {
     mirror: Mirror,
     window_watchers: Watchers,
     workspace_watchers: Watchers,
+    output_watchers: Watchers,
 }
 
 impl Hub {
@@ -176,6 +219,7 @@ impl Hub {
             mirror: Mirror::from_snapshot(snapshot),
             window_watchers: Vec::new(),
             workspace_watchers: Vec::new(),
+            output_watchers: Vec::new(),
         }
     }
 
@@ -196,11 +240,20 @@ impl Hub {
             self.mirror.apply_workspace(event);
             fan_out(&mut self.workspace_watchers, event);
         }
+        for event in &events.output {
+            self.mirror.apply_output(event);
+            fan_out(&mut self.output_watchers, event);
+        }
     }
 
     /// A new `WatchWindows` stream, `initial` already queued.
     pub fn watch_windows(&mut self) -> mpsc::Receiver<StreamItem> {
         watch(&mut self.window_watchers, &self.mirror.windows_initial())
+    }
+
+    /// A new `WatchOutputs` stream, `initial` already queued.
+    pub fn watch_outputs(&mut self) -> mpsc::Receiver<StreamItem> {
+        watch(&mut self.output_watchers, &self.mirror.outputs_initial())
     }
 
     /// A new `WatchWorkspaces` stream, `initial` already queued.
