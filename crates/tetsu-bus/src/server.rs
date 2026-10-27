@@ -109,6 +109,33 @@ pub enum Response {
     /// A stream of replies. Dropping the receiver (the caller went away)
     /// closes the handler's sender.
     Stream(mpsc::UnboundedReceiver<StreamItem>),
+    /// A stream whose queue is bounded, so the handler can see a backlog
+    /// and cut a slow consumer. If the handler drops the sender without a
+    /// `Last` or `Error` item, the connection is dropped: the caller sees
+    /// end of file and has to call again. Dropping the receiver (the
+    /// caller went away) closes the sender, as with `Stream`.
+    BoundedStream(mpsc::Receiver<StreamItem>),
+}
+
+/// Where a relayed stream's items come from.
+enum Source {
+    Unbounded(mpsc::UnboundedReceiver<StreamItem>),
+    Bounded(mpsc::Receiver<StreamItem>),
+}
+
+impl Source {
+    async fn recv(&mut self) -> Option<StreamItem> {
+        match self {
+            Self::Unbounded(rx) => rx.recv().await,
+            Self::Bounded(rx) => rx.recv().await,
+        }
+    }
+
+    /// Whether the connection survives a sender dropped without a final
+    /// reply.
+    fn survives_close(&self) -> bool {
+        matches!(self, Self::Unbounded(_))
+    }
 }
 
 impl Response {
@@ -299,12 +326,19 @@ async fn run_connection<H: Handler>(
         match response {
             Response::Reply(value) => send_reply(&mut write, value, false).await?,
             Response::Error(error) => send_error(&mut write, &error).await?,
-            Response::Stream(_) if !call.more => {
+            Response::Stream(_) | Response::BoundedStream(_) if !call.more => {
                 let error = ErrorReply::new("org.varlink.service.ExpectedMore", json!({}));
                 send_error(&mut write, &error).await?;
             }
             Response::Stream(stream) => {
-                if !relay(stream, &mut read, &mut write, &mut queued).await? {
+                let source = Source::Unbounded(stream);
+                if !relay(source, &mut read, &mut write, &mut queued).await? {
+                    return Ok(());
+                }
+            }
+            Response::BoundedStream(stream) => {
+                let source = Source::Bounded(stream);
+                if !relay(source, &mut read, &mut write, &mut queued).await? {
                     return Ok(());
                 }
             }
@@ -313,9 +347,10 @@ async fn run_connection<H: Handler>(
 }
 
 /// Sends a stream's replies while still reading the connection. Returns
-/// `false` when the caller went away (the stream is dropped with it).
+/// `false` when the caller went away or the connection must be dropped
+/// (the stream is dropped with it).
 async fn relay(
-    mut stream: mpsc::UnboundedReceiver<StreamItem>,
+    mut stream: Source,
     read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
     write: &mut WriteConnection<<Socket as zlink::connection::Socket>::WriteHalf>,
     queued: &mut VecDeque<Request>,
@@ -333,7 +368,7 @@ async fn relay(
                     return Ok(true);
                 }
                 // The handler dropped its sender without a final reply.
-                None => return Ok(true),
+                None => return Ok(stream.survives_close()),
             },
             call = receive(read) => match call {
                 Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
