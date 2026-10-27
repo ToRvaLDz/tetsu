@@ -29,7 +29,7 @@ struct App {
     registry: RegistryState,
     outputs: OutputState,
     shm: Shm,
-    configures: Vec<(ObjectId, Size)>,
+    configures: Vec<(ObjectId, Size, bool)>,
 }
 
 impl CompositorHandler for App {
@@ -80,7 +80,8 @@ impl WindowHandler for App {
         _: u32,
     ) {
         let id = window.wl_surface().id();
-        self.configures.push((id, configure.new_size));
+        let tiled = configure.is_tiled_left();
+        self.configures.push((id, configure.new_size, tiled));
     }
 }
 
@@ -155,6 +156,16 @@ impl WlClient {
     /// Maps a toplevel: commits it bare, waits for the first configure,
     /// then attaches a buffer of the size it was given.
     pub fn map(&mut self, app_id: &str, title: &str) -> Toplevel {
+        self.map_with(app_id, title, None)
+    }
+
+    /// Like `map`, for a window that may be configured without a size: it
+    /// attaches a buffer of `fallback` then.
+    pub fn map_floating(&mut self, app_id: &str, title: &str, fallback: (i32, i32)) -> Toplevel {
+        self.map_with(app_id, title, Some(fallback))
+    }
+
+    fn map_with(&mut self, app_id: &str, title: &str, fallback: Option<(i32, i32)>) -> Toplevel {
         let qh = self.queue.handle();
         let surface = self.compositor.create_surface(&qh);
         let window = self
@@ -164,11 +175,14 @@ impl WlClient {
         window.set_title(title);
         window.commit();
         let top = Toplevel { window };
-        while self.sizes(&top).is_empty() {
+        while self.configure_count(&top) == 0 {
             self.queue.blocking_dispatch(&mut self.app).unwrap();
         }
-        let (w, h) = self.sizes(&top)[0];
-        let (w, h) = (w as i32, h as i32);
+        let (w, h) = match (self.sizes(&top).first().copied(), fallback) {
+            (Some((w, h)), _) => (w as i32, h as i32),
+            (None, Some(size)) => size,
+            (None, None) => panic!("configured without a size and no fallback"),
+        };
         let pool = self
             .pool
             .insert(SlotPool::new((w * h * 4) as usize, &self.app.shm).unwrap());
@@ -182,14 +196,34 @@ impl WlClient {
         top
     }
 
+    fn configure_count(&self, top: &Toplevel) -> usize {
+        let id = top.window.wl_surface().id();
+        self.app.configures.iter().filter(|c| c.0 == id).count()
+    }
+
+    /// Whether the last configure of the toplevel had the tiled states.
+    pub fn states(&self, top: &Toplevel) -> bool {
+        let id = top.window.wl_surface().id();
+        self.app
+            .configures
+            .iter()
+            .rfind(|c| c.0 == id)
+            .is_some_and(|c| c.2)
+    }
+
+    /// Round-trips to the compositor.
+    pub fn sync(&mut self) {
+        self.queue.roundtrip(&mut self.app).unwrap();
+    }
+
     /// The sizes the compositor configured the toplevel to, in order.
     pub fn sizes(&self, top: &Toplevel) -> Vec<(u32, u32)> {
         let id = top.window.wl_surface().id();
         self.app
             .configures
             .iter()
-            .filter(|(surface, _)| *surface == id)
-            .filter_map(|(_, (w, h))| Some(((*w)?.get(), (*h)?.get())))
+            .filter(|(surface, ..)| *surface == id)
+            .filter_map(|(_, (w, h), _)| Some(((*w)?.get(), (*h)?.get())))
             .collect()
     }
 
