@@ -22,6 +22,7 @@ fn the_hook_adds_everything_the_seal_runs() {
     for needle in [
         "add_binary /usr/bin/tetsu-unlock-seal",
         "add_binary /usr/bin/systemd-cryptenroll",
+        "add_binary /usr/bin/cryptsetup",
         "add_binary /usr/bin/systemd-ask-password",
         "add_binary mount",
         "add_binary umount",

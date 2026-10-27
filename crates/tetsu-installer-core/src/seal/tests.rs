@@ -40,10 +40,21 @@ struct Fake {
     keys: Option<(&'static str, &'static str)>,
     /// What `systemd-cryptenroll <device>` lists; `None` makes it fail.
     listing: Option<&'static str>,
+    /// What `cryptsetup luksDump --dump-json-metadata` prints; `None` fails.
+    dump: Option<&'static str>,
 }
 
 const PASSWORDS_ONLY: &str = "SLOT TYPE\n   0 password\n   1 password\n";
 const WITH_TPM2: &str = "SLOT TYPE\n   0 password\n   1 password\n   2 tpm2\n";
+/// Tetsu's Balanced policy: signed PCR public key and a PIN.
+const TOKEN_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[7],"tpm2-pubkey":"QUJD","tpm2-pubkey-pcrs":[11],"tpm2-pin":true}}}"#;
+/// Tetsu's Comfort policy: the same without the PIN.
+const TOKEN_NO_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[7],"tpm2-pubkey":"QUJD","tpm2-pubkey-pcrs":[11],"tpm2-pin":false}}}"#;
+/// A hand-added token: PCR 0 only, no signed policy.
+const TOKEN_NO_PUBKEY: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[0],"tpm2-pin":true}}}"#;
 
 impl Fake {
     fn with_answers(answers: &[&str]) -> Self {
@@ -51,6 +62,7 @@ impl Fake {
             answers: RefCell::new(answers.iter().map(|a| (*a).to_owned()).collect()),
             keys: Some((PEM, "PUBLIC KEY")),
             listing: Some(PASSWORDS_ONLY),
+            dump: None,
             ..Self::default()
         }
     }
@@ -159,6 +171,13 @@ impl Runner for Fake {
                 tool: program.to_owned(),
                 status: "exit status: 1".into(),
                 stderr: "cannot read the header".into(),
+            });
+        }
+        if program == "cryptsetup" {
+            return self.dump.map(str::to_owned).ok_or(BootError::Tool {
+                tool: program.to_owned(),
+                status: "exit status: 1".into(),
+                stderr: "cannot dump".into(),
             });
         }
         assert_eq!(program, "systemd-ask-password");
@@ -440,22 +459,72 @@ fn an_empty_answer_is_refused() {
 }
 
 #[test]
-fn a_tpm2_slot_in_the_header_means_sealed_whatever_the_file_says() {
+fn a_tpm2_slot_with_tetsus_policy_means_sealed_whatever_the_file_says() {
     let m = Machine::new("balanced");
     let f = Fake {
         listing: Some(WITH_TPM2),
+        dump: Some(TOKEN_PIN),
         ..Fake::with_answers(&[])
     };
     assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::AlreadySealed);
-    assert_eq!(f.programs(), ["systemd-cryptenroll"]);
+    assert_eq!(f.programs(), ["systemd-cryptenroll", "cryptsetup"]);
     let list = f.call("systemd-cryptenroll");
     assert_eq!(list.args, ["/dev/disk/by-uuid/ab-12"]);
+    let dump = f.call("cryptsetup");
+    assert_eq!(
+        dump.args,
+        [
+            "luksDump",
+            "--dump-json-metadata",
+            "/dev/disk/by-uuid/ab-12"
+        ]
+    );
     assert_eq!(
         m.level_text(),
         "level = \"balanced\"\nstate = \"sealed\"\n",
         "the level is kept"
     );
     assert!(!m.work_exists());
+
+    let m = Machine::new("comfort");
+    let f = Fake {
+        listing: Some(WITH_TPM2),
+        dump: Some(TOKEN_NO_PIN),
+        ..Fake::with_answers(&[])
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::AlreadySealed);
+}
+
+/// A tpm2 slot that does not carry the chosen level's policy is replaced by
+/// the normal seal.
+fn seals_again(level: &str, answers: &[&str], dump: Option<&'static str>) {
+    let m = Machine::new(level);
+    let f = Fake {
+        listing: Some(WITH_TPM2),
+        dump,
+        ..Fake::with_answers(answers)
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed, "{dump:?}");
+    assert!(f.enrolled());
+    assert!(
+        f.enroll_call()
+            .args
+            .contains(&"--wipe-slot=tpm2".to_owned())
+    );
+}
+
+#[test]
+fn a_tpm2_slot_with_another_policy_is_sealed_again() {
+    // Balanced needs a PIN.
+    seals_again("balanced", &["pw", "1", "1"], Some(TOKEN_NO_PIN));
+    // Comfort must not have one.
+    seals_again("comfort", &["pw"], Some(TOKEN_PIN));
+    // No signed-PCR public key.
+    seals_again("balanced", &["pw", "1", "1"], Some(TOKEN_NO_PUBKEY));
+    seals_again("comfort", &["pw"], Some(TOKEN_NO_PUBKEY));
+    // The dump fails or is not JSON.
+    seals_again("comfort", &["pw"], None);
+    seals_again("comfort", &["pw"], Some("not json"));
 }
 
 #[test]
