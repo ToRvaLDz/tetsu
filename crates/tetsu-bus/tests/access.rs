@@ -223,6 +223,34 @@ fn a_method_of_exactly_the_limit_is_not_marked() {
 }
 
 #[test]
+fn a_long_reason_is_truncated_with_the_same_marker() {
+    let reason = "r".repeat(5000);
+    let line = log_line("x.Y", &peer(OWN, true), &reason);
+    let kept = "r".repeat(200);
+    assert!(line.ends_with(&format!(": {kept}...")), "{line}");
+    assert!(line.len() < 400, "{}", line.len());
+}
+
+#[test]
+fn a_long_sender_name_is_truncated_with_the_same_marker() {
+    let mut p = peer(OWN, false);
+    p.cgroup = "/user.slice".to_owned();
+    p.comm = "c".repeat(5000);
+    let line = log_line("x.Y", &p, "why");
+    let kept = "c".repeat(200);
+    assert!(line.contains(&format!("({kept}...)")), "{line}");
+    assert!(line.len() < 400, "{}", line.len());
+}
+
+#[test]
+fn a_reason_is_cleaned_before_it_is_cut() {
+    let reason = format!("{}{}", "\n".repeat(300), "r".repeat(200));
+    let line = log_line("x.Y", &peer(OWN, true), &reason);
+    let kept = "r".repeat(200);
+    assert!(line.ends_with(&format!(": {kept}")), "{line}");
+}
+
+#[test]
 fn a_peer_without_a_unit_is_named_by_its_process() {
     let mut p = peer(OWN, false);
     p.cgroup = "/user.slice".to_owned();

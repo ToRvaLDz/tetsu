@@ -13,9 +13,10 @@ use serde_json::json;
 use crate::peer::{Peer, is_agent_cgroup, unit_name};
 use crate::server::ErrorReply;
 
-/// The longest method name written to a log line, in characters.
-const LOG_METHOD_LIMIT: usize = 200;
-/// What a truncated method name ends with.
+/// The longest field (method, sender name, reason) written to a log line,
+/// in characters.
+const LOG_FIELD_LIMIT: usize = 200;
+/// What a truncated field ends with.
 const LOG_TRUNCATED: &str = "...";
 /// Method name prefixes of reads; the prefix must end a word, as in the
 /// contract suite (`ListItems` is a read, `Listen` is not).
@@ -121,28 +122,29 @@ pub fn permission_denied(method: &str) -> ErrorReply {
     ErrorReply::new(&format!("{interface}.PermissionDenied"), json!({}))
 }
 
-/// One log line for a refusal. The method comes from the caller, and the
-/// reason may quote what a server answered, so control characters are
-/// dropped and a long method name is cut: the line cannot be forged or
-/// inflated.
+/// One log line for a refusal. The method comes from the caller, the sender
+/// name from its cgroup, and the reason may quote what a server answered, so
+/// every field loses its control characters and is cut to one limit: the
+/// line cannot be forged or inflated.
 pub fn log_line(method: &str, peer: &Peer, why: &str) -> String {
-    let method = clean(method);
-    let method = if method.chars().count() > LOG_METHOD_LIMIT {
-        let kept: String = method.chars().take(LOG_METHOD_LIMIT).collect();
-        format!("{kept}{LOG_TRUNCATED}")
-    } else {
-        method
-    };
     format!(
-        "tetsu-bus: refused {method} from pid {} ({}): {}",
+        "tetsu-bus: refused {} from pid {} ({}): {}",
+        field(method),
         peer.pid,
-        clean(&peer.sender_name()),
-        clean(why)
+        field(&peer.sender_name()),
+        field(why)
     )
 }
 
-fn clean(text: &str) -> String {
-    text.chars().filter(|c| !c.is_control()).collect()
+/// A log field: control characters dropped, then cut to [`LOG_FIELD_LIMIT`].
+fn field(text: &str) -> String {
+    let mut chars = text.chars().filter(|c| !c.is_control());
+    let kept: String = chars.by_ref().take(LOG_FIELD_LIMIT).collect();
+    if chars.next().is_some() {
+        format!("{kept}{LOG_TRUNCATED}")
+    } else {
+        kept
+    }
 }
 
 /// The group whose members may use `tetsu-capd` as the system authority for
@@ -228,6 +230,12 @@ impl Groups for EtcFiles {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpectedServer {
     /// A service unit of a user, running under that user's manager.
+    ///
+    /// The cgroup checked is that of the process that called `listen()` on
+    /// the socket, not of whoever `accept()`s. A socket-activated daemon
+    /// (socket units, planned in #61) is therefore seen as the user manager
+    /// and fails closed; daemons verified this way must bind their own
+    /// socket until a tested manager-aware variant exists.
     UserUnit {
         /// The user.
         uid: u32,
