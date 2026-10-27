@@ -57,7 +57,7 @@ session_checks() {
   assert_contains "$SCENARIO: agreety logged in through greetd" "$EXPECT_LINE" "AGREETY-RC-0"
 
   # 3. The session is up.
-  gexec "$(guest_poll 90 'systemctl --user is-active -q tetsu-bar.service tetsu-capd.service'); true" 120
+  gexec "$(guest_poll 90 '[ "$(systemctl --user is-active tetsu-bar.service tetsu-capd.service tetsu-notifyd.service | grep -cx active)" = 3 ]'); true" 120
   gexec "systemctl --user is-active tetsu-comp.service graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service | grep -cx active"
   assert_eq "$SCENARIO: five units active" "5" "$(tail -n 1 <<<"$GOUT")"
   check "the greetd logind session is a wayland one on VT1" 'Type=wayland' \
