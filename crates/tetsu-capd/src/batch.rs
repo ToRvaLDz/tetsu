@@ -41,22 +41,47 @@ impl Batcher {
 
     /// Counts one allowed call; the first of a class opens its window.
     pub fn record(&mut self, class: &str, method: &str, now: SystemTime) {
-        let _ = (class, method, now);
-        unimplemented!()
+        let group = self.open.entry(class.to_owned()).or_insert_with(|| Group {
+            since: now,
+            count: 0,
+            methods: BTreeSet::new(),
+        });
+        group.count += 1;
+        group.methods.insert(method.to_owned());
     }
 
     /// Takes the groups whose window has ended.
     pub fn due(&mut self, now: SystemTime) -> Vec<Notice> {
-        let _ = now;
-        unimplemented!()
+        let ended: Vec<String> = self
+            .open
+            .iter()
+            .filter(|(_, g)| g.since + WINDOW <= now)
+            .map(|(class, _)| class.clone())
+            .collect();
+        ended
+            .into_iter()
+            .filter_map(|class| {
+                let group = self.open.remove(&class)?;
+                Some(Notice {
+                    class,
+                    count: group.count,
+                    methods: group.methods.into_iter().collect(),
+                })
+            })
+            .collect()
     }
 }
 
 /// The informational notification of a group: low urgency, no actions.
 pub fn show_params(notice: &Notice) -> ShowParams {
-    let _ = Urgency::Low;
-    let _ = notice;
-    unimplemented!()
+    let times = if notice.count == 1 { "time" } else { "times" };
+    ShowParams {
+        title: format!("The agent used {} {} {times}", notice.class, notice.count),
+        body: Some(notice.methods.join("\n")),
+        urgency: Some(Urgency::Low),
+        actions: None,
+        timeout_ms: None,
+    }
 }
 
 #[cfg(test)]
