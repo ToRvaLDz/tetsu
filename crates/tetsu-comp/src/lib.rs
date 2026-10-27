@@ -9,6 +9,7 @@ pub mod grab;
 pub mod input;
 pub mod layout;
 pub mod model;
+pub mod outputs;
 pub mod render;
 pub mod rules;
 pub mod run;

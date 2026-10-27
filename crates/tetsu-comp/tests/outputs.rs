@@ -85,9 +85,9 @@ fn control_characters_are_stripped_and_fields_cut() {
     let mut e = lg_edid();
     // No terminator: 13 characters with a control byte and a non-ASCII one.
     let at = 54 + 5;
-    e[at..at + 13].copy_from_slice(b"A\x1b\x07B\xffCDEFGHIJK");
+    e[at..at + 13].copy_from_slice(b"A\x1b\x07B\xffCDEFGHIJ");
     let info = edid::parse(&seal(e));
-    assert_eq!(info.model.as_deref(), Some("ABCDEFGHIJK"));
+    assert_eq!(info.model.as_deref(), Some("ABCDEFGHIJ"));
 
     // Longer than the limit after the extension blocks: cut to 32.
     assert_eq!(edid::clean(&"x".repeat(100)).unwrap().len(), 32);
