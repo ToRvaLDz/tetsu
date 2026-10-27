@@ -86,6 +86,7 @@ impl Executor<'_> {
             Action::WriteUser => self.write_user(),
             Action::LockRoot => self.lock_root(),
             Action::WriteLocale => self.write_locale(),
+            Action::GenerateLocale => self.generate_locale(),
             Action::WriteHostname => self.write_hostname(),
             Action::WriteFstab => self.write_fstab(),
             Action::WriteCmdline => self.write_cmdline(),

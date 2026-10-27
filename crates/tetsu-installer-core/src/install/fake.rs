@@ -91,6 +91,8 @@ pub struct Machine {
     pub missing: RefCell<Vec<String>>,
     /// `pacman-key --populate` succeeds but leaves no trust database.
     pub no_trustdb: std::cell::Cell<bool>,
+    /// `localedef --list-archive` lists nothing: `locale-gen` made no locale.
+    pub no_locale_archive: std::cell::Cell<bool>,
 }
 
 impl Machine {
@@ -103,6 +105,7 @@ impl Machine {
             fail_containing: RefCell::default(),
             missing: RefCell::default(),
             no_trustdb: std::cell::Cell::default(),
+            no_locale_archive: std::cell::Cell::default(),
             esp_partuuid: RefCell::new(ESP_PARTUUID.to_owned()),
             present_partuuids: RefCell::new(vec![ESP_PARTUUID.to_owned()]),
             boot_output: RefCell::new((FIRMWARE_BEFORE.to_owned(), FIRMWARE_AFTER.to_owned())),
@@ -159,6 +162,13 @@ impl Machine {
             "tar" => payload(Path::new(Self::after(args, "-C").unwrap())),
             "cryptsetup" if args.first().map(String::as_str) == Some("luksUUID") => {
                 return format!("{LUKS_UUID}\n");
+            }
+            "systemd-nspawn" if args.iter().any(|a| a == "--list-archive") => {
+                return if self.no_locale_archive.get() {
+                    String::new()
+                } else {
+                    archived(Self::after(args, "-D").unwrap())
+                };
             }
             "systemd-nspawn"
                 if args.iter().any(|a| a == "--populate") && !self.no_trustdb.get() =>
@@ -229,6 +239,26 @@ impl Machine {
     }
 }
 
+/// What `localedef --list-archive` would print after `locale-gen` read the
+/// active lines of `<root>/etc/locale.gen`.
+fn archived(root: &str) -> String {
+    let text = fs::read_to_string(format!("{root}/etc/locale.gen")).unwrap_or_default();
+    let mut names = Vec::new();
+    for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
+        let Some(name) = line.split_whitespace().next() else {
+            continue;
+        };
+        match name.strip_suffix(".UTF-8") {
+            Some(base) => names.push(format!("{base}.utf8")),
+            None => {
+                names.push(name.to_owned());
+                names.push(format!("{name}.utf8"));
+            }
+        }
+    }
+    names.join("\n") + "\n"
+}
+
 /// What the payload tarball would unpack into snapshot 1.
 fn payload(root: &Path) {
     let put = |rel: &str, content: &str| Machine::write(&root.join(rel).to_string_lossy(), content);
@@ -241,6 +271,11 @@ fn payload(root: &Path) {
     put("etc/passwd", "root:x:0:0::/root:/bin/bash\n");
     put("etc/shadow", "root:$6$old$oldhash:19000:0:99999:7:::\n");
     put("etc/group", "root:x:0:\nwheel:x:998:\n");
+    put(
+        "usr/share/i18n/SUPPORTED",
+        "it_IT.UTF-8 UTF-8\nen_US.UTF-8 UTF-8\nes_MX.UTF-8 UTF-8\nes_MX ISO-8859-1\naa_ER UTF-8\n",
+    );
+    put("etc/locale.gen", "it_IT.UTF-8 UTF-8\nen_US.UTF-8 UTF-8\n");
 }
 
 impl Runner for Machine {
