@@ -46,6 +46,7 @@ use smithay::reexports::drm::control::{connector, crtc};
 use smithay::reexports::input::Libinput;
 use smithay::utils::Point;
 
+use self::frame::Scenery;
 use crate::gpu::assign::OutputPlan;
 use crate::lock::glue::View;
 use crate::state::State;
@@ -228,7 +229,10 @@ impl State {
             .as_ref()
             .and_then(|t| t.heads.iter().find(|h| h.node == node && h.crtc == crtc))
             .map(|h| h.output.clone())
-            .map_or(View::Normal, |output| self.view(&output));
+            .map_or(View::Normal(Vec::new()), |output| self.view(&output));
+        if let View::Normal(frames) = &view {
+            self.border_buffers.sync(frames);
+        }
         let Some(mut tty) = self.tty.take() else {
             return;
         };
@@ -236,7 +240,17 @@ impl State {
             .seat
             .get_pointer()
             .map_or_else(Point::default, |p| p.current_location());
-        let rendered = tty.render(&self.space, &view, pointer, node, crtc);
+        let rendered = tty.render(
+            &Scenery {
+                space: &self.space,
+                mapped: &self.mapped,
+                borders: &self.border_buffers,
+            },
+            &view,
+            pointer,
+            node,
+            crtc,
+        );
         let head = tty.heads.iter().find(|h| h.node == node && h.crtc == crtc);
         let known = head.is_some();
         let output = head.map(|h| h.output.clone());

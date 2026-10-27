@@ -14,13 +14,14 @@ use smithay::utils::{Logical, Point};
 use smithay::wayland::session_lock::{LockSurface, SessionLocker};
 
 use super::{Decision, LockId, Phase, Scene, SurfaceKey};
+use crate::decor::Frame;
 use crate::state::State;
 use crate::trust::{Trust, spawn_trusted, trust_of};
 
 /// What an output shows.
 pub enum View {
-    /// Windows and layers.
-    Normal,
+    /// Windows and layers, with the borders to draw behind the windows.
+    Normal(Vec<Frame>),
     /// A solid colour and, if there is one, this lock surface.
     Locked(Option<WlSurface>),
 }
@@ -239,10 +240,10 @@ impl State {
     /// What `output` shows: the one answer the backends draw by.
     pub fn view(&self, output: &Output) -> View {
         let Some(entry) = self.outputs.iter().find(|o| &o.output == output) else {
-            return View::Normal;
+            return View::Normal(Vec::new());
         };
         match crate::render::scene(&self.lock, &entry.id) {
-            Scene::Normal => View::Normal,
+            Scene::Normal => View::Normal(self.frames_on(output)),
             Scene::Locked { surface } => View::Locked(surface.and_then(|key| {
                 self.lock_glue
                     .surfaces
@@ -257,7 +258,7 @@ impl State {
     fn lock_surface_on(&self, output: &Output) -> Option<WlSurface> {
         match self.view(output) {
             View::Locked(surface) => surface,
-            View::Normal => None,
+            View::Normal(_) => None,
         }
     }
 

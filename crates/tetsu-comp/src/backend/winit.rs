@@ -3,16 +3,14 @@
 
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::Kind;
-use smithay::backend::renderer::element::surface::{
-    WaylandSurfaceRenderElement, render_elements_from_surface_tree,
-};
+use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::{self, WinitEvent};
 use smithay::utils::{Rectangle, Transform};
 
 use crate::input::ModKey;
 use crate::lock::glue::View;
-use crate::render::{CLEAR_COLOR, LOCK_COLOR};
+use crate::render::{CLEAR_COLOR, LOCK_COLOR, SceneElements, normal_elements};
 use crate::state::State;
 
 /// The output's name.
@@ -40,42 +38,45 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
                 let size = backend.window_size();
                 // The scene is decided once per frame, here and nowhere else.
                 let view = state.view(&output);
+                if let View::Normal(frames) = &view {
+                    state.border_buffers.sync(frames);
+                }
                 let mut drawn = false;
                 {
                     let Ok((renderer, mut framebuffer)) = backend.bind() else {
                         return;
                     };
                     let rendered = match &view {
-                        View::Normal => smithay::desktop::space::render_output::<
-                            _,
-                            WaylandSurfaceRenderElement<GlesRenderer>,
-                            _,
-                            _,
-                        >(
-                            &output,
-                            renderer,
-                            &mut framebuffer,
-                            1.0,
-                            0,
-                            [&state.space],
-                            &[],
-                            &mut damage_tracker,
-                            CLEAR_COLOR,
-                        )
-                        .map(|_| ()),
+                        View::Normal(frames) => {
+                            let elements: Vec<SceneElements<GlesRenderer>> = normal_elements(
+                                renderer,
+                                &state.space,
+                                &state.mapped,
+                                &output,
+                                frames,
+                                &state.border_buffers,
+                            );
+                            damage_tracker
+                                .render_output(
+                                    renderer,
+                                    &mut framebuffer,
+                                    0,
+                                    &elements,
+                                    CLEAR_COLOR,
+                                )
+                                .map(|_| ())
+                        }
                         // Locked: the lock surface over a solid colour; no
                         // space, so no window can show.
                         View::Locked(surface) => {
-                            let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = surface
+                            let elements: Vec<SceneElements<GlesRenderer>> = surface
                                 .as_ref()
                                 .map(|surface| {
-                                    render_elements_from_surface_tree(
-                                        renderer,
-                                        surface,
-                                        (0, 0),
-                                        1.0,
-                                        1.0,
-                                        Kind::Unspecified,
+                                    render_elements_from_surface_tree::<
+                                        _,
+                                        SceneElements<GlesRenderer>,
+                                    >(
+                                        renderer, surface, (0, 0), 1.0, 1.0, Kind::Unspecified
                                     )
                                 })
                                 .unwrap_or_default();

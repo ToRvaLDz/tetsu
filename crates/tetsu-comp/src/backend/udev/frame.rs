@@ -10,19 +10,17 @@ use std::error::Error;
 use smithay::backend::drm::DrmNode;
 use smithay::backend::drm::compositor::{FrameFlags, PrimaryPlaneElement};
 use smithay::backend::renderer::element::solid::SolidColorRenderElement;
-use smithay::backend::renderer::element::surface::{
-    WaylandSurfaceRenderElement, render_elements_from_surface_tree,
-};
+use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
 use smithay::backend::renderer::element::{Kind, RenderElementStates};
-use smithay::backend::renderer::{ImportAll, ImportMem};
-use smithay::desktop::space::{SpaceRenderElements, space_render_elements};
 use smithay::desktop::{Space, Window};
 use smithay::reexports::drm::control::crtc;
 use smithay::utils::{Logical, Point, Rectangle, Scale};
 
 use super::{Tty, TtyRenderer};
+use crate::decor::glue::BorderBuffers;
 use crate::lock::glue::View;
-use crate::render::{CLEAR_COLOR, LOCK_COLOR};
+use crate::render::{CLEAR_COLOR, LOCK_COLOR, SceneElements, normal_elements};
+use crate::state::Mapped;
 
 /// Side of the square drawn as the pointer, in pixels.
 const CURSOR_SIZE: i32 = 12;
@@ -34,25 +32,25 @@ const FRAME_FLAGS: FrameFlags = FrameFlags::from_bits_truncate(
         | FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT.bits(),
 );
 
-smithay::backend::renderer::element::render_elements! {
-    /// What a frame is made of: the pointer on top, then either the windows
-    /// or the lock surface and its solid backdrop.
-    pub TtyElements<R, E> where R: ImportAll + ImportMem;
-    Solid=SolidColorRenderElement,
-    Space=SpaceRenderElements<R, E>,
-    Surface=WaylandSurfaceRenderElement<R>,
-}
-
 /// The frame's elements on the (multi-GPU) renderer.
-pub(super) type Elements<'a> =
-    TtyElements<TtyRenderer<'a>, WaylandSurfaceRenderElement<TtyRenderer<'a>>>;
+pub(super) type Elements<'a> = SceneElements<TtyRenderer<'a>>;
+
+/// What the normal scene is built from.
+pub(super) struct Scenery<'a> {
+    /// The windows.
+    pub space: &'a Space<Window>,
+    /// Their model ids.
+    pub mapped: &'a [Mapped],
+    /// Their border buffers.
+    pub borders: &'a BorderBuffers,
+}
 
 impl Tty {
     /// Draws one frame of `crtc` on `node`; the states when a frame was
     /// queued, `None` when there was nothing to draw.
     pub(super) fn render(
         &mut self,
-        space: &Space<Window>,
+        scenery: &Scenery<'_>,
         view: &View,
         pointer: Point<f64, Logical>,
         node: DrmNode,
@@ -65,7 +63,7 @@ impl Tty {
         else {
             return Ok(None);
         };
-        let Some(geometry) = space.output_geometry(&head.output) else {
+        let Some(geometry) = scenery.space.output_geometry(&head.output) else {
             return Ok(None);
         };
         let mut renderer = if head.target == self.render_node {
@@ -82,7 +80,7 @@ impl Tty {
                 .to_physical(Scale::from(1.0))
                 .to_i32_round();
             let rect = Rectangle::new(at, (CURSOR_SIZE, CURSOR_SIZE).into());
-            elements.push(TtyElements::Solid(SolidColorRenderElement::new(
+            elements.push(Elements::Solid(SolidColorRenderElement::new(
                 self.cursor_id.clone(),
                 rect,
                 smithay::backend::renderer::utils::CommitCounter::default(),
@@ -92,14 +90,15 @@ impl Tty {
         }
         let locked = matches!(view, View::Locked(_));
         let clear = match view {
-            View::Normal => {
-                let windows = space_render_elements::<_, Window, _>(
+            View::Normal(frames) => {
+                elements.extend(normal_elements::<_, Elements<'_>>(
                     &mut renderer,
-                    [space],
+                    scenery.space,
+                    scenery.mapped,
                     &head.output,
-                    1.0,
-                )?;
-                elements.extend(windows.into_iter().map(TtyElements::Space));
+                    frames,
+                    scenery.borders,
+                ));
                 CLEAR_COLOR
             }
             // Locked: the lock surface and an opaque backdrop; no space, so
@@ -115,7 +114,7 @@ impl Tty {
                         Kind::Unspecified,
                     ));
                 }
-                elements.push(TtyElements::Solid(SolidColorRenderElement::new(
+                elements.push(Elements::Solid(SolidColorRenderElement::new(
                     self.lock_id.clone(),
                     Rectangle::new((0, 0).into(), geometry.size.to_physical(1)),
                     smithay::backend::renderer::utils::CommitCounter::default(),

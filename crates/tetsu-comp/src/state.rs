@@ -42,7 +42,7 @@ use smithay::wayland::virtual_pointer::VirtualPointerManagerState;
 use crate::bus::{Publisher, Snapshot};
 use crate::config::glue::config_reply;
 use crate::config::store::Store;
-use crate::decor::glue::DecorStates;
+use crate::decor::glue::{BorderBuffers, DecorStates};
 use crate::engine::{Arrangement, Engine};
 use crate::gpu::sync::ExplicitSync;
 use crate::input::ModKey;
@@ -128,6 +128,8 @@ pub struct State {
     pub(crate) layer_shell_state: WlrLayerShellState,
     /// The two decoration protocols (always server-side).
     pub(crate) decorations: DecorStates,
+    /// The border solids of each window, stable across frames.
+    pub(crate) border_buffers: BorderBuffers,
     pub(crate) shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub(crate) seat_state: SeatState<State>,
@@ -219,6 +221,7 @@ impl State {
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             layer_shell_state: WlrLayerShellState::new::<Self>(&dh),
+            border_buffers: BorderBuffers::default(),
             decorations: DecorStates {
                 xdg: XdgDecorationState::new::<Self>(&dh),
                 kde: KdeDecorationState::new::<Self>(&dh, KdeDefaultMode::Server),
@@ -575,6 +578,7 @@ impl State {
         };
         let mapped = self.mapped.remove(at);
         self.engine.close(&mapped.id);
+        self.border_buffers.forget(&mapped.id);
         self.space.unmap_elem(&mapped.window);
         self.relayout();
         self.sync_focus();
