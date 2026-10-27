@@ -2,6 +2,8 @@
 
 use std::process::ExitCode;
 
+pub mod socket;
+
 /// Usage of the `comp` group.
 pub const USAGE: &str = "\
 usage: tetsu comp config [--json]
