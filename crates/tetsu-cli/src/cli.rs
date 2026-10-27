@@ -72,6 +72,21 @@ mod tests {
     }
 
     #[test]
+    fn the_secrets_group_is_forwarded_whole() {
+        assert_eq!(
+            parse_args(&["secrets", "list"]),
+            Some(Command::Secrets(vec!["list".into()]))
+        );
+        assert_eq!(
+            parse_args(&["secrets", "add", "demo", "--kind", "bearer"]),
+            Some(Command::Secrets(
+                ["add", "demo", "--kind", "bearer"].map(String::from).into()
+            ))
+        );
+        assert_eq!(parse_args(&["secrets"]), Some(Command::Secrets(vec![])));
+    }
+
+    #[test]
     fn anything_else_is_a_usage_error() {
         for args in [
             &[][..],
