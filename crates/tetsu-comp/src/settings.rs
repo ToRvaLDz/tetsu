@@ -392,7 +392,7 @@ pub(crate) fn trust_input(input: &[Vec<String>]) -> Result<(), SettingsError> {
 
 pub(crate) fn border_width(width: i64) -> Result<i32, SettingsError> {
     match i32::try_from(width) {
-        Ok(w) if (0..=MAX_BORDER_WIDTH as i32).contains(&w) => Ok(w),
+        Ok(w) if (0..=MAX_BORDER_WIDTH).contains(&w) => Ok(w),
         _ => Err(SettingsError::BadBorderWidth(width)),
     }
 }

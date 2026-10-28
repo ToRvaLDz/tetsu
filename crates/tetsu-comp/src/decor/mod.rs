@@ -12,7 +12,7 @@ use crate::layout::Rect;
 use crate::lock::Scene;
 
 /// The widest border, in logical pixels.
-pub const MAX_BORDER_WIDTH: i64 = 32;
+pub const MAX_BORDER_WIDTH: i32 = 32;
 
 /// The built-in border width.
 pub const DEFAULT_WIDTH: i32 = 2;
