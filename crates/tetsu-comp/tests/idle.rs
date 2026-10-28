@@ -23,12 +23,17 @@ fn not_due_before_the_timeout_and_due_at_it() {
 }
 
 #[test]
-fn due_only_once_per_idle_period() {
+fn an_idle_unlocked_session_is_due_again_every_timeout() {
+    // A locker that failed or crashed leaves the session unlocked: idle
+    // retries it a full timeout after each firing (fail-closed).
     let t0 = Instant::now();
     let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
     assert!(timer.due(t0 + secs(11), true));
     assert!(!timer.due(t0 + secs(12), true));
-    assert!(!timer.due(t0 + secs(100), true));
+    assert!(!timer.due(t0 + secs(21) - Duration::from_millis(1), true));
+    assert!(timer.due(t0 + secs(21), true));
+    assert!(!timer.due(t0 + secs(30), true));
+    assert!(timer.due(t0 + secs(31), true));
 }
 
 #[test]
@@ -84,13 +89,22 @@ fn turning_the_timeout_on_counts_from_the_last_activity() {
 }
 
 #[test]
-fn a_new_timeout_after_firing_waits_for_activity() {
+fn a_new_timeout_after_firing_counts_from_the_firing() {
     let t0 = Instant::now();
     let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
     assert!(timer.due(t0 + TIMEOUT, true));
     timer.set_timeout(Some(secs(5)));
-    assert!(!timer.due(t0 + secs(20), true));
-    timer.activity(t0 + secs(21));
+    assert!(!timer.due(t0 + secs(14), true));
+    assert!(timer.due(t0 + secs(15), true));
+}
+
+#[test]
+fn a_poll_while_locked_after_firing_keeps_the_retry_due() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
+    assert!(timer.due(t0 + TIMEOUT, true));
+    assert!(!timer.due(t0 + secs(25), false));
+    // The lock went away with no activity: retried on the next poll.
     assert!(timer.due(t0 + secs(26), true));
 }
 
