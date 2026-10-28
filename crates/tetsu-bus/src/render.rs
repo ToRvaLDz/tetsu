@@ -129,6 +129,7 @@ pub enum RenderKind {
     /// A pending change was discarded at unlock; a `changed` follows.
     PendingDropped,
     /// A value this build does not know.
+    #[serde(other)]
     Unknown,
 }
 
@@ -141,6 +142,7 @@ pub enum DropReason {
     /// The user file now sets the key.
     OverriddenByUser,
     /// A value this build does not know.
+    #[serde(other)]
     Unknown,
 }
 
@@ -150,10 +152,10 @@ pub struct RenderEvent {
     /// Which event.
     pub kind: RenderKind,
     /// `initial`, `changed`: the full new state.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render: Option<Render>,
     /// `pending_dropped`: why.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<DropReason>,
 }
 
@@ -218,5 +220,8 @@ pub struct SetRenderReply {
 
 /// A mode a caller sends: an unknown one is refused, not mapped.
 fn known_mode<'de, D: Deserializer<'de>>(d: D) -> Result<SyncMode, D::Error> {
-    SyncMode::deserialize(d)
+    match SyncMode::deserialize(d)? {
+        SyncMode::Unknown => Err(serde::de::Error::custom("mode is none of auto, on, off")),
+        mode => Ok(mode),
+    }
 }
