@@ -12,6 +12,7 @@ mod common;
 mod locker;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use common::Client;
@@ -116,8 +117,12 @@ fn start(config: Option<&str>) -> Comp {
 }
 
 fn bus_locked(comp: &Comp) -> bool {
+    bus_locked_at(&comp.bus)
+}
+
+fn bus_locked_at(bus: &Path) -> bool {
     let contract = common::contract();
-    let mut client = Client::connect(&comp.bus);
+    let mut client = Client::connect(bus);
     client.call(&contract, GET_SESSION)["locked"]
         .as_bool()
         .unwrap()
@@ -136,13 +141,13 @@ fn wait_idle_locked(out: &Path) {
     assert_eq!(std::fs::read_to_string(out).unwrap(), "locked");
 }
 
-/// For `QUIET`, the helper never ran and the bus never said locked.
-fn stays_unlocked(comp: &mut Comp, out: &Path, mut each: impl FnMut(&mut Comp)) {
+/// For `QUIET`, the helper never ran and the bus at `bus` never said
+/// locked.
+fn stays_unlocked(bus: &Path, out: &Path) {
     let start = Instant::now();
     while start.elapsed() < QUIET {
-        each(comp);
         assert!(!out.exists(), "the locker ran");
-        assert!(!bus_locked(comp), "the session locked");
+        assert!(!bus_locked_at(bus), "the session locked");
         std::thread::sleep(Duration::from_millis(250));
     }
 }
@@ -200,15 +205,32 @@ fn activity_holds_the_idle_lock_off() {
         &[(UNIT_ENV, UNIT_MS)],
     );
     let out = scratch.out();
-    stays_unlocked(&mut comp, &out, |comp| comp.control("activity"));
+    let bus = comp.bus.clone();
+    // Activity comes from its own thread, so a slow check on a loaded
+    // runner never leaves a gap as long as the timeout.
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let feeder = scope.spawn(|| {
+            while !stop.load(Ordering::Relaxed) {
+                comp.control("activity");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let quiet = std::panic::catch_unwind(|| stays_unlocked(&bus, &out));
+        stop.store(true, Ordering::Relaxed);
+        feeder.join().unwrap();
+        if let Err(panic) = quiet {
+            std::panic::resume_unwind(panic);
+        }
+    });
     wait_idle_locked(&out);
 }
 
 #[test]
 fn a_zero_timeout_never_locks() {
     let scratch = Scratch::new();
-    let mut comp = start(Some(&scratch.lock_table(0)));
-    stays_unlocked(&mut comp, &scratch.out(), |_| {});
+    let comp = start(Some(&scratch.lock_table(0)));
+    stays_unlocked(&comp.bus, &scratch.out());
 }
 
 #[test]
@@ -216,13 +238,13 @@ fn a_new_timeout_in_the_user_file_applies_live() {
     let scratch = Scratch::new();
     scratch.write_config(&scratch.lock_table(0));
     let config = scratch.config_file();
-    let mut comp = Comp::start_with_env(
+    let comp = Comp::start_with_env(
         &["--config", config.to_str().unwrap()],
         None,
         &[(UNIT_ENV, UNIT_MS)],
     );
     let out = scratch.out();
-    stays_unlocked(&mut comp, &out, |_| {});
+    stays_unlocked(&comp.bus, &out);
     scratch.write_config(&scratch.lock_table(TIMEOUT_S));
     wait_idle_locked(&out);
 }
