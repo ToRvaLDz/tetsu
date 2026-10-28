@@ -8,6 +8,7 @@
 //! crate).
 
 pub mod assign;
+pub mod control;
 pub mod formats;
 pub mod select;
 pub mod sync;
