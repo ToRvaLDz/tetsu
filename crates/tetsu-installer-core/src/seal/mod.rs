@@ -213,8 +213,8 @@ fn has_tpm2_slot(listing: &str) -> bool {
 }
 
 /// Whether the LUKS JSON metadata has a systemd-tpm2 token with Tetsu's
-/// policy: a signed-PCR public key, and a PIN exactly when the level is
-/// Balanced. Anything unparsable is no.
+/// policy: a public key that signs PCR 11, and a PIN exactly when the level
+/// is Balanced. Anything unparsable is no.
 fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
     let Ok(metadata) = serde_json::from_str::<serde_json::Value>(json) else {
         return false;
@@ -229,6 +229,14 @@ fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
                 .get("tpm2_pubkey")
                 .and_then(|k| k.as_str())
                 .is_some_and(|k| !k.is_empty())
+            && token
+                .get("tpm2_pubkey_pcrs")
+                .and_then(|p| p.as_array())
+                .is_some_and(|pcrs| {
+                    pcrs.iter().any(|p| {
+                        p.as_u64().map(|n| n.to_string()).as_deref() == Some(PUBLIC_KEY_PCRS)
+                    })
+                })
             && token
                 .get("tpm2-pin")
                 .and_then(|p| p.as_bool())
