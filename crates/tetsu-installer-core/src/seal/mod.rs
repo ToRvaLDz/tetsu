@@ -18,13 +18,13 @@
 //!   already holds the TPM2 slot. The header is the source of truth: when
 //!   the file says `pending`, `systemd-cryptenroll <device>` lists a `tpm2`
 //!   slot and `cryptsetup luksDump --dump-json-metadata <device>` shows a
-//!   systemd-tpm2 token with Tetsu's policy (a `tpm2-pubkey` and a
-//!   `tpm2-pin` that is true for Balanced and false for Comfort), the file
-//!   is rewritten to `sealed` with no prompt and no `@var` mount. A tpm2
-//!   slot without that policy (added by hand, stale, or forged in the
-//!   unauthenticated header) does not count: the normal seal runs and
-//!   `--wipe-slot=tpm2` replaces it. A failing listing or dump changes
-//!   nothing and the seal goes on.
+//!   systemd-tpm2 token with Tetsu's policy (a `tpm2_pubkey` whose
+//!   `tpm2_pubkey_pcrs` holds 11, and a `tpm2-pin` that is true for
+//!   Balanced and missing or false for Comfort), the file is rewritten to
+//!   `sealed` with no prompt and no `@var` mount. A tpm2 slot without that
+//!   policy (added by hand, stale, or forged in the unauthenticated header)
+//!   does not count: the normal seal runs and `--wipe-slot=tpm2` replaces
+//!   it. A failing listing or dump changes nothing and the seal goes on.
 //! * **Where the keys live.** `/var` is the `@var` subvolume, mounted only
 //!   after the switch. The service mounts that subvolume from the opened
 //!   root mapper under `<work>/var` and unmounts it before it returns. It

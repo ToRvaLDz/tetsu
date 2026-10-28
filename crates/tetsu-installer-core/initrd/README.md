@@ -22,10 +22,11 @@ Before that it lists the LUKS slots (`systemd-cryptenroll <device>`, no unlock
 needed): after a rollback to a snapshot taken before the seal the file says
 `pending` while the header already holds a TPM2 slot. A tpm2 row is trusted
 only when `cryptsetup luksDump --dump-json-metadata` shows a systemd-tpm2
-token with a `tpm2-pubkey` (the signed PCR policy) and a `tpm2-pin` that
-matches the level (true for Balanced, false for Comfort); then the file is
-set back to `sealed` and nothing is asked. Any other tpm2 slot, or a failing
-dump, leaves the normal seal to run and replace it.
+token with a `tpm2_pubkey` whose `tpm2_pubkey_pcrs` holds 11 (the signed PCR
+policy) and a `tpm2-pin` that matches the level (true for Balanced, missing or
+false for Comfort); then the file is set back to `sealed` and nothing is
+asked. Any other tpm2 slot, or a failing dump, leaves the normal seal to run
+and replace it.
 It always exits 0. The design decisions (where the state is written, how the
 keys under `@var` are reached, how the passphrase and the PIN are passed) are
 documented in `src/seal/mod.rs`.
