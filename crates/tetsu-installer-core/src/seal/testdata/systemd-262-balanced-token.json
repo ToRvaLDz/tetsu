@@ -1,0 +1,24 @@
+{
+  "tokens":{
+    "0":{
+      "type":"systemd-tpm2",
+      "keyslots":[
+        "3"
+      ],
+      "tpm2-blob":"AJ4AIFbg+iiTaoVEWLYXZF5E5pa4jOs+jEj6XvvhUY3/Ol+m",
+      "tpm2-pcrs":[
+        7
+      ],
+      "tpm2-pcr-bank":"sha256",
+      "tpm2-primary-alg":"ecc",
+      "tpm2-policy-hash":"13c909a577c8f4d79b6fc76a0d3da35c8e57be8e2b445c8e0897716998db492b",
+      "tpm2-pin":true,
+      "tpm2_salt":"c2FsdA==",
+      "tpm2_pubkey_pcrs":[
+        11
+      ],
+      "tpm2_pubkey":"LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUFvcDBxMFBseGJFSE1sV1F4dVk4aQ==",
+      "tpm2_srk":"gQAAAQAiAAt5grXiOHdYD8KaxtFsLsNjLDns8IDwPLUCJMVePogA"
+    }
+  }
+}

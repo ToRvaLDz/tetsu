@@ -582,3 +582,36 @@ fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
         assert_eq!(has_tetsu_token(json, level), expect, "{json} {level:?}");
     }
 }
+
+/// The token systemd 262 wrote on a Comfort test VM, long values cut short.
+const SYSTEMD_COMFORT: &str = include_str!("testdata/systemd-262-comfort-token.json");
+/// The same for Balanced: systemd adds `tpm2-pin` and `tpm2_salt`.
+const SYSTEMD_BALANCED: &str = include_str!("testdata/systemd-262-balanced-token.json");
+
+#[test]
+fn a_token_written_by_systemd_counts_as_sealed() {
+    use UnlockLevel::{Balanced, Comfort};
+    assert!(has_tetsu_token(SYSTEMD_COMFORT, Comfort));
+    assert!(!has_tetsu_token(SYSTEMD_COMFORT, Balanced));
+    assert!(has_tetsu_token(SYSTEMD_BALANCED, Balanced));
+    assert!(!has_tetsu_token(SYSTEMD_BALANCED, Comfort));
+
+    for (level, dump) in [("comfort", SYSTEMD_COMFORT), ("balanced", SYSTEMD_BALANCED)] {
+        let m = Machine::new(level);
+        let f = Fake {
+            listing: Some(WITH_TPM2),
+            dump: Some(dump),
+            ..Fake::with_answers(&[])
+        };
+        assert_eq!(
+            run(&m.paths(), &f).unwrap(),
+            Outcome::AlreadySealed,
+            "{level}"
+        );
+        assert_eq!(
+            f.programs(),
+            ["systemd-cryptenroll", "cryptsetup"],
+            "{level}"
+        );
+    }
+}
