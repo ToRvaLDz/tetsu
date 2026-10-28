@@ -7,6 +7,8 @@ mod common;
 mod kde;
 #[path = "common/wayland.rs"]
 mod wayland;
+#[path = "common/xdg_decoration.rs"]
+mod xdg_decoration;
 
 use std::fs;
 
@@ -16,6 +18,7 @@ use kde::KdeClient;
 use serde_json::{Value, json};
 use smithay_client_toolkit::shell::xdg::window::{DecorationMode, WindowDecorations};
 use wayland::WlClient;
+use xdg_decoration::LateDecorations;
 
 const GET_CONFIG: &str = "org.tetsu.comp.config.v1.GetConfig";
 const WATCH_CONFIG: &str = "org.tetsu.comp.config.v1.WatchConfig";
@@ -180,12 +183,15 @@ fn a_late_xdg_decoration_is_answered_at_once() {
     let comp = Comp::start();
     let mut wl = WlClient::connect(&comp.wayland_socket());
     let top = wl.map("org.tetsu.test", "one");
+    let mut late = LateDecorations::bind(&wl);
     let before = wl.configures(&top);
-    wl.decorate_late(&top);
+    late.decorate(&top);
     wl.wait_for_configure_after(&top, before);
     assert_eq!(
-        wl.late_modes(&top),
-        [wayland_client::WEnum::Value(wayland::Mode::ServerSide)]
+        late.modes(&top),
+        [wayland_client::WEnum::Value(
+            xdg_decoration::Mode::ServerSide
+        )]
     );
 }
 
