@@ -15,6 +15,11 @@ use crate::layout::master::{DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
 use crate::layout::{Gaps, LayoutKind};
 use crate::rules::{Pattern, Rule};
 
+/// The idle timeout when the file does not set one, in seconds.
+pub const DEFAULT_IDLE_TIMEOUT_S: u32 = 600;
+/// The longest idle timeout, in seconds: a day.
+pub const MAX_IDLE_TIMEOUT_S: u32 = 86_400;
+
 /// What the engine runs with.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
@@ -42,14 +47,15 @@ pub struct LockSettings {
     /// The locker's argv, started on the lock bind and again when the
     /// locker dies. Empty: nothing is started.
     pub command: Vec<String>,
-    /// Idle seconds before the locker starts; `0` turns it off.
+    /// Idle seconds before the locker starts, `0..=MAX_IDLE_TIMEOUT_S`;
+    /// `0` turns it off.
     pub idle_timeout_s: u32,
 }
 
 impl LockSettings {
     /// The idle timeout; `None` when it is off.
     pub fn idle_timeout(&self) -> Option<std::time::Duration> {
-        None
+        crate::idle::timeout_of(self.idle_timeout_s)
     }
 }
 
@@ -57,7 +63,7 @@ impl Default for LockSettings {
     fn default() -> Self {
         Self {
             command: vec!["swaylock".to_owned()],
-            idle_timeout_s: 0,
+            idle_timeout_s: DEFAULT_IDLE_TIMEOUT_S,
         }
     }
 }
@@ -153,6 +159,8 @@ pub enum SettingsError {
     UnknownSyncMode(String),
     /// `lock.command` starts with a blank program.
     BlankLockCommand,
+    /// `lock.idle_timeout_s` outside `0..=MAX_IDLE_TIMEOUT_S`.
+    BadIdleTimeout(i64),
     /// `trust.input[n]` is empty or starts with a blank program.
     BadTrustCommand(usize),
     /// `decorations.width` outside 0..=32.
@@ -204,6 +212,10 @@ impl fmt::Display for SettingsError {
             Self::BlankLockCommand => {
                 write!(f, "lock.command: the program is blank (use [] for none)")
             }
+            Self::BadIdleTimeout(value) => write!(
+                f,
+                "lock.idle_timeout_s: {value} is outside 0..={MAX_IDLE_TIMEOUT_S} (0 turns it off)"
+            ),
             Self::BadTrustCommand(at) => {
                 write!(f, "trust.input[{at}]: needs a command with a program name")
             }
@@ -250,6 +262,7 @@ struct RawDecorations {
 #[serde(deny_unknown_fields)]
 struct RawLock {
     command: Option<Vec<String>>,
+    idle_timeout_s: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -391,6 +404,13 @@ pub(crate) fn lock_command(command: &[String]) -> Result<(), SettingsError> {
     Ok(())
 }
 
+pub(crate) fn idle_timeout(secs: i64) -> Result<u32, SettingsError> {
+    match u32::try_from(secs) {
+        Ok(s) if s <= MAX_IDLE_TIMEOUT_S => Ok(s),
+        _ => Err(SettingsError::BadIdleTimeout(secs)),
+    }
+}
+
 pub(crate) fn trust_input(input: &[Vec<String>]) -> Result<(), SettingsError> {
     for (at, argv) in input.iter().enumerate() {
         if argv.first().is_none_or(|program| program.trim().is_empty()) {
@@ -431,9 +451,12 @@ fn lock(raw: RawLock) -> Result<LockSettings, SettingsError> {
         .command
         .unwrap_or_else(|| LockSettings::default().command);
     lock_command(&command)?;
+    let idle_timeout_s = raw
+        .idle_timeout_s
+        .map_or(Ok(DEFAULT_IDLE_TIMEOUT_S), idle_timeout)?;
     Ok(LockSettings {
         command,
-        idle_timeout_s: 0,
+        idle_timeout_s,
     })
 }
 

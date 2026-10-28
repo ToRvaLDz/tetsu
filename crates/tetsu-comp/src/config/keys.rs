@@ -58,7 +58,7 @@ const fn command(name: &'static str) -> KeyDef {
 }
 
 /// Every key, in the order `GetConfig` lists them.
-pub const KEYS: [KeyDef; 13] = [
+pub const KEYS: [KeyDef; 14] = [
     writable("layout.default"),
     writable("layout.gaps_inner"),
     writable("layout.gaps_outer"),
@@ -68,6 +68,7 @@ pub const KEYS: [KeyDef; 13] = [
     writable("decorations.width"),
     writable("decorations.active_color"),
     writable("decorations.inactive_color"),
+    writable("lock.idle_timeout_s"),
     via("render.device", "org.tetsu.comp.render.v1.SetRenderDevice"),
     via(
         "render.explicit_sync",
@@ -137,6 +138,11 @@ fn color_of(name: &'static str, value: &Value) -> Result<Color, SettingsError> {
     settings::border_color(name, &text)
 }
 
+fn idle_timeout_of(value: &Value) -> Result<u32, SettingsError> {
+    let raw: i64 = typed("lock.idle_timeout_s", value)?;
+    settings::idle_timeout(raw)
+}
+
 /// Whether `value` is valid for the known key `name`.
 pub fn validate(name: &str, value: &Value) -> Result<(), Invalid> {
     if name.starts_with("output.") {
@@ -157,6 +163,7 @@ pub fn validate(name: &str, value: &Value) -> Result<(), Invalid> {
         "lock.command" => {
             typed::<Vec<String>>(name, value).and_then(|c| settings::lock_command(&c))
         }
+        "lock.idle_timeout_s" => idle_timeout_of(value).map(drop),
         "trust.input" => {
             typed::<Vec<Vec<String>>>(name, value).and_then(|i| settings::trust_input(&i))
         }
@@ -197,6 +204,10 @@ pub fn builtin() -> BTreeMap<String, Value> {
         (
             "lock.command",
             Value::Array(defaults.lock.command.iter().map(|a| s(a)).collect()),
+        ),
+        (
+            "lock.idle_timeout_s",
+            Value::Integer(i64::from(defaults.lock.idle_timeout_s)),
         ),
         ("trust.input", Value::Array(Vec::new())),
         ("window_rule", Value::Array(Vec::new())),
@@ -250,6 +261,9 @@ impl Settings {
         let command = get("lock.command")
             .and_then(|v| typed::<Vec<String>>("lock.command", v).ok())
             .unwrap_or(base.lock.command);
+        let idle_timeout_s = get("lock.idle_timeout_s")
+            .and_then(|v| idle_timeout_of(v).ok())
+            .unwrap_or(base.lock.idle_timeout_s);
         let input = get("trust.input")
             .and_then(|v| typed::<Vec<Vec<String>>>("trust.input", v).ok())
             .unwrap_or_default();
@@ -279,7 +293,7 @@ impl Settings {
             render,
             lock: LockSettings {
                 command,
-                idle_timeout_s: 0,
+                idle_timeout_s,
             },
             trust: TrustSettings { input },
             decorations,
