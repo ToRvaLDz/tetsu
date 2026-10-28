@@ -215,8 +215,9 @@ fn kde_server_decoration_answers_server() {
     assert!(!modes.is_empty());
 }
 
+// Pruning itself is covered by `dead_objects_never_released_are_pruned` in tests/decor.rs.
 #[test]
-fn kde_answers_after_a_client_died_without_release() {
+fn kde_answers_a_new_client_after_one_died() {
     let comp = Comp::start();
     let mut gone = KdeClient::connect(&comp.wayland_socket());
     assert!(!gone.ask_for_client_side().is_empty());
