@@ -2,7 +2,8 @@
 //! `xdg-decoration` and on the KDE protocol (GTK3 and Qt). On
 //! `xdg-decoration` the mode is only ever sent inside a configure; on KDE
 //! the manager sends `Server` as the default mode on bind, then each
-//! decoration object gets one `mode` event.
+//! decoration object gets at most one `mode` event, in answer to its first
+//! `request_mode`.
 
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as XdgMode;
 use smithay::reexports::wayland_server::Resource;
