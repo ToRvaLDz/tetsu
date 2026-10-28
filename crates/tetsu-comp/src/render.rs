@@ -64,6 +64,8 @@ where
 /// top to bottom: the `Overlay` and `Top` layers; each window with its
 /// popups, followed by the four edges of its border; the `Bottom` and
 /// `Background` layers. It follows Smithay's `space_render_elements`.
+/// `scale` is the caller's: it must match whatever else the backend draws
+/// on the same frame (the tty pointer, the lock scene).
 pub fn normal_elements<R, E>(
     renderer: &mut R,
     space: &Space<Window>,
@@ -71,13 +73,13 @@ pub fn normal_elements<R, E>(
     output: &Output,
     frames: &[Frame],
     borders: &BorderBuffers,
+    scale: f64,
 ) -> Vec<E>
 where
     R: Renderer + ImportAll,
     R::TextureId: Clone + Texture + 'static,
     E: From<WaylandSurfaceRenderElement<R>> + From<SolidColorRenderElement>,
 {
-    let scale = output.current_scale().fractional_scale();
     let mut elements = layer_elements::<R, E>(renderer, output, scale, false);
     if let Some(output_geo) = space.output_geometry(output) {
         for window in space.elements().rev() {

@@ -55,6 +55,8 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
                                 &output,
                                 frames,
                                 &state.border_buffers,
+                                // As the lock scene below.
+                                1.0,
                             );
                             damage_tracker
                                 .render_output(
