@@ -1,7 +1,6 @@
 //! The compositor state: Smithay's protocol states, the space, and the
 //! model the bus reports.
 
-use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io;
 use std::sync::Arc;
@@ -42,6 +41,7 @@ use smithay::wayland::virtual_pointer::VirtualPointerManagerState;
 use crate::bus::{Publisher, Snapshot};
 use crate::config::glue::config_reply;
 use crate::config::store::Store;
+use crate::decor::AnsweredOnce;
 use crate::decor::glue::{BorderBuffers, DecorStates};
 use crate::engine::{Arrangement, Engine};
 use crate::gpu::sync::ExplicitSync;
@@ -225,7 +225,7 @@ impl State {
             decorations: DecorStates {
                 xdg: XdgDecorationState::new::<Self>(&dh),
                 kde: KdeDecorationState::new::<Self>(&dh, KdeDefaultMode::Server),
-                answered: HashSet::new(),
+                answered: AnsweredOnce::default(),
             },
             shm_state: ShmState::new::<Self>(&dh, vec![]),
             output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(&dh),

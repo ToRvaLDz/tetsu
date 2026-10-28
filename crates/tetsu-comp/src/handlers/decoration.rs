@@ -4,6 +4,7 @@
 
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as XdgMode;
 use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::reexports::wayland_server::WEnum;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::shell::kde::decoration::KdeDecorationHandler;
@@ -54,12 +55,14 @@ impl KdeDecorationHandler for State {
         decoration: &OrgKdeKwinServerDecoration,
         _mode: WEnum<KdeMode>,
     ) {
-        if self.decorations.answered.insert(decoration.id()) {
+        let dh = &self.display_handle;
+        let alive = |id: &ObjectId| dh.object_info(id.clone()).is_ok();
+        if self.decorations.answered.first(decoration.id(), alive) {
             decoration.mode(KdeMode::Server);
         }
     }
 
     fn release(&mut self, decoration: &OrgKdeKwinServerDecoration, _surface: &WlSurface) {
-        self.decorations.answered.remove(&decoration.id());
+        self.decorations.answered.forget(&decoration.id());
     }
 }

@@ -2,7 +2,8 @@
 //! colours and the frames a scene allows, with no compositor around them.
 
 use tetsu_comp::decor::{
-    ACTIVE_COLOR, Color, Decorations, INACTIVE_COLOR, WindowBox, frame, frames, inset, parse_color,
+    ACTIVE_COLOR, AnsweredOnce, Color, Decorations, INACTIVE_COLOR, WindowBox, frame, frames,
+    inset, parse_color,
 };
 use tetsu_comp::layout::Rect;
 use tetsu_comp::lock::{Decision, LockId, LockMachine, Scene};
@@ -127,4 +128,23 @@ fn a_locked_scene_never_gets_a_border() {
     let scene = machine.scene("out-1");
     assert!(matches!(scene, Scene::Locked { .. }));
     assert!(frames(&scene, &boxes(), Some("w1"), &decorations(4)).is_empty());
+}
+
+#[test]
+fn each_object_is_answered_once() {
+    let mut answered = AnsweredOnce::default();
+    assert!(answered.first(1, |_| true));
+    assert!(!answered.first(1, |_| true));
+    answered.forget(&1);
+    assert!(answered.first(1, |_| true));
+}
+
+#[test]
+fn dead_objects_never_released_are_pruned() {
+    let mut answered = AnsweredOnce::default();
+    assert!(answered.first(1, |_| true));
+    assert!(answered.first(2, |_| true));
+    // 1 and 2 die without a release, as when their client crashes.
+    assert!(answered.first(3, |&id| id == 3));
+    assert_eq!(answered.len(), 1);
 }

@@ -1,7 +1,5 @@
 //! The Smithay side of the decorations: the protocol states.
 
-use std::collections::HashSet;
-
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::wayland::shell::kde::decoration::KdeDecorationState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
@@ -13,7 +11,7 @@ pub struct DecorStates {
     /// `org_kde_kwin_server_decoration_manager`, default mode Server.
     pub kde: KdeDecorationState,
     /// The KDE decoration objects that already got their one answer.
-    pub answered: HashSet<ObjectId>,
+    pub answered: AnsweredOnce<ObjectId>,
 }
 
 use std::collections::HashMap;
@@ -21,7 +19,7 @@ use std::collections::HashMap;
 use smithay::backend::renderer::element::solid::SolidColorBuffer;
 use smithay::output::Output;
 
-use super::{Color, Frame, WindowBox, frames};
+use super::{AnsweredOnce, Color, Frame, WindowBox, frames};
 use crate::layout::Rect;
 use crate::lock::Scene;
 use crate::state::State;

@@ -194,3 +194,21 @@ fn kde_server_decoration_answers_server() {
     );
     assert!(!modes.is_empty());
 }
+
+#[test]
+fn kde_answers_after_a_client_died_without_release() {
+    let comp = Comp::start();
+    let mut gone = KdeClient::connect(&comp.wayland_socket());
+    assert!(!gone.ask_for_client_side().is_empty());
+    drop(gone);
+
+    let mut kde = KdeClient::connect(&comp.wayland_socket());
+    let modes = kde.ask_for_client_side();
+    assert!(
+        matches!(
+            modes.as_slice(),
+            [wayland_client::WEnum::Value(kde::Mode::Server)]
+        ),
+        "{modes:?}"
+    );
+}

@@ -5,6 +5,9 @@
 
 pub mod glue;
 
+use std::collections::HashSet;
+use std::hash::Hash;
+
 use crate::layout::Rect;
 use crate::lock::Scene;
 
@@ -181,4 +184,43 @@ pub fn frames(
             },
         })
         .collect()
+}
+
+/// The objects that already got their one answer. An object whose client
+/// died never sends a release, so each new answer first drops the dead ones:
+/// the set never outgrows the live objects.
+#[derive(Debug)]
+pub struct AnsweredOnce<K> {
+    answered: HashSet<K>,
+}
+
+impl<K> Default for AnsweredOnce<K> {
+    fn default() -> Self {
+        Self {
+            answered: HashSet::new(),
+        }
+    }
+}
+
+impl<K: Eq + Hash> AnsweredOnce<K> {
+    /// True the first time `key` asks; prunes what `alive` rejects first.
+    pub fn first(&mut self, key: K, alive: impl Fn(&K) -> bool) -> bool {
+        self.answered.retain(|k| alive(k));
+        self.answered.insert(key)
+    }
+
+    /// Drops a released object.
+    pub fn forget(&mut self, key: &K) {
+        self.answered.remove(key);
+    }
+
+    /// How many objects are remembered.
+    pub fn len(&self) -> usize {
+        self.answered.len()
+    }
+
+    /// True when no object is remembered.
+    pub fn is_empty(&self) -> bool {
+        self.answered.is_empty()
+    }
 }
