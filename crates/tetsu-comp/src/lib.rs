@@ -8,7 +8,8 @@
 //! mode is always server-side and the compositor draws a border, never on a
 //! locked output. Trust (`trust`) is decided when a client connects:
 //! only clients the compositor starts see the virtual input protocols or may
-//! take over a dead lock (`lock`).
+//! take over a dead lock (`lock`). X11 apps run through xwayland-satellite,
+//! started on the first X11 connection (`xwayland`).
 
 pub mod backend;
 pub mod bus;

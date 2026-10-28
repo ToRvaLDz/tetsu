@@ -8,16 +8,19 @@ window, workspace, output, session and config interfaces of the bus
 `org.tetsu.comp.config.v1`),
 `zwlr_layer_shell_v1` for the bar, `ext-session-lock-v1` for the lock and
 `ext-idle-notify-v1` for idle clients such as swayidle.
+X11 apps run through xwayland-satellite (see X11).
 
 ## Running
 
     tetsu-comp [--backend winit|tty|headless] [--config <file>]
                [--headless-outputs <1..4>] [--headless-hotplug]
-               [-- <command>...]
+               [--headless-xwayland] [-- <command>...]
 
 `-- <command>` starts a client with `WAYLAND_DISPLAY` and
-`TETSU_COMP_SOCKET` set. Once it listens, `tetsu-comp` prints
-`ready WAYLAND_DISPLAY=<name> TETSU_COMP_SOCKET=<path>` on stdout.
+`TETSU_COMP_SOCKET` set, and `DISPLAY` when X11 is on (else `DISPLAY` is
+removed). Once it listens, `tetsu-comp` prints
+`ready WAYLAND_DISPLAY=<name> TETSU_COMP_SOCKET=<path>` on stdout, followed
+by ` DISPLAY=:<n>` when X11 is on.
 
 - **Nested** (development, inside another Wayland session): the default
   when `WAYLAND_DISPLAY` or `DISPLAY` is set.
@@ -84,6 +87,10 @@ window, workspace, output, session and config interfaces of the bus
   second of `[lock] idle_timeout_s` lasts that many milliseconds, so tests
   idle through a valid timeout fast. The tty and winit backends never read
   it; a bad value is logged and ignored.
+
+- **`--headless-xwayland`** (headless only): serves X11 clients, so tests
+  can map X11 windows. The other backends always do, unless
+  `xwayland.satellite` is empty.
 
 Query the bus with `varlinkctl call $TETSU_COMP_SOCKET
 org.tetsu.comp.window.v1.ListWindows '{}'`. The bus socket is
@@ -205,7 +212,8 @@ state machine's (`lock/`, pure, no Smithay types). It fails closed:
 Trust is decided when a client connects and does not change. The compositor
 starts the clients it trusts over a socket pair and hands the child end over
 as `WAYLAND_SOCKET`; everything that comes through `WAYLAND_DISPLAY` is
-untrusted, including the children of a trusted client. `[lock] command` runs
+untrusted, including the children of a trusted client (xwayland-satellite,
+known by its pid, is only labelled; see X11). `[lock] command` runs
 as the locker, `[trust] input` helpers as input clients. Each command must
 be the Wayland client itself: a wrapper script or launcher has to `exec` it,
 because a wrapper that does not connect passes the trusted socket on to its
@@ -241,6 +249,37 @@ one starts, so at most one idle locker runs. A locker that takes longer than
 `idle_timeout_s` to lock is restarted too. Idle never starts the locker while the session is locked or
 defunct, and the next idle period starts at the unlock. There is no idle inhibitor (`zwp_idle_inhibit_manager_v1`)
 yet: a video with no input locks at the timeout.
+
+## X11
+
+X11 apps run through [xwayland-satellite](https://github.com/Supreeeme/xwayland-satellite),
+which runs Xwayland and shows its windows as ordinary xdg-shell toplevels.
+`[xwayland] satellite` names the program (default `xwayland-satellite`, on
+`PATH`); `satellite = ""` turns X11 off. At start the compositor asks it
+for `--test-listenfd-support`; if that fails, X11 is off and the log says
+why.
+
+Activation is on demand, as in niri. The compositor takes the first free
+display `:<n>` (lock `/tmp/.X<n>-lock`, sockets `/tmp/.X11-unix/X<n>` and
+the abstract one) and starts satellite with both sockets (`-listenfd`) at
+the first X11 connection. When satellite exits or crashes, the next X11
+client starts it again. A lock left by a process that is gone (a killed
+compositor) is reclaimed; a lock of a live process or one that does not
+hold a pid is left alone.
+
+The clients the compositor starts (`-- <command>`, the locker, the
+`[trust] input` helpers) get `DISPLAY=:<n>`; with X11 off `DISPLAY` is
+removed, so a nested compositor's apps never reach the host's X server.
+`tetsu-comp-ready` publishes `DISPLAY` to the user manager.
+
+Satellite is an ordinary Wayland client. The compositor knows it by its
+pid when it connects and labels its windows: on the bus they have
+`xwayland: true` and `pid: null`, and their `app_id` comes from WM_CLASS.
+It gets no other privilege; `xwayland_shell_v1` is not served (satellite
+serves it to its own Xwayland), and `wp_viewporter` is.
+
+An Electron app (VS Code, Slack...) runs on X11 unless it is started with
+`--ozone-platform-hint=auto` (or `wayland`).
 
 ## Build dependencies
 
@@ -353,7 +392,7 @@ agent's `SetManaged` (and `ConfigureOutputs`) ask `tetsu-capd` first.
 | `render.device` | no | `org.tetsu.comp.render.v1.SetRenderDevice` |
 | `render.explicit_sync` | no | `org.tetsu.comp.render.v1.SetExplicitSync` |
 | `lock.idle_timeout_s` (0 is off, else 30 to 86400 seconds) | yes | |
-| `lock.command`, `trust.input` | no (they run commands) | user file only; ignored in the managed file |
+| `lock.command`, `trust.input`, `xwayland.satellite` | no (they run commands) | user file only; ignored in the managed file |
 
 The output keys are `output.<connector>.{enabled, mode, scale, transform,
 position}` (a connector name is `[A-Za-z0-9_-]{1,32}`). They are not
@@ -439,6 +478,12 @@ map, not on later title changes.
   `idle/`: the idle timer (pure, on an injected clock) and its glue, where
   activity comes in (`State::note_activity`);
   `trust`: who a client is, and how trusted helpers are started.
+- `xwayland/`: X11 through xwayland-satellite. `display` (the X11 lock and
+  sockets, stale locks reclaimed) and `satellite` (who is Xwayland, the
+  window label, the argv) are pure and tested first; `mod.rs` is the
+  on-demand start and restart on the loop.
+- `socket`: the Wayland listening socket, where every client from it gets
+  its trust, and the bus socket path.
 - `gpu/`: the tty backend's decisions, pure and tested first. `select`
   (the render device), `assign` (how each output is served), `formats`
   (CCS filter, color formats, scanout tranches) and `sync` (explicit sync
