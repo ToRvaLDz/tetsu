@@ -71,6 +71,8 @@ pub enum HotplugCommand {
     FocusNext,
     /// The focus-prev bind.
     FocusPrev,
+    /// User activity, as input would report it.
+    Activity,
 }
 
 /// Reads one line, without its newline, converted lossily. Never buffers
@@ -298,6 +300,7 @@ fn run_command(state: &mut State, command: HotplugCommand, counter: &mut u32) {
             state.run_action(EngineAction::FocusPrev);
             Ok(())
         }
+        HotplugCommand::Activity => Ok(()),
     };
     if let Err(e) = added {
         eprintln!("tetsu-comp: hotplug: {e}");

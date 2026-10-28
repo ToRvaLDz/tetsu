@@ -298,3 +298,10 @@ fn add_modes_refuses_an_empty_list_a_bad_size_and_too_many_modes() {
     }
     assert!(parse_command(&sixteen).is_ok());
 }
+
+#[test]
+fn the_activity_command_parses_and_takes_no_argument() {
+    assert_eq!(parse_command("activity"), Ok(HotplugCommand::Activity));
+    assert_eq!(parse_command("activity\r\n"), Ok(HotplugCommand::Activity));
+    assert!(parse_command("activity x").is_err());
+}
