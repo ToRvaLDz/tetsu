@@ -235,7 +235,10 @@ starts `[lock] command` with locker trust, as Mod+Shift+L does; it does
 not lock by itself. So `command = []` means no idle lock. A locker that
 cannot start or exits without locking leaves the session unlocked, so idle
 starts it again every `idle_timeout_s` while no activity comes (each try is
-logged). Idle never starts the locker while the session is locked or
+logged). A locker idle started that still runs at the next try without a
+lock is taken as hung: it is killed and its client dropped before the next
+one starts, so at most one idle locker runs. A locker that takes longer than
+`idle_timeout_s` to lock is restarted too. Idle never starts the locker while the session is locked or
 defunct, and the next idle period starts at the unlock. There is no idle inhibitor (`zwp_idle_inhibit_manager_v1`)
 yet: a video with no input locks at the timeout.
 

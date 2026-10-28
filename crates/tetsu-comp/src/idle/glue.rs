@@ -7,8 +7,9 @@ use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::wayland::idle_notify::IdleNotifierState;
 
-use super::{IdleTimer, SECOND, may_lock, timeout_in};
+use super::{IdleLocker, IdleTimer, SECOND, idle_locker, may_lock, timeout_in};
 use crate::state::State;
+use crate::trust::Spawned;
 
 /// The compositor's idle timer and the clients' idle notifier.
 pub struct IdleGlue {
@@ -24,6 +25,8 @@ pub struct IdleGlue {
     /// Whether activity was forwarded to the notifier in this loop
     /// iteration: it re-arms every client timer, so once is enough.
     forwarded: bool,
+    /// The locker idle started last, until the next firing replaces it.
+    locker: Option<Spawned>,
 }
 
 impl IdleGlue {
@@ -39,6 +42,7 @@ impl IdleGlue {
             timeout_s,
             unit: SECOND,
             forwarded: false,
+            locker: None,
         }
     }
 
@@ -68,16 +72,30 @@ impl State {
     }
 
     /// The publish tick's share: once the session went idle, the locker
-    /// starts, as the Lock bind starts it.
+    /// starts, as the Lock bind starts it. A retry that finds the last idle
+    /// locker still running without a lock kills it as hung first, so at
+    /// most one idle locker runs.
     pub(crate) fn idle_tick(&mut self) {
-        if self
-            .idle
-            .timer
-            .due(Instant::now(), may_lock(self.lock.phase()))
-        {
-            eprintln!("tetsu-comp: idle; starting the locker");
-            self.start_locker();
+        let phase = self.lock.phase();
+        if !self.idle.timer.due(Instant::now(), may_lock(phase)) {
+            return;
         }
+        let last_runs = self.idle.locker.as_ref().is_some_and(Spawned::runs);
+        match idle_locker(phase, last_runs) {
+            IdleLocker::Leave => return,
+            IdleLocker::Start => {}
+            IdleLocker::Restart => {
+                if let Some(hung) = self.idle.locker.take() {
+                    eprintln!(
+                        "tetsu-comp: idle locker {} did not lock; restarting it",
+                        hung.pid()
+                    );
+                    hung.kill(&self.display_handle);
+                }
+            }
+        }
+        eprintln!("tetsu-comp: idle; starting the locker");
+        self.idle.locker = self.spawn_locker();
     }
 
     /// The end of a loop iteration: the next activity is forwarded again.

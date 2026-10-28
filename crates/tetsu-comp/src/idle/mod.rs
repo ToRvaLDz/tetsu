@@ -40,6 +40,28 @@ pub fn may_lock(phase: Phase) -> bool {
     phase == Phase::Unlocked
 }
 
+/// What an idle firing does with the locker idle started last time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdleLocker {
+    /// The session is not unlocked: nothing starts.
+    Leave,
+    /// No idle locker runs: start one.
+    Start,
+    /// The last idle locker runs and did not lock: it hangs, so kill it
+    /// and start the next one. At most one idle locker runs at a time.
+    Restart,
+}
+
+/// What an idle firing in `phase` does, given whether the locker idle
+/// started last time still runs.
+pub fn idle_locker(phase: Phase, last_runs: bool) -> IdleLocker {
+    match (may_lock(phase), last_runs) {
+        (false, _) => IdleLocker::Leave,
+        (true, false) => IdleLocker::Start,
+        (true, true) => IdleLocker::Restart,
+    }
+}
+
 /// When the session has been idle long enough.
 ///
 /// Due a full timeout after the last activity, then again every timeout

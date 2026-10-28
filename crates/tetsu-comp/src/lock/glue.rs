@@ -16,7 +16,7 @@ use smithay::wayland::session_lock::{LockSurface, SessionLocker};
 use super::{Decision, LockId, Phase, Scene, SurfaceKey};
 use crate::decor::Frame;
 use crate::state::State;
-use crate::trust::{Trust, spawn_trusted, trust_of};
+use crate::trust::{Spawned, Trust, spawn_trusted, trust_of};
 
 /// What an output shows.
 pub enum View {
@@ -302,17 +302,23 @@ impl State {
 
     /// Starts the locker unless a live one owns the session.
     pub(crate) fn start_locker(&mut self) {
+        drop(self.spawn_locker());
+    }
+
+    /// Starts the locker unless a live one owns the session, and gives
+    /// back the child it started.
+    pub(crate) fn spawn_locker(&mut self) -> Option<Spawned> {
         if matches!(self.lock.phase(), Phase::Locking | Phase::Locked) {
-            return;
+            return None;
         }
         let command = self.lock_glue.command.clone();
         if command.is_empty() {
             eprintln!("tetsu-comp: no [lock] command to start");
-            return;
+            return None;
         }
-        if let Err(e) = spawn_trusted(self, &command, Trust::Locker) {
-            eprintln!("tetsu-comp: cannot start the locker {command:?}: {e}");
-        }
+        spawn_trusted(self, &command, Trust::Locker)
+            .inspect_err(|e| eprintln!("tetsu-comp: cannot start the locker {command:?}: {e}"))
+            .ok()
     }
 
     /// The publish tick's share: liveness, dead surfaces, the relaunch, the
