@@ -226,7 +226,7 @@ fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
     tokens.values().any(|token| {
         token.get("type").and_then(|t| t.as_str()) == Some("systemd-tpm2")
             && token
-                .get("tpm2-pubkey")
+                .get("tpm2_pubkey")
                 .and_then(|k| k.as_str())
                 .is_some_and(|k| !k.is_empty())
             && token

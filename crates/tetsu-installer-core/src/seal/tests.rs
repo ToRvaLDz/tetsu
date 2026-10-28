@@ -48,10 +48,11 @@ const PASSWORDS_ONLY: &str = "SLOT TYPE\n   0 password\n   1 password\n";
 const WITH_TPM2: &str = "SLOT TYPE\n   0 password\n   1 password\n   2 tpm2\n";
 /// Tetsu's Balanced policy: signed PCR public key and a PIN.
 const TOKEN_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
-    "tpm2-pcrs":[7],"tpm2-pubkey":"QUJD","tpm2-pubkey-pcrs":[11],"tpm2-pin":true}}}"#;
-/// Tetsu's Comfort policy: the same without the PIN.
+    "tpm2-pcrs":[7],"tpm2-pin":true,"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+/// Tetsu's Comfort policy: the same without the PIN; systemd then writes
+/// no `tpm2-pin` at all.
 const TOKEN_NO_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
-    "tpm2-pcrs":[7],"tpm2-pubkey":"QUJD","tpm2-pubkey-pcrs":[11],"tpm2-pin":false}}}"#;
+    "tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
 /// A hand-added token: PCR 0 only, no signed policy.
 const TOKEN_NO_PUBKEY: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
     "tpm2-pcrs":[0],"tpm2-pin":true}}}"#;
@@ -561,9 +562,11 @@ fn has_tpm2_slot_reads_the_type_column() {
 #[test]
 fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
     use UnlockLevel::{Balanced, Comfort};
-    let other = r#"{"tokens":{"0":{"type":"systemd-fido2"},"1":{"type":"systemd-tpm2","tpm2-pubkey":"QUJD"}}}"#;
-    let empty_key = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pubkey":"","tpm2-pin":true}}}"#;
-    let wrong_type = r#"{"tokens":{"0":{"type":"other","tpm2-pubkey":"QUJD","tpm2-pin":true}}}"#;
+    let other = r#"{"tokens":{"0":{"type":"systemd-fido2"},"1":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+    let empty_key = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"","tpm2-pin":true}}}"#;
+    let wrong_type = r#"{"tokens":{"0":{"type":"other","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD","tpm2-pin":true}}}"#;
+    // systemd never wrote the key with a hyphen.
+    let hyphen = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pubkey":"QUJD"}}}"#;
     for (json, level, expect) in [
         (TOKEN_PIN, Balanced, true),
         (TOKEN_PIN, Comfort, false),
@@ -574,6 +577,7 @@ fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
         (TOKEN_NO_PUBKEY, Balanced, false),
         (empty_key, Balanced, false),
         (wrong_type, Balanced, false),
+        (hyphen, Comfort, false),
         (r#"{"tokens":{}}"#, Comfort, false),
         (r#"{"keyslots":{}}"#, Comfort, false),
         ("", Comfort, false),
