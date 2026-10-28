@@ -9,6 +9,7 @@ mod wayland;
 #[path = "common/x11.rs"]
 mod x11;
 
+use std::io::{ErrorKind, Read};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,8 @@ const CLASS: &str = "tetsu-x11-probe";
 
 /// Starting satellite and Xwayland takes a while on the first window.
 const X11_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long an X11 event may lag before satellite is nudged.
+const NUDGE_EVERY: Duration = Duration::from_millis(500);
 
 #[test]
 fn satellite_finds_the_viewporter_and_no_xwayland_shell() {
@@ -110,6 +113,57 @@ fn next_of(watch: &mut Client, contract: &Contract, kind: &str) -> Value {
     }
 }
 
+/// The next streamed event, or `None` when nothing came in `wait`.
+fn try_event(watch: &mut Client, contract: &Contract, wait: Duration) -> Option<Value> {
+    watch.stream.set_read_timeout(Some(wait)).unwrap();
+    loop {
+        if let Some(end) = watch.buffer.iter().position(|b| *b == 0) {
+            let message: Vec<u8> = watch.buffer.drain(..=end).collect();
+            let reply: Value = serde_json::from_slice(&message[..end]).unwrap();
+            assert_eq!(reply["continues"], true, "{reply}");
+            common::check(contract, WATCH_WINDOWS, &reply["parameters"]);
+            return Some(reply["parameters"]["event"].clone());
+        }
+        let mut chunk = [0u8; 65536];
+        match watch.stream.read(&mut chunk) {
+            Ok(0) => panic!("the bus closed the stream"),
+            Ok(n) => watch.buffer.extend_from_slice(&chunk[..n]),
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                return None;
+            }
+            Err(e) => panic!("the bus stream failed: {e}"),
+        }
+    }
+}
+
+/// The next event of `kind` for an X11 window (titled `title` when
+/// given), nudging satellite while it does not come.
+fn next_x11(
+    watch: &mut Client,
+    contract: &Contract,
+    kind: &str,
+    title: Option<&str>,
+    probe: &x11::ProbeWindow,
+) -> Value {
+    let deadline = Instant::now() + X11_TIMEOUT;
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "no {kind} event in {X11_TIMEOUT:?}"
+        );
+        let event = try_event(watch, contract, NUDGE_EVERY);
+        watch.stream.set_read_timeout(Some(X11_TIMEOUT)).unwrap();
+        let Some(event) = event else {
+            probe.nudge();
+            continue;
+        };
+        let titled = title.is_none_or(|t| event["window"]["title"] == t);
+        if event["kind"] == kind && titled {
+            return event;
+        }
+    }
+}
+
 /// The pids of the compositor's children called xwayland-satellite.
 fn satellite_pids(comp: &Comp) -> Vec<u32> {
     let tasks = format!("/proc/{}/task", comp.pid());
@@ -147,12 +201,12 @@ fn x11_window_maps() {
     let mut watch = watch(&comp, &contract);
 
     let probe = x11::probe_window(display, CLASS, "x11 probe");
-    let opened = next_of(&mut watch, &contract, "opened");
+    let opened = next_x11(&mut watch, &contract, "opened", None, &probe);
     assert_x11_window(&opened, "x11 probe");
     let id = opened["window"]["id"].clone();
 
     probe.destroy();
-    let closed = next_of(&mut watch, &contract, "closed");
+    let closed = next_x11(&mut watch, &contract, "closed", None, &probe);
     assert_eq!(closed["id"], id);
 }
 
@@ -199,8 +253,9 @@ fn satellite_restarts_after_crash() {
     let contract = common::contract();
     let mut watch = watch(&comp, &contract);
 
-    let _first = x11::probe_window(&display, CLASS, "first");
-    assert_x11_window(&next_of(&mut watch, &contract, "opened"), "first");
+    let first = x11::probe_window(&display, CLASS, "first");
+    let opened = next_x11(&mut watch, &contract, "opened", None, &first);
+    assert_x11_window(&opened, "first");
     let before = satellite_pids(&comp);
     assert_eq!(before.len(), 1, "{before:?}");
     let status = std::process::Command::new("kill")
@@ -210,13 +265,8 @@ fn satellite_restarts_after_crash() {
     assert!(status.success());
     wait_reaped(&comp, before[0]);
 
-    let _second = x11::probe_window_on(reconnect(&display), CLASS, "second");
-    let opened = loop {
-        let opened = next_of(&mut watch, &contract, "opened");
-        if opened["window"]["title"] == "second" {
-            break opened;
-        }
-    };
+    let second = x11::probe_window_on(reconnect(&display), CLASS, "second");
+    let opened = next_x11(&mut watch, &contract, "opened", Some("second"), &second);
     assert_x11_window(&opened, "second");
     let after = satellite_pids(&comp);
     assert_eq!(after.len(), 1, "{after:?}");
@@ -232,8 +282,9 @@ fn a_wayland_window_beside_satellite_keeps_its_pid() {
     let display = comp.x11_display().expect("DISPLAY").to_owned();
     let contract = common::contract();
     let mut watch = watch(&comp, &contract);
-    let _probe = x11::probe_window(&display, CLASS, "x11");
-    assert_x11_window(&next_of(&mut watch, &contract, "opened"), "x11");
+    let probe = x11::probe_window(&display, CLASS, "x11");
+    let opened = next_x11(&mut watch, &contract, "opened", None, &probe);
+    assert_x11_window(&opened, "x11");
 
     let mut wl = WlClient::connect(&comp.wayland_socket());
     let _top = wl.map("org.tetsu.test", "wayland");
