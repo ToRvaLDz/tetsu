@@ -192,7 +192,7 @@ want="systemctl --user -q is-active tetsu-comp.service
 systemctl --user reset-failed tetsu-comp.service
 systemctl --user import-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR
 systemctl --user --wait start tetsu-comp.service
-systemctl --user unset-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR XDG_SESSION_TYPE WAYLAND_DISPLAY TETSU_COMP_SOCKET"
+systemctl --user unset-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR XDG_SESSION_TYPE WAYLAND_DISPLAY TETSU_COMP_SOCKET DISPLAY"
 run_stub "$log" XDG_SESSION_ID=7 "$SESSION"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(cat "$log")" = "$want" ]
 expect "session: the exact systemctl sequence, exit 0" $?
@@ -207,7 +207,7 @@ systemctl --user reset-failed tetsu-comp.service
 systemctl --user import-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR
 systemctl --user --wait start tetsu-comp.service
 systemctl --user stop tetsu-comp.service
-systemctl --user unset-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR XDG_SESSION_TYPE WAYLAND_DISPLAY TETSU_COMP_SOCKET"
+systemctl --user unset-environment XDG_SESSION_ID XDG_SEAT XDG_VTNR XDG_SESSION_TYPE WAYLAND_DISPLAY TETSU_COMP_SOCKET DISPLAY"
 : >"$log"
 env -u WAYLAND_DISPLAY -u TETSU_COMP_SOCKET PATH="$stubs:$PATH" STUB_LOG="$log" \
   XDG_SESSION_ID=7 STUB_HANG=1 "$SESSION" >/dev/null 2>&1 &
@@ -219,11 +219,11 @@ wait "$pid"; rc=$?
 expect "session: TERM stops the unit, then unsets the environment" $?
 
 [ "$(grep -m1 '^ExecStopPost=' "$comp")" = \
-  'ExecStopPost=-/usr/bin/systemctl --user unset-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE' ]
-expect "comp: ExecStopPost also unsets XDG_SESSION_TYPE" $?
+  'ExecStopPost=-/usr/bin/systemctl --user unset-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE DISPLAY' ]
+expect "comp: ExecStopPost also unsets XDG_SESSION_TYPE and DISPLAY" $?
 
 run_stub "$log" WAYLAND_DISPLAY=wayland-1 TETSU_COMP_SOCKET=/run/x/comp "$READY"; rc=$?
-[ "$rc" -eq 0 ] && [ "$(cat "$log")" = "systemctl --user import-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE
+[ "$rc" -eq 0 ] && [ "$(cat "$log")" = "systemctl --user import-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE DISPLAY
 systemd-notify --ready" ]
 expect "ready: imports the environment, then notifies" $?
 
