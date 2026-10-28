@@ -142,10 +142,29 @@ fn the_hotplug_hook_needs_the_headless_backend() {
 }
 
 #[test]
-fn the_headless_only_message_names_both_options() {
+fn x11_on_the_headless_backend_is_a_flag() {
+    let cli = run(&["--backend", "headless", "--headless-xwayland"], false).unwrap();
+    assert!(cli.headless_xwayland);
+    assert!(
+        !run(&["--backend", "headless"], false)
+            .unwrap()
+            .headless_xwayland
+    );
+    for backend in ["winit", "tty"] {
+        assert_eq!(
+            run(&["--backend", backend, "--headless-xwayland"], false).unwrap_err(),
+            CliError::HeadlessOnly
+        );
+    }
+    assert!(tetsu_comp::cli::USAGE.contains("--headless-xwayland"));
+}
+
+#[test]
+fn the_headless_only_message_names_every_option() {
     let message = CliError::HeadlessOnly.to_string();
     assert!(message.contains("--headless-outputs"), "{message}");
     assert!(message.contains("--headless-hotplug"), "{message}");
+    assert!(message.contains("--headless-xwayland"), "{message}");
     assert!(message.contains("--backend headless"), "{message}");
 }
 

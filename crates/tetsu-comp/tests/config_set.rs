@@ -114,6 +114,11 @@ fn a_key_that_is_not_writable_names_its_method() {
     // A remove is refused the same way.
     let err = run("", "", &[], &["trust.input"]).unwrap_err();
     assert!(matches!(err, SetError::KeyNotWritable { .. }));
+    let err = run("", "", &[("xwayland.satellite", json!("/evil"))], &[]).unwrap_err();
+    assert_eq!(
+        wire(&err).1,
+        json!({ "key": "xwayland.satellite", "method": null })
+    );
 }
 
 #[test]

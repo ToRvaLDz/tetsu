@@ -5,7 +5,7 @@ use tetsu_comp::config::layer::parse;
 
 #[test]
 fn every_key_is_known_with_its_writable_flag_and_method() {
-    let expected: [(&str, bool, Option<&str>); 14] = [
+    let expected: [(&str, bool, Option<&str>); 15] = [
         ("layout.default", true, None),
         ("layout.gaps_inner", true, None),
         ("layout.gaps_outer", true, None),
@@ -28,6 +28,7 @@ fn every_key_is_known_with_its_writable_flag_and_method() {
         ),
         ("lock.command", false, None),
         ("trust.input", false, None),
+        ("xwayland.satellite", false, None),
     ];
     assert_eq!(KEYS.len(), expected.len());
     for (name, writable, method) in expected {
@@ -40,7 +41,7 @@ fn every_key_is_known_with_its_writable_flag_and_method() {
 
 #[test]
 fn command_keys_are_recognised() {
-    for name in ["lock.command", "trust.input"] {
+    for name in ["lock.command", "trust.input", "xwayland.satellite"] {
         assert!(lookup(name).unwrap().runs_commands, "{name}");
     }
     assert!(!lookup("layout.default").unwrap().runs_commands);

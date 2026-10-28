@@ -79,9 +79,11 @@ fn the_image_file_is_over_the_built_in_values_and_still_a_default() {
 
 #[test]
 fn a_managed_command_key_is_ignored() {
-    let managed = layer("[trust]\ninput = [[\"evil\"]]\n[lock]\ncommand = [\"evil\"]\n");
+    let managed = layer(
+        "[trust]\ninput = [[\"evil\"]]\n[lock]\ncommand = [\"evil\"]\n[xwayland]\nsatellite = \"evil\"\n",
+    );
     let view = merge(&BTreeMap::new(), &managed, &BTreeMap::new());
-    for key in ["lock.command", "trust.input"] {
+    for key in ["lock.command", "trust.input", "xwayland.satellite"] {
         let entry = view.entry(key).unwrap();
         assert_eq!(entry.origin, Origin::Default, "{key}");
         assert_eq!(entry.managed_value, None, "{key}");
@@ -89,6 +91,10 @@ fn a_managed_command_key_is_ignored() {
     assert_eq!(
         view.entry("lock.command").unwrap().value,
         json!(["swaylock"])
+    );
+    assert_eq!(
+        view.entry("xwayland.satellite").unwrap().value,
+        json!("xwayland-satellite")
     );
 }
 
@@ -98,6 +104,20 @@ fn a_user_command_key_applies() {
     assert_eq!(view.entry("lock.command").unwrap().origin, Origin::User);
     let settings = Settings::from_values(&view.values());
     assert_eq!(settings.lock.command, ["mylock"]);
+    let view = view_of_satellite();
+    let entry = view.entry("xwayland.satellite").unwrap();
+    assert_eq!(entry.origin, Origin::User);
+    let settings = Settings::from_values(&view.values());
+    assert_eq!(settings.xwayland.program(), Some("/opt/sat"));
+}
+
+/// A user satellite over a managed one: the user's wins.
+fn view_of_satellite() -> View {
+    view(
+        "",
+        "[xwayland]\nsatellite = \"/evil\"\n",
+        "[xwayland]\nsatellite = \"/opt/sat\"\n",
+    )
 }
 
 #[test]

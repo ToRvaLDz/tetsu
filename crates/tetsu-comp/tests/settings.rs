@@ -373,3 +373,29 @@ fn an_idle_timeout_that_is_not_a_number_is_refused_naming_the_key() {
     let message = err("[lock]\nidle_timeout_s = \"10m\"\n");
     assert!(message.contains("idle_timeout_s"), "{message}");
 }
+
+#[test]
+fn the_satellite_defaults_to_xwayland_satellite_on_path() {
+    let settings = parse("").unwrap();
+    assert_eq!(settings.xwayland.satellite, "xwayland-satellite");
+    assert_eq!(settings.xwayland.program(), Some("xwayland-satellite"));
+}
+
+#[test]
+fn an_empty_satellite_turns_x11_off() {
+    let settings = parse("[xwayland]\nsatellite = \"\"\n").unwrap();
+    assert_eq!(settings.xwayland.program(), None);
+    let settings = parse("[xwayland]\nsatellite = \"/opt/sat\"\n").unwrap();
+    assert_eq!(settings.xwayland.program(), Some("/opt/sat"));
+}
+
+#[test]
+fn a_blank_satellite_is_refused_naming_the_key() {
+    let message = err("[xwayland]\nsatellite = \"  \"\n");
+    assert!(message.contains("xwayland.satellite"), "{message}");
+}
+
+#[test]
+fn unknown_xwayland_keys_are_refused() {
+    assert!(err("[xwayland]\nshell = true\n").contains("shell"));
+}
