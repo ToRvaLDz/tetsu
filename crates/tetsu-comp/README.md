@@ -349,7 +349,7 @@ agent's `SetManaged` (and `ConfigureOutputs`) ask `tetsu-capd` first.
 | `window_rule` (the whole array is one value: a higher layer replaces all lower rules, and one bad rule drops the array of its layer) | yes | |
 | `render.device` | no | `org.tetsu.comp.render.v1.SetRenderDevice` |
 | `render.explicit_sync` | no | `org.tetsu.comp.render.v1.SetExplicitSync` |
-| `lock.idle_timeout_s` (0 to 86400 seconds, 0 is off) | yes | |
+| `lock.idle_timeout_s` (0 is off, else 30 to 86400 seconds) | yes | |
 | `lock.command`, `trust.input` | no (they run commands) | user file only; ignored in the managed file |
 
 The output keys are `output.<connector>.{enabled, mode, scale, transform,
@@ -402,7 +402,7 @@ The user file schema:
 
     [lock]
     command = ["swaylock"]   # started by Mod+Shift+L, on idle and again when the locker dies; [] = never
-    idle_timeout_s = 600     # idle seconds before [lock] command starts; 0 = off, up to 86400
+    idle_timeout_s = 600     # idle seconds before [lock] command starts; 0 = off, else 30 to 86400
 
     [trust]
     # Started once at startup, with the right to bind the virtual input

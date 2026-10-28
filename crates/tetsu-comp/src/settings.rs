@@ -17,6 +17,9 @@ use crate::rules::{Pattern, Rule};
 
 /// The idle timeout when the file does not set one, in seconds.
 pub const DEFAULT_IDLE_TIMEOUT_S: u32 = 600;
+/// The shortest idle timeout that is not off, in seconds: reading a page
+/// must not lock the session.
+pub const MIN_IDLE_TIMEOUT_S: u32 = 30;
 /// The longest idle timeout, in seconds: a day.
 pub const MAX_IDLE_TIMEOUT_S: u32 = 86_400;
 
@@ -47,8 +50,8 @@ pub struct LockSettings {
     /// The locker's argv, started on the lock bind and again when the
     /// locker dies. Empty: nothing is started.
     pub command: Vec<String>,
-    /// Idle seconds before the locker starts, `0..=MAX_IDLE_TIMEOUT_S`;
-    /// `0` turns it off.
+    /// Idle seconds before the locker starts: `0` turns it off, else
+    /// `MIN_IDLE_TIMEOUT_S..=MAX_IDLE_TIMEOUT_S`.
     pub idle_timeout_s: u32,
 }
 
@@ -159,7 +162,8 @@ pub enum SettingsError {
     UnknownSyncMode(String),
     /// `lock.command` starts with a blank program.
     BlankLockCommand,
-    /// `lock.idle_timeout_s` outside `0..=MAX_IDLE_TIMEOUT_S`.
+    /// `lock.idle_timeout_s` neither `0` nor in
+    /// `MIN_IDLE_TIMEOUT_S..=MAX_IDLE_TIMEOUT_S`.
     BadIdleTimeout(i64),
     /// `trust.input[n]` is empty or starts with a blank program.
     BadTrustCommand(usize),
@@ -214,7 +218,7 @@ impl fmt::Display for SettingsError {
             }
             Self::BadIdleTimeout(value) => write!(
                 f,
-                "lock.idle_timeout_s: {value} is outside 0..={MAX_IDLE_TIMEOUT_S} (0 turns it off)"
+                "lock.idle_timeout_s: {value} is not 0 or {MIN_IDLE_TIMEOUT_S}..={MAX_IDLE_TIMEOUT_S} (0 turns it off)"
             ),
             Self::BadTrustCommand(at) => {
                 write!(f, "trust.input[{at}]: needs a command with a program name")
@@ -406,7 +410,7 @@ pub(crate) fn lock_command(command: &[String]) -> Result<(), SettingsError> {
 
 pub(crate) fn idle_timeout(secs: i64) -> Result<u32, SettingsError> {
     match u32::try_from(secs) {
-        Ok(s) if s <= MAX_IDLE_TIMEOUT_S => Ok(s),
+        Ok(s) if s == 0 || (MIN_IDLE_TIMEOUT_S..=MAX_IDLE_TIMEOUT_S).contains(&s) => Ok(s),
         _ => Err(SettingsError::BadIdleTimeout(secs)),
     }
 }
