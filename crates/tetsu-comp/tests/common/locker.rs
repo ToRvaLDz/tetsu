@@ -365,12 +365,20 @@ impl Locker {
 
     /// Unlocks and destroys the lock.
     pub fn unlock(&mut self) {
+        self.try_unlock().unwrap();
+    }
+
+    /// Like `unlock`, but a compositor that is gone is an error, not a panic.
+    pub fn try_unlock(&mut self) -> Result<(), String> {
         if let Some(lock) = self.app.lock.take() {
             lock.unlock();
         }
         self.app.surfaces.clear();
-        self.conn.flush().unwrap();
-        self.queue.roundtrip(&mut self.app).unwrap();
+        self.conn.flush().map_err(|e| e.to_string())?;
+        self.queue
+            .roundtrip(&mut self.app)
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// Dies without unlocking: the connection is cut, nothing is sent.

@@ -56,7 +56,11 @@ fn helper_idle_locker() {
     std::fs::write(Path::new(&out), "locked").unwrap();
     let hold = std::env::var(HOLD).map_or(0, |ms| ms.parse().unwrap());
     std::thread::sleep(Duration::from_millis(hold));
-    locker.unlock();
+    // A retry can outlive its test: once the compositor is gone, exit at
+    // once and quietly, as the harness would report to a closed pipe.
+    if locker.try_unlock().is_err() {
+        std::process::exit(0);
+    }
 }
 
 /// A locker that hangs before it locks: it records its pid and waits,
