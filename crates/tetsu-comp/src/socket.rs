@@ -4,6 +4,7 @@
 
 use std::ffi::OsString;
 use std::io;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,6 +14,8 @@ use smithay::reexports::wayland_server::Display;
 use smithay::wayland::socket::ListeningSocketSource;
 
 use crate::state::{ClientState, State};
+use crate::trust::Trust;
+use crate::xwayland::satellite::peer_trust;
 
 /// The environment variable naming the compositor's bus socket.
 pub const COMP_SOCKET_ENV: &str = "TETSU_COMP_SOCKET";
@@ -43,7 +46,7 @@ pub fn listen(
     let handle = event_loop.handle();
     handle
         .insert_source(listening, |stream, (), state| {
-            let data = Arc::new(ClientState::default());
+            let data = Arc::new(ClientState::with_trust(accepted_trust(state, &stream)));
             if let Err(e) = state.display_handle.insert_client(stream, data) {
                 eprintln!("tetsu-comp: cannot accept a client: {e}");
             }
@@ -67,4 +70,17 @@ pub fn listen(
         )
         .map_err(|e| io::Error::other(e.to_string()))?;
     Ok(socket_name)
+}
+
+/// The trust of a client from the listening socket: Xwayland for the live
+/// satellite (its pid, from `SO_PEERCRED`), untrusted for everyone else.
+fn accepted_trust(state: &State, stream: &UnixStream) -> Trust {
+    let satellite = state.xwayland.as_ref().and_then(|x| x.satellite_pid());
+    if satellite.is_none() {
+        return Trust::Untrusted;
+    }
+    let peer = rustix::net::sockopt::socket_peercred(stream)
+        .ok()
+        .and_then(|cred| u32::try_from(cred.pid.as_raw_pid()).ok());
+    peer_trust(peer, satellite)
 }

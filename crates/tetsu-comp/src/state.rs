@@ -186,6 +186,8 @@ pub struct State {
     pub(crate) tty_queue: crate::outputs::queue::ChangeQueue,
     /// Whether the tty is taken out of the state right now.
     pub(crate) tty_taken: bool,
+    /// The X11 display and its satellite, when X11 is on.
+    pub xwayland: Option<crate::xwayland::Xwayland>,
     /// Switches to a VT (tty only).
     pub vt_switch: Option<Box<dyn FnMut(i32)>>,
 }
@@ -263,6 +265,7 @@ impl State {
             tty: None,
             tty_queue: crate::outputs::queue::ChangeQueue::default(),
             tty_taken: false,
+            xwayland: None,
             vt_switch: None,
         })
     }
@@ -515,7 +518,7 @@ impl State {
 
     /// Maps a toplevel that committed its first buffer: it is opened in the
     /// engine, which places it by the rules, tiled or floating.
-    pub fn map_window(&mut self, window: Window, pid: Option<i64>) {
+    pub fn map_window(&mut self, window: Window, pid: Option<i64>, xwayland: bool) {
         let Some(toplevel) = window.toplevel() else {
             return;
         };
@@ -527,7 +530,7 @@ impl State {
                 app_id,
                 title,
                 pid,
-                xwayland: false,
+                xwayland,
             },
             committed,
             &self.viewports(),

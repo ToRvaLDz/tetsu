@@ -3,7 +3,9 @@
 //! a socket pair, keeps one end as the client and hands the other to the
 //! child as `WAYLAND_SOCKET`. Everything that comes through the listening
 //! socket is untrusted, and so are the children of a trusted client (they
-//! find `WAYLAND_DISPLAY`, not the socket pair).
+//! find `WAYLAND_DISPLAY`, not the socket pair). The one exception is
+//! xwayland-satellite, known there by its pid (`xwayland`): it is labelled
+//! `Xwayland` and gets no privilege.
 
 use std::io;
 use std::os::fd::OwnedFd;
@@ -103,6 +105,7 @@ pub fn spawn_trusted(state: &mut State, argv: &[String], trust: Trust) -> io::Re
         .env("WAYLAND_SOCKET", rustix_fd(&inherited).to_string())
         .env("WAYLAND_DISPLAY", &state.socket_name)
         .stdin(Stdio::null());
+    crate::xwayland::set_display(&mut command, state.x11_display());
     if let Some(bus) = &state.comp_socket {
         command.env(COMP_SOCKET_ENV, bus);
     }

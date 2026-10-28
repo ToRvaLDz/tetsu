@@ -157,8 +157,8 @@ impl State {
             self.send_initial_configure(&toplevel);
         } else if has_buffer(surface) {
             let window = self.unmapped.remove(at);
-            let pid = self.client_pid(surface);
-            self.map_window(window, pid);
+            let (pid, xwayland) = self.window_origin(surface);
+            self.map_window(window, pid, xwayland);
         }
     }
 }
