@@ -66,3 +66,154 @@ fn the_probe_asks_for_listenfd_support() {
     assert_eq!(args(&command), [":0", "--test-listenfd-support"]);
     assert_eq!(envs(&command).get(OsStr::new("DISPLAY")), Some(&None));
 }
+
+mod display {
+    use std::fs;
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::Path;
+
+    use tetsu_comp::xwayland::display::{X11Display, pid_alive};
+
+    fn lock(root: &Path, n: u32) -> std::path::PathBuf {
+        root.join(format!(".X{n}-lock"))
+    }
+
+    fn socket(root: &Path, n: u32) -> std::path::PathBuf {
+        root.join(format!(".X11-unix/X{n}"))
+    }
+
+    fn open(root: &Path) -> std::io::Result<X11Display> {
+        X11Display::open(root, 0, pid_alive)
+    }
+
+    fn listener(fd: std::os::fd::BorrowedFd<'_>) -> UnixListener {
+        UnixListener::from(fd.try_clone_to_owned().unwrap())
+    }
+
+    /// A pid nobody has any more: a child that ran and was reaped.
+    fn dead_pid() -> u32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    #[test]
+    fn the_first_display_is_zero_with_a_lock_and_both_sockets() {
+        let root = tempfile::tempdir().unwrap();
+        let display = open(root.path()).unwrap();
+        assert_eq!(display.display_name(), ":0");
+        let dir = fs::metadata(root.path().join(".X11-unix")).unwrap();
+        assert_eq!(dir.permissions().mode() & 0o7777, 0o1777);
+        let text = fs::read_to_string(lock(root.path(), 0)).unwrap();
+        assert_eq!(text, format!("{:>10}\n", std::process::id()));
+        assert!(socket(root.path(), 0).exists());
+        let abstract_fd = display.abstract_fd().unwrap();
+        let address = listener(abstract_fd).local_addr().unwrap();
+        let expected = format!("{}/.X11-unix/X0", root.path().display());
+        assert_eq!(address.as_abstract_name(), Some(expected.as_bytes()));
+    }
+
+    #[test]
+    fn a_second_display_takes_the_next_number() {
+        let root = tempfile::tempdir().unwrap();
+        let first = open(root.path()).unwrap();
+        let second = open(root.path()).unwrap();
+        assert_eq!((first.display_name(), second.display_name()), (":0", ":1"));
+    }
+
+    #[test]
+    fn a_lock_of_a_dead_process_is_reclaimed() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(".X11-unix")).unwrap();
+        fs::set_permissions(
+            root.path().join(".X11-unix"),
+            fs::Permissions::from_mode(0o1777),
+        )
+        .unwrap();
+        fs::write(lock(root.path(), 0), format!("{:>10}\n", dead_pid())).unwrap();
+        let display = open(root.path()).unwrap();
+        assert_eq!(display.display_name(), ":0");
+        let text = fs::read_to_string(lock(root.path(), 0)).unwrap();
+        assert_eq!(text.trim(), std::process::id().to_string());
+    }
+
+    #[test]
+    fn a_garbage_or_live_lock_is_skipped() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(lock(root.path(), 0), "not a pid\n").unwrap();
+        fs::write(
+            lock(root.path(), 1),
+            format!("{:>10}\n", std::process::id()),
+        )
+        .unwrap();
+        let display = open(root.path()).unwrap();
+        assert_eq!(display.display_name(), ":2");
+        assert_eq!(
+            fs::read_to_string(lock(root.path(), 0)).unwrap(),
+            "not a pid\n"
+        );
+    }
+
+    #[test]
+    fn a_leftover_socket_under_a_free_lock_is_replaced() {
+        let root = tempfile::tempdir().unwrap();
+        let first = open(root.path()).unwrap();
+        drop(first);
+        drop(UnixListener::bind(socket(root.path(), 0)).unwrap());
+        assert!(socket(root.path(), 0).exists());
+        let display = open(root.path()).unwrap();
+        assert_eq!(display.display_name(), ":0");
+        UnixStream::connect(socket(root.path(), 0)).unwrap();
+    }
+
+    #[test]
+    fn an_unsafe_x11_directory_is_refused() {
+        for (mode, what) in [(0o777, "sticky"), (0o1755, "writable")] {
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join(".X11-unix");
+            fs::create_dir(&dir).unwrap();
+            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+            let message = open(root.path()).err().unwrap().to_string();
+            assert!(message.contains(what), "{mode:o}: {message}");
+            assert!(message.contains(".X11-unix"), "{mode:o}: {message}");
+        }
+    }
+
+    #[test]
+    fn fifty_taken_locks_are_an_error() {
+        let root = tempfile::tempdir().unwrap();
+        for n in 0..50 {
+            fs::write(
+                lock(root.path(), n),
+                format!("{:>10}\n", std::process::id()),
+            )
+            .unwrap();
+        }
+        let message = open(root.path()).err().unwrap().to_string();
+        assert!(message.contains("no free X11 display"), "{message}");
+        assert!(message.contains("50"), "{message}");
+    }
+
+    #[test]
+    fn dropping_the_display_removes_the_lock_and_the_socket() {
+        let root = tempfile::tempdir().unwrap();
+        let display = open(root.path()).unwrap();
+        drop(display);
+        assert!(!lock(root.path(), 0).exists());
+        assert!(!socket(root.path(), 0).exists());
+    }
+
+    #[test]
+    fn a_client_makes_the_unix_listener_readable() {
+        let root = tempfile::tempdir().unwrap();
+        let display = open(root.path()).unwrap();
+        let unix = listener(display.unix_fd());
+        unix.set_nonblocking(true).unwrap();
+        assert!(unix.accept().is_err());
+        let _client = UnixStream::connect(socket(root.path(), 0)).unwrap();
+        assert!(unix.accept().is_ok());
+    }
+}
