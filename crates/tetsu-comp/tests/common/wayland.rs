@@ -9,13 +9,20 @@ use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, FrameCallbackData};
 use smithay_client_toolkit::dispatch2::Dispatch2;
+use smithay_client_toolkit::globals::GlobalData;
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::backend::ObjectId;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
 use smithay_client_toolkit::reexports::client::protocol::{
     wl_keyboard, wl_output, wl_seat, wl_shm, wl_surface,
 };
-use smithay_client_toolkit::reexports::client::{Connection, EventQueue, Proxy, QueueHandle};
+use smithay_client_toolkit::reexports::client::{
+    Connection, EventQueue, Proxy, QueueHandle, WEnum,
+};
+use smithay_client_toolkit::reexports::protocols::xdg::decoration::zv1::client::{
+    zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
+    zxdg_toplevel_decoration_v1::{self, ZxdgToplevelDecorationV1},
+};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::WaylandSurface;
@@ -32,6 +39,8 @@ use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{delegate_dispatch2, delegate_registry, registry_handlers};
 
+pub use zxdg_toplevel_decoration_v1::Mode;
+
 /// A configured size; a side is `None` when the compositor left it open.
 type Size = (Option<NonZeroU32>, Option<NonZeroU32>);
 
@@ -45,6 +54,8 @@ struct App {
     configures: Vec<(ObjectId, Size, bool)>,
     /// The decoration mode of each toplevel configure.
     modes: Vec<(ObjectId, DecorationMode)>,
+    /// The modes the late decorations were configured with, by surface.
+    late_modes: Vec<(ObjectId, WEnum<Mode>)>,
     /// Whether to put a bar on every `wl_output`, as tetsu-bar does.
     mimic_bar: bool,
     layers: Vec<LayerRec>,
@@ -69,6 +80,24 @@ struct LayerRec {
     /// The size it attaches when the compositor leaves a side open.
     fallback: (u32, u32),
     bar: bool,
+}
+
+/// A decoration created after the first configure, for this surface.
+struct LateDecoration(ObjectId);
+
+impl Dispatch2<ZxdgToplevelDecorationV1, App> for LateDecoration {
+    fn event(
+        &self,
+        app: &mut App,
+        _: &ZxdgToplevelDecorationV1,
+        event: zxdg_toplevel_decoration_v1::Event,
+        _: &Connection,
+        _: &QueueHandle<App>,
+    ) {
+        if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
+            app.late_modes.push((self.0.clone(), mode));
+        }
+    }
 }
 
 /// Keyboard events of the seat.
@@ -306,6 +335,7 @@ pub struct WlClient {
     queue: EventQueue<App>,
     app: App,
     xdg: XdgShell,
+    late_manager: Option<ZxdgDecorationManagerV1>,
     pool: Option<SlotPool>,
     buffers: Vec<smithay_client_toolkit::shm::slot::Buffer>,
 }
@@ -326,6 +356,7 @@ impl WlClient {
             layer_shell: LayerShell::bind(&globals, &qh).ok(),
             configures: Vec::new(),
             modes: Vec::new(),
+            late_modes: Vec::new(),
             mimic_bar: false,
             layers: Vec::new(),
             layer_buffers: Vec::new(),
@@ -337,12 +368,15 @@ impl WlClient {
             kept: Vec::new(),
         };
         let xdg = XdgShell::bind(&globals, &qh).unwrap();
+        // Its own manager: sctk only decorates a window as it creates it.
+        let late_manager = globals.bind(&qh, 1..=1, GlobalData).ok();
         queue.roundtrip(&mut app).unwrap();
         Self {
             _conn: conn,
             queue,
             app,
             xdg,
+            late_manager,
             pool: None,
             buffers: Vec::new(),
         }
@@ -448,6 +482,22 @@ impl WlClient {
             self.queue.roundtrip(&mut self.app).unwrap();
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Creates the toplevel's decoration now, after its first configure.
+    pub fn decorate_late(&mut self, top: &Toplevel) {
+        let qh = self.queue.handle();
+        let manager = self.late_manager.as_ref().expect("no xdg decoration");
+        let data = LateDecoration(top.window.wl_surface().id());
+        manager.get_toplevel_decoration(top.window.xdg_toplevel(), &qh, data);
+        self.queue.roundtrip(&mut self.app).unwrap();
+    }
+
+    /// The modes the late decoration of the toplevel was configured with.
+    pub fn late_modes(&self, top: &Toplevel) -> Vec<WEnum<Mode>> {
+        let id = top.window.wl_surface().id();
+        let late = self.app.late_modes.iter();
+        late.filter(|(s, _)| *s == id).map(|(_, m)| *m).collect()
     }
 
     /// How many configures the toplevel has had.

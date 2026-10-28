@@ -29,8 +29,9 @@ fn answer_server_side(toplevel: &ToplevelSurface) {
 
 impl XdgDecorationHandler for State {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        // Before the first commit the mode rides on the initial configure.
-        toplevel.with_pending_state(|state| state.decoration_mode = Some(XdgMode::ServerSide));
+        // Before the first commit the mode rides on the initial configure;
+        // a decoration created later is answered at once.
+        answer_server_side(&toplevel);
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: XdgMode) {

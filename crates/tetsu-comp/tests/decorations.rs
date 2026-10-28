@@ -176,6 +176,20 @@ fn xdg_decoration_is_always_server_side() {
 }
 
 #[test]
+fn a_late_xdg_decoration_is_answered_at_once() {
+    let comp = Comp::start();
+    let mut wl = WlClient::connect(&comp.wayland_socket());
+    let top = wl.map("org.tetsu.test", "one");
+    let before = wl.configures(&top);
+    wl.decorate_late(&top);
+    wl.wait_for_configure_after(&top, before);
+    assert_eq!(
+        wl.late_modes(&top),
+        [wayland_client::WEnum::Value(wayland::Mode::ServerSide)]
+    );
+}
+
+#[test]
 fn kde_server_decoration_answers_server() {
     let comp = Comp::start();
     let mut kde = KdeClient::connect(&comp.wayland_socket());
