@@ -56,6 +56,11 @@ pub fn check_config_event(contract: &Contract, event: &tetsu_bus::config::Config
     check(contract, "org.tetsu.comp.config.v1.WatchConfig", &reply);
 }
 
+pub fn check_render_event(contract: &Contract, event: &tetsu_bus::render::RenderEvent) {
+    let reply = json!({ "event": wire(event) });
+    check(contract, "org.tetsu.comp.render.v1.WatchRender", &reply);
+}
+
 pub fn check_session_event(contract: &Contract, event: &SessionEvent) {
     let reply = json!({ "event": wire(event) });
     check(contract, "org.tetsu.comp.session.v1.WatchSession", &reply);
