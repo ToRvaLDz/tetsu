@@ -3,4 +3,5 @@
 //! satellite is an ordinary Wayland client, told apart by its pid
 //! (`satellite`).
 
+pub mod display;
 pub mod satellite;
