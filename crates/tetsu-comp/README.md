@@ -225,11 +225,11 @@ once per loop iteration.
 
 After `[lock] idle_timeout_s` seconds with no activity the compositor
 starts `[lock] command` with locker trust, as Mod+Shift+L does; it does
-not lock by itself. So `command = []` means no idle lock, and a locker
-that cannot start or exits without locking leaves the session unlocked
-until the next idle period (both are logged). Idle never starts the locker
-while the session is locked or defunct, and the next idle period starts at
-the unlock. There is no idle inhibitor (`zwp_idle_inhibit_manager_v1`)
+not lock by itself. So `command = []` means no idle lock. A locker that
+cannot start or exits without locking leaves the session unlocked, so idle
+starts it again every `idle_timeout_s` while no activity comes (each try is
+logged). Idle never starts the locker while the session is locked or
+defunct, and the next idle period starts at the unlock. There is no idle inhibitor (`zwp_idle_inhibit_manager_v1`)
 yet: a video with no input locks at the timeout.
 
 ## Build dependencies

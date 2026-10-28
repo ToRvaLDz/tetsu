@@ -21,48 +21,44 @@ pub fn may_lock(phase: Phase) -> bool {
 
 /// When the session has been idle long enough.
 ///
-/// Due once per idle period: after it fired, only activity arms it again.
-/// It is never due while the session is not unlocked, and a poll while
-/// locked does not use up the period.
+/// Due a full timeout after the last activity, then again every timeout
+/// while no activity comes: a locker that failed or crashed is retried
+/// (fail-closed). It is never due while the session is not unlocked, and a
+/// poll while locked does not use up the period.
 #[derive(Debug, Clone)]
 pub struct IdleTimer {
     timeout: Option<Duration>,
-    /// The last activity, or when the timer was made.
+    /// The last activity, the last firing, or when the timer was made.
     last: Instant,
-    /// Whether this idle period was already reported.
-    fired: bool,
 }
 
 impl IdleTimer {
     /// Armed from `now`.
     pub fn new(timeout: Option<Duration>, now: Instant) -> Self {
-        Self {
-            timeout,
-            last: now,
-            fired: false,
-        }
+        Self { timeout, last: now }
     }
 
     /// Input happened at `now`: a new idle period starts.
     pub fn activity(&mut self, now: Instant) {
         self.last = now;
-        self.fired = false;
     }
 
-    /// A new timeout, counted from the last activity; `None` turns it off.
+    /// A new timeout, counted from the last activity or firing; `None`
+    /// turns it off.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.timeout = timeout;
     }
 
-    /// Whether the session went idle at `now`; true once per idle period.
+    /// Whether the session went idle at `now`; once true, it re-arms from
+    /// `now`.
     pub fn due(&mut self, now: Instant, unlocked: bool) -> bool {
         let Some(timeout) = self.timeout else {
             return false;
         };
-        if !unlocked || self.fired || now.saturating_duration_since(self.last) < timeout {
+        if !unlocked || now.saturating_duration_since(self.last) < timeout {
             return false;
         }
-        self.fired = true;
+        self.last = now;
         true
     }
 }
