@@ -157,8 +157,7 @@ fn the_replies_pass_the_contract() {
 fn set_render_device_params_read_the_wire_form() {
     let absent: SetRenderDeviceParams = serde_json::from_value(json!({})).unwrap();
     assert_eq!(absent.device_id, None);
-    let null: SetRenderDeviceParams =
-        serde_json::from_value(json!({ "device_id": null })).unwrap();
+    let null: SetRenderDeviceParams = serde_json::from_value(json!({ "device_id": null })).unwrap();
     assert_eq!(null.device_id, None);
     let named: SetRenderDeviceParams = serde_json::from_value(json!({ "device_id": "x" })).unwrap();
     assert_eq!(named.device_id.as_deref(), Some("x"));
