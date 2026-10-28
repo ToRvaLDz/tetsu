@@ -14,6 +14,7 @@ fn info(app_id: &str, title: &str) -> WindowInfo {
         app_id: Some(app_id.into()),
         title: Some(title.into()),
         pid: Some(100),
+        ..WindowInfo::default()
     }
 }
 
@@ -243,6 +244,7 @@ fn a_window_can_be_opened_with_unknown_fields() {
         app_id: None,
         title: None,
         pid: None,
+        ..WindowInfo::default()
     });
     let events = check_all(&mut model);
     let window = events.window[0].window.clone().unwrap();
@@ -251,6 +253,39 @@ fn a_window_can_be_opened_with_unknown_fields() {
         (window.app_id, window.title, window.pid),
         (None, None, None)
     );
+}
+
+#[test]
+fn an_xwayland_window_opens_with_no_pid() {
+    let (mut model, _) = started();
+    let id = model.open(WindowInfo {
+        app_id: Some("xeyes".into()),
+        title: Some("eyes".into()),
+        pid: None,
+        xwayland: true,
+    });
+    let snapshot = tetsu_comp::bus::Snapshot::of(&model);
+    let listed = snapshot.windows.windows.iter().find(|w| w.id == id).unwrap();
+    assert_eq!((listed.xwayland, listed.pid), (true, None));
+    common::check_windows_list(&common::contract(), &snapshot.windows);
+    let events = check_all(&mut model);
+    let window = events.window[0].window.clone().unwrap();
+    assert_eq!(window.id, id);
+    assert_eq!((window.xwayland, window.pid), (true, None));
+    let json = serde_json::to_value(&events.window[0]).unwrap();
+    assert_eq!(json["window"]["xwayland"], serde_json::json!(true));
+    assert_eq!(json["window"]["pid"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_window_is_not_xwayland_by_default() {
+    let (mut model, _) = started();
+    assert!(!WindowInfo::default().xwayland);
+    let id = model.open(info("a", "one"));
+    let events = check_all(&mut model);
+    let window = events.window[0].window.clone().unwrap();
+    assert_eq!(window.id, id);
+    assert_eq!((window.xwayland, window.pid), (false, Some(100)));
 }
 
 #[test]
