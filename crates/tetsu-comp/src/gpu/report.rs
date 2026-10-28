@@ -61,13 +61,31 @@ fn pending_device(target: &Target) -> PendingDevice {
 /// The state of `ctl`; `outputs` maps a device id to the outputs wired to
 /// it.
 pub fn render(ctl: &RenderCtl, outputs: &BTreeMap<String, Vec<String>>) -> Render {
-    // Not written yet.
-    let _ = (ctl, outputs, pending_device, explicit_sync);
-    Render::default()
+    let devices = ctl
+        .devices
+        .iter()
+        .map(|d| RenderDevice {
+            id: d.id.clone(),
+            node: d.node.clone(),
+            driver: d.driver.clone(),
+            driver_version: d.driver_version.clone(),
+            name: d.name.clone(),
+            output_ids: outputs.get(&d.id).cloned().unwrap_or_default(),
+            power_mw: None,
+            switch_failures: ctl.failures.get(&d.id).copied().unwrap_or(0),
+        })
+        .collect();
+    Render {
+        device_id: ctl.current.clone(),
+        automatic: ctl.automatic,
+        devices,
+        explicit_sync: explicit_sync(ctl),
+        pending_device: ctl.pending_device.as_ref().map(pending_device),
+        pending_explicit_sync: ctl.pending_sync.map(wire_mode),
+    }
 }
 
 /// The `changed` owed to the watchers, if anything moved.
 pub fn diff(last: &Render, now: &Render) -> Option<RenderEvent> {
-    let _ = (last, now);
-    None::<RenderEvent>
+    (last != now).then(|| RenderEvent::changed(now.clone()))
 }
