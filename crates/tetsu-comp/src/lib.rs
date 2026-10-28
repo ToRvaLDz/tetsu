@@ -17,6 +17,7 @@ pub mod decor;
 pub mod engine;
 pub mod gpu;
 pub mod grab;
+pub mod idle;
 pub mod input;
 pub mod layout;
 pub mod lock;
