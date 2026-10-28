@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 
-use tetsu_comp::backend::headless::{HotplugCommand, parse_command};
+use tetsu_comp::backend::headless::{HotplugCommand, idle_unit_of, parse_command};
 use tetsu_comp::cli::{Backend, CliError, Parsed, parse};
 
 fn args(list: &[&str]) -> Vec<OsString> {
@@ -304,4 +304,15 @@ fn the_activity_command_parses_and_takes_no_argument() {
     assert_eq!(parse_command("activity"), Ok(HotplugCommand::Activity));
     assert_eq!(parse_command("activity\r\n"), Ok(HotplugCommand::Activity));
     assert!(parse_command("activity x").is_err());
+}
+
+#[test]
+fn the_headless_idle_unit_is_1_to_1000_ms() {
+    use std::time::Duration;
+    assert_eq!(idle_unit_of("33"), Some(Duration::from_millis(33)));
+    assert_eq!(idle_unit_of("1"), Some(Duration::from_millis(1)));
+    assert_eq!(idle_unit_of("1000"), Some(Duration::from_secs(1)));
+    for bad in ["0", "1001", "-5", "", "1s", "x"] {
+        assert_eq!(idle_unit_of(bad), None, "{bad:?}");
+    }
 }

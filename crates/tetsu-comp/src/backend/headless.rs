@@ -165,6 +165,11 @@ fn parse_size(text: &str) -> Result<(i32, i32), String> {
     Ok((side(w)?, side(h)?))
 }
 
+/// The length of one idle second, from `TETSU_COMP_HEADLESS_IDLE_UNIT_MS`.
+pub fn idle_unit_of(_text: &str) -> Option<Duration> {
+    None
+}
+
 /// Adds `count` virtual outputs, `HEADLESS-1..`, side by side, and starts
 /// their frame timers. With `hotplug`, reads commands from stdin.
 pub fn init(state: &mut State, count: u8, hotplug: bool) -> Result<(), Box<dyn std::error::Error>> {

@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use tetsu_comp::idle::{IdleTimer, may_lock, timeout_of};
+use tetsu_comp::idle::{IdleTimer, may_lock, timeout_in, timeout_of};
 use tetsu_comp::lock::Phase;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -120,4 +120,12 @@ fn only_an_unlocked_session_may_lock_on_idle() {
     for phase in [Phase::Locking, Phase::Locked, Phase::Defunct] {
         assert!(!may_lock(phase), "{phase:?}");
     }
+}
+
+#[test]
+fn a_timeout_counts_in_the_unit_it_is_given() {
+    let unit = Duration::from_millis(33);
+    assert_eq!(timeout_in(0, unit), None);
+    assert_eq!(timeout_in(30, unit), Some(Duration::from_millis(990)));
+    assert_eq!(timeout_in(30, secs(1)), timeout_of(30));
 }

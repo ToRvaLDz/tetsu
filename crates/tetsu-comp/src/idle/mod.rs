@@ -15,6 +15,11 @@ pub fn timeout_of(secs: u32) -> Option<Duration> {
     (secs > 0).then(|| Duration::from_secs(u64::from(secs)))
 }
 
+/// The timeout `secs` stands for when one second lasts `unit`.
+pub fn timeout_in(secs: u32, _unit: Duration) -> Option<Duration> {
+    timeout_of(secs)
+}
+
 /// Whether `event` is user activity that re-arms idle: a device that
 /// comes or goes (a dock replug) or a switch (a lid closing) is not.
 pub fn is_activity<B: InputBackend>(event: &InputEvent<B>) -> bool {
