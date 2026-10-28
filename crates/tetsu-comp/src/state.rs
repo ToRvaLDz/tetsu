@@ -3,16 +3,12 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use smithay::desktop::{PopupManager, Space, Window, layer_map_for_output};
 use smithay::input::{Seat, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
-use smithay::reexports::calloop::generic::Generic;
-use smithay::reexports::calloop::{
-    EventLoop, Interest, LoopHandle, LoopSignal, Mode as PollMode, PostAction,
-};
+use smithay::reexports::calloop::{EventLoop, LoopHandle, LoopSignal};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as KdeDefaultMode;
 use smithay::reexports::wayland_server::backend::{
@@ -35,7 +31,6 @@ use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgShellState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::viewporter::ViewporterState;
-use smithay::wayland::socket::ListeningSocketSource;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::virtual_pointer::VirtualPointerManagerState;
 
@@ -208,7 +203,7 @@ impl State {
         seat.add_keyboard(Default::default(), REPEAT_DELAY_MS, REPEAT_RATE)
             .map_err(|e| io::Error::other(format!("keyboard: {e}")))?;
         seat.add_pointer();
-        let socket_name = Self::listen(display, event_loop)?;
+        let socket_name = crate::socket::listen(display, event_loop)?;
         // Only helpers the compositor starts with `Trust::Input` see these.
         let virtual_keyboard_state = VirtualKeyboardManagerState::new::<Self, _>(&dh, |client| {
             trust_of(client) == Trust::Input
@@ -270,41 +265,6 @@ impl State {
             tty_taken: false,
             vt_switch: None,
         })
-    }
-
-    fn listen(
-        display: Display<State>,
-        event_loop: &mut EventLoop<'static, State>,
-    ) -> io::Result<OsString> {
-        let listening = ListeningSocketSource::new_auto().map_err(io::Error::other)?;
-        let socket_name = listening.socket_name().to_os_string();
-        let handle = event_loop.handle();
-        handle
-            .insert_source(listening, |stream, (), state| {
-                let data = Arc::new(ClientState::default());
-                if let Err(e) = state.display_handle.insert_client(stream, data) {
-                    eprintln!("tetsu-comp: cannot accept a client: {e}");
-                }
-            })
-            .map_err(|e| io::Error::other(e.to_string()))?;
-        handle
-            .insert_source(
-                Generic::new(display, Interest::READ, PollMode::Level),
-                |_, display, state| {
-                    // SAFETY: the display is never dropped while the source lives.
-                    #[expect(unsafe_code)]
-                    let result = unsafe { display.get_mut().dispatch_clients(state) };
-                    match result {
-                        Ok(_) => Ok(PostAction::Continue),
-                        Err(e) => {
-                            eprintln!("tetsu-comp: wayland dispatch failed: {e}");
-                            Ok(PostAction::Remove)
-                        }
-                    }
-                },
-            )
-            .map_err(|e| io::Error::other(e.to_string()))?;
-        Ok(socket_name)
     }
 
     /// Adds an output of `size` at `refresh` mHz with one mode.
