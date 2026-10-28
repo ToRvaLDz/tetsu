@@ -265,7 +265,12 @@ fn an_xwayland_window_opens_with_no_pid() {
         xwayland: true,
     });
     let snapshot = tetsu_comp::bus::Snapshot::of(&model);
-    let listed = snapshot.windows.windows.iter().find(|w| w.id == id).unwrap();
+    let listed = snapshot
+        .windows
+        .windows
+        .iter()
+        .find(|w| w.id == id)
+        .unwrap();
     assert_eq!((listed.xwayland, listed.pid), (true, None));
     common::check_windows_list(&common::contract(), &snapshot.windows);
     let events = check_all(&mut model);

@@ -30,6 +30,7 @@ fn window(title: &str) -> WindowInfo {
         app_id: Some("app".into()),
         title: Some(title.into()),
         pid: Some(100),
+        ..WindowInfo::default()
     }
 }
 

@@ -9,8 +9,10 @@ pub struct WindowInfo {
     pub app_id: Option<String>,
     /// The title.
     pub title: Option<String>,
-    /// The client's process id.
+    /// The client's process id; none for an X11 window.
     pub pid: Option<i64>,
+    /// Whether the window is an X11 window (through xwayland-satellite).
+    pub xwayland: bool,
 }
 
 /// A change to the text fields of a window. `None` leaves a field alone.
@@ -64,7 +66,7 @@ impl Windows {
             workspace_id,
             placement: Placement::Tiled,
             fullscreen: false,
-            xwayland: false,
+            xwayland: info.xwayland,
         };
         let id = window.id.clone();
         // A window nobody focused yet is the least recently used.

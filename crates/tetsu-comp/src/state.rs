@@ -556,7 +556,12 @@ impl State {
         let size = window.geometry().size;
         let committed = (size.w > 0 && size.h > 0).then_some((size.w, size.h));
         let id = self.engine.open(
-            WindowInfo { app_id, title, pid },
+            WindowInfo {
+                app_id,
+                title,
+                pid,
+                xwayland: false,
+            },
             committed,
             &self.viewports(),
         );
