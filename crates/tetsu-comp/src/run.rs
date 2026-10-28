@@ -12,7 +12,7 @@ use smithay::reexports::calloop::channel::{self, Event};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::Display;
 
-use crate::backend::{headless, udev, winit};
+use crate::backend::{headless, headless_gpu, udev, winit};
 use crate::bus::{Command as BusCommand, CommandSink, Publisher, Snapshot};
 use crate::cli::{Backend, Cli};
 use crate::config::glue::{RELOAD_POLL, config_reply};
@@ -40,8 +40,12 @@ pub fn run(cli: &Cli, store: Store) -> Result<(), Box<dyn Error>> {
     match cli.backend {
         Backend::Headless => {
             headless::init(&mut state, cli.headless_outputs, cli.headless_hotplug)?;
+            headless_gpu::start(&mut state, headless_gpu::HEADLESS_DEVICE);
         }
-        Backend::Winit => winit::init(&mut state)?,
+        Backend::Winit => {
+            winit::init(&mut state)?;
+            headless_gpu::start(&mut state, headless_gpu::WINIT_DEVICE);
+        }
         Backend::Tty => udev::init(&mut state)?,
     }
     // Before any client starts: they all get its DISPLAY.

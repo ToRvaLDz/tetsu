@@ -58,9 +58,19 @@ fn name(text: &str) -> Result<String, String> {
 
 /// Parses one `gpu` line.
 pub fn parse(line: &str) -> Result<GpuCommand, String> {
-    // Not written yet.
-    let _ = name;
-    Err(format!("cannot parse {:?}", line.trim_end()))
+    let words: Vec<&str> = line.split_whitespace().collect();
+    match words.as_slice() {
+        ["gpu", "add", n] => Ok(GpuCommand::Add {
+            name: name(n)?,
+            fail: false,
+        }),
+        ["gpu", "add", n, "fail"] => Ok(GpuCommand::Add {
+            name: name(n)?,
+            fail: true,
+        }),
+        ["gpu", "remove", n] => Ok(GpuCommand::Remove { name: name(n)? }),
+        _ => Err(format!("cannot parse {:?}", line.trim_end())),
+    }
 }
 
 /// Starts the render state with the synthetic device `id`.
@@ -93,6 +103,10 @@ pub fn run(state: &mut State, line: &str) {
 /// A switch on a backend without a renderer: a relabel, unless the
 /// device is a fake one marked to fail.
 pub fn switch(ctl: &RenderCtl, target: &Target) -> Switch {
-    let _ = (ctl, target);
-    Switch::Failed("not written yet".to_owned())
+    let id = ctl.resolve(target);
+    match ctl.device(&id) {
+        Some(device) if device.fails => Switch::Failed(format!("{id} refused the switch")),
+        Some(_) => Switch::Applied,
+        None => Switch::Failed(format!("no device {id}")),
+    }
 }

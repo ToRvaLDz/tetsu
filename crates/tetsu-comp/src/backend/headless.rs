@@ -276,6 +276,10 @@ fn listen(state: &mut State, mut counter: u32) -> Result<(), Box<dyn std::error:
         .loop_handle
         .insert_source(rx, move |event, (), state| {
             if let Event::Msg(line) = event {
+                if line.starts_with("gpu ") {
+                    crate::backend::headless_gpu::run(state, &line);
+                    return;
+                }
                 match parse_command(&line) {
                     Ok(command) => run_command(state, command, &mut counter),
                     Err(e) => eprintln!("tetsu-comp: hotplug: {e}"),
