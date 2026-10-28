@@ -1,8 +1,18 @@
-//! The Smithay side of the decorations: the protocol states.
+//! The Smithay side of the decorations: the protocol states, the solid
+//! buffers the borders are drawn with, and the frames of an output.
 
+use std::collections::HashMap;
+
+use smithay::backend::renderer::element::solid::SolidColorBuffer;
+use smithay::output::Output;
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::wayland::shell::kde::decoration::KdeDecorationState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
+
+use super::{AnsweredOnce, Color, Frame, WindowBox, frames};
+use crate::layout::Rect;
+use crate::lock::Scene;
+use crate::state::State;
 
 /// The two decoration protocols and what the KDE one has answered.
 pub struct DecorStates {
@@ -13,16 +23,6 @@ pub struct DecorStates {
     /// The KDE decoration objects that already got their one answer.
     pub answered: AnsweredOnce<ObjectId>,
 }
-
-use std::collections::HashMap;
-
-use smithay::backend::renderer::element::solid::SolidColorBuffer;
-use smithay::output::Output;
-
-use super::{AnsweredOnce, Color, Frame, WindowBox, frames};
-use crate::layout::Rect;
-use crate::lock::Scene;
-use crate::state::State;
 
 /// The four solid buffers of each window, kept between frames so the damage
 /// ids stay stable and only a change of size or colour damages.

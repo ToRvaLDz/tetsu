@@ -31,7 +31,8 @@ pub struct Color {
 }
 
 impl Color {
-    /// The channels as 0.0..=1.0 floats, as the renderer takes them.
+    /// The straight channels as 0.0..=1.0 floats; the renderer takes them
+    /// premultiplied.
     pub fn to_f32(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a].map(|c| f32::from(c) / 255.0)
     }

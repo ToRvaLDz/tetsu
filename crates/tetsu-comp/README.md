@@ -236,8 +236,10 @@ once used; they are never removed yet.
 The compositor draws the window decorations (server-side). It answers
 `server_side` on `xdg-decoration` (`zxdg_decoration_manager_v1`) whatever
 the client asks, and `Server` on `org_kde_kwin_server_decoration_manager`
-(GTK3 and Qt), once per decoration object. The mode is sent inside a
-configure, so a client is never told twice.
+(GTK3 and Qt). On `xdg-decoration` the mode is sent inside a configure.
+On the KDE protocol the manager announces `Server` as the default mode on
+bind, then each decoration object gets one `mode` event however often the
+client asks, so a client cannot start a ping-pong.
 
 The decoration is a border: `decorations.width` pixels (2 by default, 0 for
 none) around the content, in `decorations.active_color` for the focused
