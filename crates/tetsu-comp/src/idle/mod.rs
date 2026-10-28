@@ -15,9 +15,15 @@ pub fn timeout_of(secs: u32) -> Option<Duration> {
     (secs > 0).then(|| Duration::from_secs(u64::from(secs)))
 }
 
-/// Whether `event` is user activity that re-arms idle.
-pub fn is_activity<B: InputBackend>(_event: &InputEvent<B>) -> bool {
-    true
+/// Whether `event` is user activity that re-arms idle: a device that
+/// comes or goes (a dock replug) or a switch (a lid closing) is not.
+pub fn is_activity<B: InputBackend>(event: &InputEvent<B>) -> bool {
+    !matches!(
+        event,
+        InputEvent::DeviceAdded { .. }
+            | InputEvent::DeviceRemoved { .. }
+            | InputEvent::SwitchToggle { .. }
+    )
 }
 
 /// Whether idle may start the locker in `phase`: only when nothing is

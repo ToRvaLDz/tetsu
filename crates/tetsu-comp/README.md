@@ -217,9 +217,11 @@ keyboard's own keymap and `modifiers` requests are not applied.
 every client, so an untrusted swayidle works. Any client learns idle
 timing at the granularity of its own timeout.
 
-Activity is every input event: keyboard, pointer, touchpad, from any
-backend, and the virtual keyboard and pointer of trusted `[trust] input`
-helpers (a remote desktop counts as the user). Each event re-arms the
+Activity is every input event from the user: keyboard, pointer,
+touchpad, touch, tablet and gestures, from any backend, and the virtual
+keyboard and pointer of trusted `[trust] input` helpers (a remote desktop
+counts as the user). A device added or removed (a dock replug) and a
+switch (a lid opening or closing) are not activity. Each event re-arms the
 compositor's idle timer; the clients' notifications are re-armed at most
 once per loop iteration.
 

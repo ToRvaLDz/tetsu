@@ -118,7 +118,9 @@ pub fn bound_action(mod_key: ModKey, modifiers: &ModifiersState, keysym: Keysym)
 impl State {
     /// Handles one input event from any backend.
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
-        self.note_activity();
+        if crate::idle::is_activity(&event) {
+            self.note_activity();
+        }
         match event {
             InputEvent::Keyboard { event } => self.on_key::<I>(&event),
             InputEvent::PointerMotion { event } => {
