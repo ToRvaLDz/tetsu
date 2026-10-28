@@ -37,6 +37,7 @@ pub struct Comp {
     child: Child,
     runtime: tempfile::TempDir,
     display: String,
+    x11: Option<String>,
     pub bus: PathBuf,
     cancel: mpsc::Sender<()>,
     stdin: Option<ChildStdin>,
@@ -57,8 +58,8 @@ impl Comp {
         Self::spawn(args, None, false, &[], layers)
     }
 
-    /// Like `start_with`, with extra environment variables. The helpers the
-    /// compositor starts inherit them.
+    /// Like `start_with`, with extra environment variables (they win over
+    /// the harness's own). The helpers the compositor starts inherit them.
     pub fn start_with_env(args: &[&str], config: Option<&str>, env: &[(&str, &str)]) -> Self {
         Self::spawn(args, config, false, env, Layers::default())
     }
@@ -128,11 +129,11 @@ impl Comp {
         if piped_stdin {
             command.stdin(Stdio::piped());
         }
-        command.envs(env.iter().copied());
         let mut child = command
             .env("XDG_RUNTIME_DIR", runtime.path())
             .env_remove("WAYLAND_DISPLAY")
             .env_remove("DISPLAY")
+            .envs(env.iter().copied())
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
@@ -149,6 +150,7 @@ impl Comp {
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         stdout.read_line(&mut line).unwrap();
         let (display, bus) = parse_ready(&line);
+        let x11 = parse_x11_display(&line);
         // The compositor writes nothing else; keep the pipe open.
         std::mem::forget(stdout);
         let stdin = child.stdin.take();
@@ -157,9 +159,20 @@ impl Comp {
             child,
             runtime,
             display,
+            x11,
             bus,
             cancel,
         }
+    }
+
+    /// The compositor's process id.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// `:<n>` when the compositor serves X11 (the ready line says so).
+    pub fn x11_display(&self) -> Option<&str> {
+        self.x11.as_deref()
     }
 
     /// The user layer file, which may not exist yet.
@@ -182,10 +195,37 @@ impl Drop for Comp {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = self.cancel.send(());
+        if let Some(display) = &self.x11 {
+            remove_x11_files(display, self.child.id());
+        }
     }
 }
 
-/// `ready WAYLAND_DISPLAY=<n> TETSU_COMP_SOCKET=<p>`
+/// A killed compositor leaves its X11 lock and socket in `/tmp`: removes
+/// them, but only while the lock still holds that (dead) compositor's pid.
+fn remove_x11_files(display: &str, pid: u32) {
+    let Some(n) = display.strip_prefix(':') else {
+        return;
+    };
+    let lock = PathBuf::from(format!("/tmp/.X{n}-lock"));
+    let owner = std::fs::read_to_string(&lock)
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok());
+    if owner == Some(pid) {
+        let _ = std::fs::remove_file(format!("/tmp/.X11-unix/X{n}"));
+        let _ = std::fs::remove_file(&lock);
+    }
+}
+
+/// The optional `DISPLAY=:<n>` after the two fixed words of the ready line.
+pub fn parse_x11_display(line: &str) -> Option<String> {
+    line.split_whitespace()
+        .nth(3)
+        .and_then(|w| w.strip_prefix("DISPLAY="))
+        .map(str::to_owned)
+}
+
+/// `ready WAYLAND_DISPLAY=<n> TETSU_COMP_SOCKET=<p> [DISPLAY=:<n>]`
 pub fn parse_ready(line: &str) -> (String, PathBuf) {
     let mut words = line.split_whitespace();
     assert_eq!(words.next(), Some("ready"), "readiness line: {line:?}");
