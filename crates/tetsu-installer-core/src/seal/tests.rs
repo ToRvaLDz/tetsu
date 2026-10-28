@@ -53,6 +53,10 @@ const TOKEN_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"
 /// no `tpm2-pin` at all.
 const TOKEN_NO_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
     "tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+/// A hand-added token with the signed PCR 11 policy but without Tetsu's
+/// PCR 7 binding.
+const TOKEN_UNBOUND: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
 /// A hand-added token: PCR 0 only, no signed policy.
 const TOKEN_NO_PUBKEY: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
     "tpm2-pcrs":[0],"tpm2-pin":true}}}"#;
@@ -523,6 +527,8 @@ fn a_tpm2_slot_with_another_policy_is_sealed_again() {
     // No signed-PCR public key.
     seals_again("balanced", &["pw", "1", "1"], Some(TOKEN_NO_PUBKEY));
     seals_again("comfort", &["pw"], Some(TOKEN_NO_PUBKEY));
+    // Signed PCR 11 but no PCR 7 binding.
+    seals_again("comfort", &["pw"], Some(TOKEN_UNBOUND));
     // The dump fails or is not JSON.
     seals_again("comfort", &["pw"], None);
     seals_again("comfort", &["pw"], Some("not json"));
@@ -575,16 +581,19 @@ fn pcr_lists_are_numbers_matched_one_by_one() {
 #[test]
 fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
     use UnlockLevel::{Balanced, Comfort};
-    let other = r#"{"tokens":{"0":{"type":"systemd-fido2"},"1":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
-    let empty_key = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"","tpm2-pin":true}}}"#;
-    let wrong_type = r#"{"tokens":{"0":{"type":"other","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD","tpm2-pin":true}}}"#;
+    let other = r#"{"tokens":{"0":{"type":"systemd-fido2"},"1":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+    let empty_key = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"","tpm2-pin":true}}}"#;
+    let wrong_type = r#"{"tokens":{"0":{"type":"other","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD","tpm2-pin":true}}}"#;
     // systemd never wrote the key with a hyphen.
-    let hyphen =
-        r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2-pubkey":"QUJD"}}}"#;
+    let hyphen = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2-pubkey":"QUJD"}}}"#;
     // The public key must sign PCR 11, the one the UKI measures.
-    let no_pcrs = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey":"QUJD"}}}"#;
-    let other_pcr =
-        r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[7],"tpm2_pubkey":"QUJD"}}}"#;
+    let no_pcrs =
+        r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey":"QUJD"}}}"#;
+    let other_pcr = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[7],"tpm2_pubkey":"QUJD"}}}"#;
+    // The token must also be bound to PCR 7, as Tetsu enrolls it.
+    let no_bound =
+        r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+    let other_bound = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[0],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
     for (json, level, expect) in [
         (TOKEN_PIN, Balanced, true),
         (TOKEN_PIN, Comfort, false),
@@ -598,6 +607,9 @@ fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
         (hyphen, Comfort, false),
         (no_pcrs, Comfort, false),
         (other_pcr, Comfort, false),
+        (TOKEN_UNBOUND, Comfort, false),
+        (no_bound, Comfort, false),
+        (other_bound, Comfort, false),
         (r#"{"tokens":{}}"#, Comfort, false),
         (r#"{"keyslots":{}}"#, Comfort, false),
         ("", Comfort, false),
