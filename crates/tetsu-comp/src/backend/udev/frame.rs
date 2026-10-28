@@ -98,8 +98,6 @@ impl Tty {
                     &head.output,
                     frames,
                     scenery.borders,
-                    // The pointer and the lock scene draw at 1.0 too.
-                    1.0,
                 ));
                 CLEAR_COLOR
             }
