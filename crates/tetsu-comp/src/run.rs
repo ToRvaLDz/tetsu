@@ -84,6 +84,7 @@ pub fn run(cli: &Cli, store: Store) -> Result<(), Box<dyn Error>> {
     announce(&wayland, &bus_path)?;
     spawn_client(cli, &wayland, &bus_path);
     event_loop.run(None, &mut state, |state| {
+        state.idle_loop_done();
         let _ = state.display_handle.flush_clients();
     })?;
     Ok(())

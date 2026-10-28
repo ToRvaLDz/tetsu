@@ -2,6 +2,8 @@
 //! clock the caller passes in. Smithay's idle notifier cannot take an
 //! injected clock, so it only serves `ext-idle-notify-v1` to clients.
 
+pub mod glue;
+
 use std::time::{Duration, Instant};
 
 /// The timeout `secs` stands for: `0` turns idle off.

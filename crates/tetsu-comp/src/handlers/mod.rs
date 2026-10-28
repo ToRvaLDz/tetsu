@@ -3,6 +3,7 @@
 mod compositor;
 mod decoration;
 mod dmabuf;
+mod idle_notify;
 mod layer_shell;
 mod session_lock;
 mod shell_misc;

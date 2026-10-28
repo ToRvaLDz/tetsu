@@ -45,6 +45,7 @@ use crate::decor::AnsweredOnce;
 use crate::decor::glue::{BorderBuffers, DecorStates};
 use crate::engine::{Arrangement, Engine};
 use crate::gpu::sync::ExplicitSync;
+use crate::idle::glue::IdleGlue;
 use crate::input::ModKey;
 use crate::layout::{Rect, usable};
 use crate::lock::LockMachine;
@@ -166,6 +167,8 @@ pub struct State {
     pub lock: LockMachine,
     pub(crate) lock_glue: LockGlue,
     pub(crate) session_lock_state: SessionLockManagerState,
+    /// The idle timer and `ext-idle-notify-v1`.
+    pub(crate) idle: IdleGlue,
     /// The bus socket, passed to the clients the compositor starts.
     pub comp_socket: Option<std::path::PathBuf>,
     /// The `[trust] input` commands, started once the bus is up.
@@ -212,6 +215,7 @@ impl State {
         let lock_command = settings.lock.command.clone();
         // Any client may ask for the lock; the machine decides.
         let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |_| true);
+        let idle = IdleGlue::new(&dh, event_loop.handle(), settings.lock.idle_timeout());
         Ok(Self {
             start_time: Instant::now(),
             loop_handle: event_loop.handle(),
@@ -248,6 +252,7 @@ impl State {
             lock: LockMachine::new(),
             lock_glue: LockGlue::new(lock_command),
             session_lock_state,
+            idle,
             comp_socket: None,
             trusted_input,
             virtual_keyboard_state,

@@ -10,7 +10,9 @@
 //!   modes (at most 16), all at 60 Hz; the first is preferred and current;
 //! - `remove <name>`;
 //! - `focus-next` / `focus-prev`: the Super+J / Super+K bind, run through
-//!   the same path (the focus-to-bar latency test uses it).
+//!   the same path (the focus-to-bar latency test uses it);
+//! - `activity`: user activity, through the path every input takes
+//!   (`State::note_activity`), so tests can drive idle.
 //!
 //! A line that does not parse, or names nothing, is logged and ignored.
 
@@ -128,6 +130,7 @@ pub fn parse_command(line: &str) -> Result<HotplugCommand, String> {
         }),
         ["focus-next"] => Ok(HotplugCommand::FocusNext),
         ["focus-prev"] => Ok(HotplugCommand::FocusPrev),
+        ["activity"] => Ok(HotplugCommand::Activity),
         [] => Err("empty line".to_owned()),
         _ => Err(format!("cannot parse {:?}", line.trim_end())),
     }
@@ -300,7 +303,10 @@ fn run_command(state: &mut State, command: HotplugCommand, counter: &mut u32) {
             state.run_action(EngineAction::FocusPrev);
             Ok(())
         }
-        HotplugCommand::Activity => Ok(()),
+        HotplugCommand::Activity => {
+            state.note_activity();
+            Ok(())
+        }
     };
     if let Err(e) = added {
         eprintln!("tetsu-comp: hotplug: {e}");

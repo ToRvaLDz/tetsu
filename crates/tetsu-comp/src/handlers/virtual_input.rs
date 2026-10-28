@@ -15,6 +15,7 @@ use crate::state::State;
 
 impl VirtualKeyboardHandler for State {
     fn process_virtual_keyboard_event(&mut self, event: InputEvent<VirtualKeyboardBackend>) {
+        self.note_activity();
         let InputEvent::Keyboard { event } = event else {
             return;
         };
