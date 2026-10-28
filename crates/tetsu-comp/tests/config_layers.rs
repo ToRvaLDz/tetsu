@@ -320,4 +320,6 @@ fn an_invalid_idle_timeout_falls_back_to_the_built_in_value() {
     assert_eq!(Settings::from_values(&values).lock.idle_timeout_s, 600);
     values.insert("lock.idle_timeout_s".into(), toml::Value::Integer(90_000));
     assert_eq!(Settings::from_values(&values).lock.idle_timeout_s, 600);
+    values.insert("lock.idle_timeout_s".into(), toml::Value::Integer(10));
+    assert_eq!(Settings::from_values(&values).lock.idle_timeout_s, 600);
 }

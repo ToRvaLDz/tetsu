@@ -257,15 +257,16 @@ fn the_idle_timeout_is_writable_unless_the_user_file_sets_it() {
 }
 
 #[test]
-fn a_negative_idle_timeout_is_invalid() {
-    let err = run("", "", &[("lock.idle_timeout_s", json!(-5))], &[]).unwrap_err();
-    let (name, params) = wire(&err);
-    assert_eq!(name, "org.tetsu.comp.config.v1.InvalidValue");
-    assert_eq!(params["key"], "lock.idle_timeout_s");
-    assert!(
-        params["reason"]
-            .as_str()
-            .unwrap()
-            .contains("lock.idle_timeout_s")
-    );
+fn a_negative_or_too_short_idle_timeout_is_invalid() {
+    for value in [-5, 1, 29] {
+        let err = run("", "", &[("lock.idle_timeout_s", json!(value))], &[]).unwrap_err();
+        let (name, params) = wire(&err);
+        assert_eq!(name, "org.tetsu.comp.config.v1.InvalidValue", "{value}");
+        assert_eq!(params["key"], "lock.idle_timeout_s");
+        let reason = params["reason"].as_str().unwrap();
+        assert!(reason.contains("lock.idle_timeout_s"), "{reason}");
+        assert!(reason.contains("0 or 30..=86400"), "{reason}");
+    }
+    let next = run("", "", &[("lock.idle_timeout_s", json!(30))], &[]).unwrap();
+    assert_eq!(next["lock.idle_timeout_s"], toml::Value::Integer(30));
 }

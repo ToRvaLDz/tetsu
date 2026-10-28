@@ -348,13 +348,16 @@ fn an_idle_timeout_of_zero_turns_it_off() {
 }
 
 #[test]
-fn an_idle_timeout_outside_zero_to_a_day_is_refused_naming_the_key() {
+fn an_idle_timeout_outside_zero_or_30_to_a_day_is_refused_naming_the_range() {
     for text in [
         "[lock]\nidle_timeout_s = -1\n",
+        "[lock]\nidle_timeout_s = 1\n",
+        "[lock]\nidle_timeout_s = 29\n",
         "[lock]\nidle_timeout_s = 86401\n",
     ] {
         let message = err(text);
         assert!(message.contains("lock.idle_timeout_s"), "{message}");
+        assert!(message.contains("0 or 30..=86400"), "{message}");
     }
     assert_eq!(
         parse("[lock]\nidle_timeout_s = 86400\n")
