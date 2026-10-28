@@ -3,7 +3,8 @@
 
 use std::time::{Duration, Instant};
 
-use tetsu_comp::idle::{IdleTimer, timeout_of};
+use tetsu_comp::idle::{IdleTimer, may_lock, timeout_of};
+use tetsu_comp::lock::Phase;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -97,4 +98,12 @@ fn a_new_timeout_after_firing_waits_for_activity() {
 fn zero_seconds_turns_idle_off() {
     assert_eq!(timeout_of(0), None);
     assert_eq!(timeout_of(30), Some(secs(30)));
+}
+
+#[test]
+fn only_an_unlocked_session_may_lock_on_idle() {
+    assert!(may_lock(Phase::Unlocked));
+    for phase in [Phase::Locking, Phase::Locked, Phase::Defunct] {
+        assert!(!may_lock(phase), "{phase:?}");
+    }
 }

@@ -6,9 +6,16 @@ pub mod glue;
 
 use std::time::{Duration, Instant};
 
+use crate::lock::Phase;
+
 /// The timeout `secs` stands for: `0` turns idle off.
 pub fn timeout_of(secs: u32) -> Option<Duration> {
     (secs > 0).then(|| Duration::from_secs(u64::from(secs)))
+}
+
+/// Whether idle may start the locker in `phase`.
+pub fn may_lock(_phase: Phase) -> bool {
+    true
 }
 
 /// When the session has been idle long enough.
