@@ -2544,6 +2544,7 @@ name = "tetsu-comp"
 version = "0.0.0"
 dependencies = [
  "regex-lite",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "smithay",
@@ -2557,6 +2558,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
+ "x11rb",
 ]
 
 [[package]]
