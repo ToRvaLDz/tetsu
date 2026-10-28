@@ -13,7 +13,7 @@ use crate::layout::LayoutKind;
 use crate::layout::master::{MAX_RATIO, MIN_RATIO};
 use crate::settings::{
     self, DeviceChoice, LockSettings, RawRule, RenderSettings, Settings, SettingsError,
-    TrustSettings,
+    TrustSettings, XwaylandSettings,
 };
 
 /// One config key.
@@ -58,7 +58,7 @@ const fn command(name: &'static str) -> KeyDef {
 }
 
 /// Every key, in the order `GetConfig` lists them.
-pub const KEYS: [KeyDef; 14] = [
+pub const KEYS: [KeyDef; 15] = [
     writable("layout.default"),
     writable("layout.gaps_inner"),
     writable("layout.gaps_outer"),
@@ -76,6 +76,7 @@ pub const KEYS: [KeyDef; 14] = [
     ),
     command("lock.command"),
     command("trust.input"),
+    command("xwayland.satellite"),
 ];
 
 /// The key called `name`.
@@ -87,7 +88,15 @@ pub fn lookup(name: &str) -> Option<&'static KeyDef> {
 }
 
 /// The table names of the user file; `window_rule` is a key by itself.
-pub const TABLES: [&str; 6] = ["layout", "render", "lock", "trust", "decorations", "output"];
+pub const TABLES: [&str; 7] = [
+    "layout",
+    "render",
+    "lock",
+    "trust",
+    "decorations",
+    "xwayland",
+    "output",
+];
 
 /// Why a value is refused: the rule's position for `window_rule`.
 pub type Invalid = (Option<usize>, SettingsError);
@@ -170,6 +179,9 @@ pub fn validate(name: &str, value: &Value) -> Result<(), Invalid> {
         "decorations.width" => width_of(value).map(drop),
         "decorations.active_color" => color_of("active_color", value).map(drop),
         "decorations.inactive_color" => color_of("inactive_color", value).map(drop),
+        "xwayland.satellite" => {
+            typed::<String>(name, value).and_then(|p| settings::xwayland_satellite(&p))
+        }
         "window_rule" => return rules_of(value).map(drop),
         other => Err(SettingsError::UnknownKey(other.to_owned())),
     };
@@ -210,6 +222,7 @@ pub fn builtin() -> BTreeMap<String, Value> {
             Value::Integer(i64::from(defaults.lock.idle_timeout_s)),
         ),
         ("trust.input", Value::Array(Vec::new())),
+        ("xwayland.satellite", s(&defaults.xwayland.satellite)),
         ("window_rule", Value::Array(Vec::new())),
         (
             "decorations.width",
@@ -278,6 +291,10 @@ impl Settings {
                 .and_then(|v| color_of("inactive_color", v).ok())
                 .unwrap_or(base.decorations.inactive),
         };
+        let satellite = get("xwayland.satellite")
+            .and_then(|v| typed::<String>("xwayland.satellite", v).ok())
+            .filter(|p| settings::xwayland_satellite(p).is_ok())
+            .unwrap_or(base.xwayland.satellite);
         Self {
             layout,
             gaps: Gaps {
@@ -297,6 +314,7 @@ impl Settings {
             },
             trust: TrustSettings { input },
             decorations,
+            xwayland: XwaylandSettings { satellite },
         }
     }
 }

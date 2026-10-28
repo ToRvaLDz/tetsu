@@ -1,5 +1,6 @@
 //! The command line: `tetsu-comp [--backend winit|tty|headless]
-//! [--config <file>] [--headless-outputs <n>] [--headless-hotplug] [-- cmd...]`.
+//! [--config <file>] [--headless-outputs <n>] [--headless-hotplug]
+//! [--headless-xwayland] [-- cmd...]`.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -8,7 +9,7 @@ use std::path::PathBuf;
 /// Usage text.
 pub const USAGE: &str = "usage: tetsu-comp [--backend winit|tty|headless] [--config <file>]
                   [--headless-outputs <1..4>] [--headless-hotplug]
-                  [-- <command>...]
+                  [--headless-xwayland] [-- <command>...]
 
   --backend   winit (nested in the host session), tty (a VT) or headless
               (no output device; for tests). Default: winit when
@@ -30,8 +31,12 @@ pub const USAGE: &str = "usage: tetsu-comp [--backend winit|tty|headless] [--con
               line: `add [<w>x<h>]`, `add-named <name> <w>x<h>`,
               `add-modes <name> <w>x<h>[,<w>x<h>...]` and
               `remove <name>`. For tests.
+  --headless-xwayland
+              headless only: serve X11 clients through
+              xwayland.satellite. winit and tty serve them unless
+              that key is empty. For tests.
   -- <cmd>    run <cmd> as the first client, with WAYLAND_DISPLAY and
-              TETSU_COMP_SOCKET set.";
+              TETSU_COMP_SOCKET set, and DISPLAY when X11 is served.";
 
 /// Where the compositor draws and reads input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +60,8 @@ pub struct Cli {
     pub headless_outputs: u8,
     /// Whether the headless backend reads hotplug commands from stdin.
     pub headless_hotplug: bool,
+    /// Whether the headless backend serves X11 clients.
+    pub headless_xwayland: bool,
     /// The first client and its arguments, empty for none.
     pub command: Vec<OsString>,
 }
@@ -79,8 +86,8 @@ pub enum CliError {
     UnknownOption(String),
     /// A number that is not in range: the option and the text it got.
     BadNumber(&'static str, String),
-    /// `--headless-outputs` or `--headless-hotplug` with a backend other
-    /// than headless.
+    /// `--headless-outputs`, `--headless-hotplug` or `--headless-xwayland`
+    /// with a backend other than headless.
     HeadlessOnly,
 }
 
@@ -98,7 +105,7 @@ impl fmt::Display for CliError {
             }
             Self::HeadlessOnly => write!(
                 f,
-                "--headless-outputs and --headless-hotplug need --backend headless"
+                "--headless-outputs, --headless-hotplug and --headless-xwayland need --backend headless"
             ),
         }
     }
@@ -132,6 +139,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, hosted: bool) -> Result<P
     let mut config = None;
     let mut outputs = None;
     let mut hotplug = false;
+    let mut xwayland = false;
     let mut args = args.into_iter();
     let mut command = Vec::new();
     while let Some(arg) = args.next() {
@@ -158,11 +166,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, hosted: bool) -> Result<P
                 outputs = Some(outputs_named(&value("--headless-outputs")?)?);
             }
             "--headless-hotplug" if inline.is_none() => hotplug = true,
+            "--headless-xwayland" if inline.is_none() => xwayland = true,
             _ => return Err(CliError::UnknownOption(text)),
         }
     }
     let backend = backend.unwrap_or(if hosted { Backend::Winit } else { Backend::Tty });
-    if (outputs.is_some() || hotplug) && backend != Backend::Headless {
+    if (outputs.is_some() || hotplug || xwayland) && backend != Backend::Headless {
         return Err(CliError::HeadlessOnly);
     }
     Ok(Parsed::Run(Cli {
@@ -170,6 +179,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>, hosted: bool) -> Result<P
         config,
         headless_outputs: outputs.unwrap_or(1),
         headless_hotplug: hotplug,
+        headless_xwayland: xwayland,
         command,
     }))
 }

@@ -1,6 +1,6 @@
 //! The settings: what the engine runs with, and the checks of each config
 //! value. `--config <file>` is a TOML with `[layout]`, `[render]`, `[lock]`,
-//! `[trust]`, `[decorations]` and `[[window_rule]]`; `parse` and `load` read one file whole
+//! `[trust]`, `[decorations]`, `[xwayland]` and `[[window_rule]]`; `parse` and `load` read one file whole
 //! and stop at the first problem. The layers (defaults, managed, user), the
 //! live reload and `config.v1` are in `crate::config`, which reuses these
 //! checks key by key.
@@ -42,6 +42,8 @@ pub struct Settings {
     pub trust: TrustSettings,
     /// The window borders.
     pub decorations: Decorations,
+    /// X11 clients through xwayland-satellite.
+    pub xwayland: XwaylandSettings,
 }
 
 /// The `[lock]` table.
@@ -77,6 +79,31 @@ pub struct TrustSettings {
     /// Commands started once at startup with the trust to bind the virtual
     /// input protocols.
     pub input: Vec<Vec<String>>,
+}
+
+/// The default `xwayland.satellite`: found on `PATH`.
+pub const DEFAULT_SATELLITE: &str = "xwayland-satellite";
+
+/// The `[xwayland]` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XwaylandSettings {
+    /// The xwayland-satellite program, read once at start. Empty: no X11.
+    pub satellite: String,
+}
+
+impl XwaylandSettings {
+    /// The program to start, or none when X11 is off.
+    pub fn program(&self) -> Option<&str> {
+        (!self.satellite.is_empty()).then_some(self.satellite.as_str())
+    }
+}
+
+impl Default for XwaylandSettings {
+    fn default() -> Self {
+        Self {
+            satellite: DEFAULT_SATELLITE.to_owned(),
+        }
+    }
 }
 
 /// Which GPU renders.
@@ -123,6 +150,7 @@ impl Default for Settings {
             lock: LockSettings::default(),
             trust: TrustSettings::default(),
             decorations: Decorations::default(),
+            xwayland: XwaylandSettings::default(),
         }
     }
 }
@@ -172,6 +200,8 @@ pub enum SettingsError {
     /// A colour that is not `#rrggbb` or `#rrggbbaa`; the key is
     /// `active_color` or `inactive_color`.
     BadColor(&'static str, String),
+    /// `xwayland.satellite` is blank but not empty.
+    BlankSatellite,
     /// A key no layer knows (the layers' registry, `config::keys`).
     UnknownKey(String),
 }
@@ -230,6 +260,10 @@ impl fmt::Display for SettingsError {
             Self::BadColor(key, text) => {
                 write!(f, "decorations.{key}: {text:?} is not #rrggbb or #rrggbbaa")
             }
+            Self::BlankSatellite => write!(
+                f,
+                "xwayland.satellite: the program is blank (use \"\" for no X11)"
+            ),
             Self::UnknownKey(key) => write!(f, "{key}: unknown key"),
         }
     }
@@ -250,6 +284,8 @@ struct RawFile {
     trust: RawTrust,
     #[serde(default)]
     decorations: RawDecorations,
+    #[serde(default)]
+    xwayland: RawXwayland,
     #[serde(default)]
     window_rule: Vec<RawRule>,
 }
@@ -273,6 +309,12 @@ struct RawLock {
 #[serde(deny_unknown_fields)]
 struct RawTrust {
     input: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawXwayland {
+    satellite: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -450,6 +492,13 @@ fn decorations(raw: RawDecorations) -> Result<Decorations, SettingsError> {
     })
 }
 
+pub(crate) fn xwayland_satellite(path: &str) -> Result<(), SettingsError> {
+    if !path.is_empty() && path.trim().is_empty() {
+        return Err(SettingsError::BlankSatellite);
+    }
+    Ok(())
+}
+
 fn lock(raw: RawLock) -> Result<LockSettings, SettingsError> {
     let command = raw
         .command
@@ -468,6 +517,14 @@ fn trust(raw: RawTrust) -> Result<TrustSettings, SettingsError> {
     let input = raw.input.unwrap_or_default();
     trust_input(&input)?;
     Ok(TrustSettings { input })
+}
+
+fn xwayland(raw: RawXwayland) -> Result<XwaylandSettings, SettingsError> {
+    let satellite = raw
+        .satellite
+        .unwrap_or_else(|| DEFAULT_SATELLITE.to_owned());
+    xwayland_satellite(&satellite)?;
+    Ok(XwaylandSettings { satellite })
 }
 
 /// Parses the text of a config file.
@@ -503,6 +560,7 @@ pub fn parse(text: &str) -> Result<Settings, SettingsError> {
         lock: lock(raw.lock)?,
         trust: trust(raw.trust)?,
         decorations: decorations(raw.decorations)?,
+        xwayland: xwayland(raw.xwayland)?,
     })
 }
 
