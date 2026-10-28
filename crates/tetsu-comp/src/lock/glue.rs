@@ -215,6 +215,7 @@ impl State {
             self.lock_glue.pending = None;
             self.lock_refocus();
             self.relayout();
+            self.render_unlocked();
         }
     }
 

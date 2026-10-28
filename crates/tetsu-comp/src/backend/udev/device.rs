@@ -29,7 +29,7 @@ use crate::gpu::sync::{Support, decide, parse_driver_version};
 use crate::settings::{DeviceChoice, RenderSettings};
 use crate::state::State;
 
-const NVIDIA_VERSION_FILE: &str = "/sys/module/nvidia_drm/version";
+pub(super) const NVIDIA_VERSION_FILE: &str = "/sys/module/nvidia_drm/version";
 
 /// A card that opened.
 pub(super) struct Probed {
@@ -61,6 +61,8 @@ pub(super) struct Selected {
     pub node: DrmNode,
     pub fd: DrmDeviceFd,
     pub driver: String,
+    /// The heuristic chose it.
+    pub automatic: bool,
 }
 
 /// `GlesRenderer::new` is unsafe: the renderer must be the only user of the
@@ -185,7 +187,7 @@ fn override_id(choice: &DeviceChoice) -> Option<Option<u64>> {
     Some(render.map(|n| n.dev_id()))
 }
 
-fn candidate(p: &Probed) -> Option<Candidate> {
+pub(super) fn candidate(p: &Probed) -> Option<Candidate> {
     Some(Candidate {
         id: p.render_node?.dev_id(),
         primary: p.primary,
@@ -239,6 +241,7 @@ pub(super) fn open_devices(
                 node: render_node,
                 fd: p.fd.clone(),
                 driver: p.driver.clone(),
+                automatic,
             });
         }
         let entry = Opened {

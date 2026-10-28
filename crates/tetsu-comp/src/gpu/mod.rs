@@ -10,6 +10,7 @@
 pub mod assign;
 pub mod control;
 pub mod formats;
+pub mod glue;
 pub mod pending;
 pub mod report;
 pub mod select;

@@ -640,6 +640,7 @@ impl State {
     pub fn publish_tick(&mut self) {
         self.idle_tick();
         self.lock_tick();
+        self.render_publish();
         let mut events = self.engine.flush();
         events.session.extend(self.lock.flush());
         if let Some(publisher) = self.publisher.as_mut() {
@@ -648,6 +649,7 @@ impl State {
                 Snapshot::of(self.engine.model())
                     .with_locked(self.lock.is_locked())
                     .with_config(config_reply(self.config.as_ref()))
+                    .with_render(self.render.published.clone().unwrap_or_default())
             });
         }
     }

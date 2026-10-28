@@ -67,17 +67,20 @@ pub fn run(cli: &Cli, store: Store) -> Result<(), Box<dyn Error>> {
                 match command {
                     BusCommand::SetManaged(call) => state.handle_config_command(call),
                     BusCommand::ConfigureOutputs(call) => state.handle_output_command(call),
-                    // Not served by the loop yet: the dropped reply is a
-                    // StateWriteFailed.
-                    BusCommand::SetRenderDevice(_) | BusCommand::SetExplicitSync(_) => {}
+                    BusCommand::SetRenderDevice(call) => state.handle_render_device(call),
+                    BusCommand::SetExplicitSync(call) => state.handle_explicit_sync(call),
                 }
             }
         })
         .map_err(|e| e.error)?;
     let sink: CommandSink = Arc::new(move |command| sender.send(command).map_err(|e| e.0));
+    // The first render state goes into the snapshot, not to the watchers.
+    state.render_publish();
     state.publisher = Some(Publisher::spawn_with(
         &bus_path,
-        Snapshot::of(state.engine.model()).with_config(config_reply(state.config.as_ref())),
+        Snapshot::of(state.engine.model())
+            .with_config(config_reply(state.config.as_ref()))
+            .with_render(state.render_reply()),
         Some(sink),
     )?);
     state.comp_socket = Some(bus_path.clone());

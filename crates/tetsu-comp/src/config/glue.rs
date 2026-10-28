@@ -48,8 +48,16 @@ impl State {
                     .or(e.entry.as_ref().map(|x| x.key.as_str()))
                     .is_some_and(|key| key.starts_with("output."))
         });
+        let render = events.iter().any(|e| {
+            (e.entry.as_ref().map(|x| x.key.as_str())).is_some_and(|key| key.starts_with("render."))
+        });
         if let Some(publisher) = &self.publisher {
             publisher.publish_config(events);
+        }
+        // A render key edited in a file applies at the next start; only
+        // the explicit sync mode shows at once.
+        if render {
+            self.render_publish();
         }
         let Some(store) = &self.config else {
             return Ok(());

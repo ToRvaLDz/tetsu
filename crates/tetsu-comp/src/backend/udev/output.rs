@@ -359,6 +359,8 @@ impl State {
             state.loop_handle.remove(device.events);
             if let Some(render) = device.render_node {
                 tty.gpus.as_mut().remove_node(&render);
+                // The rendering device stays listed: it is still the one.
+                let _ = state.render.remove(&super::render::device_id(&render));
             }
             eprintln!("tetsu-comp: card {} removed", device.node);
         });

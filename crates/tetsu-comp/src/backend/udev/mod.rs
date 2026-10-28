@@ -23,6 +23,7 @@ mod device;
 mod feedback;
 mod frame;
 mod output;
+pub(crate) mod render;
 
 use std::error::Error;
 use std::time::Duration;
@@ -117,8 +118,10 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn Error>> {
 
     let mut gpus = device::new_gpu_manager()?;
     let probed = device::probe_all(&mut session, &seat);
+    let found = render::facts(&probed);
     let (selected, opened) =
         device::open_devices(&mut gpus, probed, &state.render_settings, &seat)?;
+    render::install(state, found, &selected);
 
     let mut tty = Tty {
         gpus,
