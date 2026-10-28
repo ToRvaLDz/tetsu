@@ -6,11 +6,18 @@ pub mod glue;
 
 use std::time::{Duration, Instant};
 
+use smithay::backend::input::{InputBackend, InputEvent};
+
 use crate::lock::Phase;
 
 /// The timeout `secs` stands for: `0` turns idle off.
 pub fn timeout_of(secs: u32) -> Option<Duration> {
     (secs > 0).then(|| Duration::from_secs(u64::from(secs)))
+}
+
+/// Whether `event` is user activity that re-arms idle.
+pub fn is_activity<B: InputBackend>(_event: &InputEvent<B>) -> bool {
+    true
 }
 
 /// Whether idle may start the locker in `phase`: only when nothing is
