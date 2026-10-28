@@ -40,7 +40,7 @@ use crate::config::store::Store;
 use crate::decor::AnsweredOnce;
 use crate::decor::glue::{BorderBuffers, DecorStates};
 use crate::engine::{Arrangement, Engine};
-use crate::gpu::sync::ExplicitSync;
+use crate::gpu::control::RenderCtl;
 use crate::idle::glue::IdleGlue;
 use crate::input::ModKey;
 use crate::layout::{Rect, usable};
@@ -135,8 +135,8 @@ pub struct State {
     pub(crate) dmabuf_state: DmabufState,
     /// `wp_linux_drm_syncobj_manager_v1`, when explicit sync is enabled.
     pub(crate) syncobj_state: Option<DrmSyncobjState>,
-    /// The explicit sync decision, once the tty backend made it.
-    pub explicit_sync: Option<ExplicitSync>,
+    /// The render devices and explicit sync, as `render.v1` reports them.
+    pub render: RenderCtl,
     /// The `[render]` settings.
     pub render_settings: RenderSettings,
     /// Popups of the toplevels.
@@ -240,7 +240,7 @@ impl State {
             data_device_state: DataDeviceState::new::<Self>(&dh),
             dmabuf_state: DmabufState::new(),
             syncobj_state: None,
-            explicit_sync: None,
+            render: RenderCtl::default(),
             render_settings: settings.render.clone(),
             popups: PopupManager::default(),
             seat,

@@ -122,9 +122,23 @@ pub enum RenderError {
 impl RenderError {
     /// The `render.v1` error reply.
     pub fn reply(&self) -> ErrorReply {
-        // Not written yet.
-        let _ = self;
-        ErrorReply::new("org.varlink.service.MethodNotImplemented", json!({}))
+        match self {
+            Self::DeviceNotFound(id) => {
+                ErrorReply::new(wire::DEVICE_NOT_FOUND, json!({ "id": id }))
+            }
+            Self::UnsupportedByHardware(reason) => {
+                ErrorReply::new(wire::UNSUPPORTED_BY_HARDWARE, json!({ "reason": reason }))
+            }
+            Self::SwitchFailed(reason) => {
+                ErrorReply::new(wire::SWITCH_FAILED, json!({ "reason": reason }))
+            }
+            Self::OverriddenByUser(keys) => {
+                ErrorReply::new(wire::OVERRIDDEN_BY_USER, json!({ "keys": keys }))
+            }
+            Self::StateWriteFailed(reason) => {
+                ErrorReply::new(wire::STATE_WRITE_FAILED, json!({ "reason": reason }))
+            }
+        }
     }
 }
 
@@ -194,7 +208,10 @@ impl RenderCtl {
     /// One synthetic device `id` (node `/dev/dri/<id>`) that renders, chosen
     /// automatically; explicit sync is never supported.
     pub fn synthetic(id: &str, driver: &str) -> Self {
-        Self::with_devices(vec![DeviceFacts::new(id, &format!("/dev/dri/{id}"), driver)], id)
+        Self::with_devices(
+            vec![DeviceFacts::new(id, &format!("/dev/dri/{id}"), driver)],
+            id,
+        )
     }
 
     /// `devices` with `current` rendering, chosen automatically.
@@ -242,7 +259,10 @@ impl RenderCtl {
 
     /// Keeps a change for unlock; a later one of the same kind replaces it.
     pub fn hold(&mut self, change: Change) {
-        let _ = change;
+        match change {
+            Change::Device(target) => self.pending_device = Some(target),
+            Change::Sync(mode) => self.pending_sync = Some(mode),
+        }
     }
 
     /// Counts a failed hot switch to `id`.
@@ -279,6 +299,22 @@ pub fn config_value(ctl: &RenderCtl, change: &Change) -> String {
     }
 }
 
+fn settle(
+    ctl: &RenderCtl,
+    change: Change,
+    key: &'static str,
+    user_keys: &[String],
+    locked: bool,
+) -> Result<Plan, RenderError> {
+    if user_keys.iter().any(|k| k == key) {
+        return Err(RenderError::OverriddenByUser(vec![key.to_owned()]));
+    }
+    if locked {
+        return Ok(Plan::Pending(change));
+    }
+    let value = config_value(ctl, &change);
+    Ok(Plan::Apply { change, key, value })
+}
 
 /// Plans a `SetRenderDevice`.
 pub fn plan_device(
@@ -287,8 +323,18 @@ pub fn plan_device(
     user_keys: &[String],
     locked: bool,
 ) -> Result<Plan, RenderError> {
-    let _ = (ctl, target, user_keys, locked);
-    Ok(Plan::Pending(Change::Device(Target::Auto)))
+    if let Target::Device(id) = target
+        && ctl.device(id).is_none()
+    {
+        return Err(RenderError::DeviceNotFound(id.clone()));
+    }
+    settle(
+        ctl,
+        Change::Device(target.clone()),
+        DEVICE_KEY,
+        user_keys,
+        locked,
+    )
 }
 
 /// Plans a `SetExplicitSync`.
@@ -298,14 +344,27 @@ pub fn plan_sync(
     user_keys: &[String],
     locked: bool,
 ) -> Result<Plan, RenderError> {
-    let _ = (ctl, mode, user_keys, locked, decide);
-    Ok(Plan::Pending(Change::Sync(SyncMode::Auto)))
+    if mode == SyncMode::On {
+        let can = decide(SyncMode::On, ctl.support.clone());
+        if !can.supported {
+            let reason = can.reason.unwrap_or_else(|| "unsupported".to_owned());
+            return Err(RenderError::UnsupportedByHardware(reason));
+        }
+    }
+    settle(ctl, Change::Sync(mode), SYNC_KEY, user_keys, locked)
 }
 
 /// The tty backend keeps its device until the next start: only a switch
 /// to the device already rendering (the automatic choice included) is
 /// applied now.
 pub fn tty_switch(current: &str, target: &Target, auto_id: &str) -> Switch {
-    let _ = (current, target, auto_id);
-    Switch::NextStart
+    let wanted = match target {
+        Target::Auto => auto_id,
+        Target::Device(id) => id.as_str(),
+    };
+    if wanted == current {
+        Switch::Applied
+    } else {
+        Switch::NextStart
+    }
 }

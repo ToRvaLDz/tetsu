@@ -269,7 +269,7 @@ pub(super) fn init_explicit_sync(state: &mut State, render: &Selected) {
         driver: render.driver.clone(),
         version,
     };
-    let decision = decide(state.render_settings.explicit_sync, support);
+    let decision = decide(state.render_settings.explicit_sync, support.clone());
     if decision.enabled {
         state.syncobj_state = Some(DrmSyncobjState::new::<State>(
             &state.display_handle,
@@ -283,5 +283,8 @@ pub(super) fn init_explicit_sync(state: &mut State, render: &Selected) {
         }
         println!("tetsu-comp: explicit sync disabled ({reason})");
     }
-    state.explicit_sync = Some(decision);
+    // The global is advertised once: a new mode applies at the next start.
+    state.render.support = support;
+    state.render.sync_live = false;
+    state.render.sync_running = decision.enabled;
 }
