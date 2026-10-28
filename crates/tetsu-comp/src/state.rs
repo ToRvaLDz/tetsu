@@ -34,6 +34,7 @@ use smithay::wayland::shell::wlr_layer::{
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgShellState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::ShmState;
+use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::socket::ListeningSocketSource;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 use smithay::wayland::virtual_pointer::VirtualPointerManagerState;
@@ -178,6 +179,10 @@ pub struct State {
     pub(crate) virtual_keyboard_state: VirtualKeyboardManagerState,
     #[allow(dead_code)]
     pub(crate) virtual_pointer_state: VirtualPointerManagerState,
+    /// `wp_viewporter`, which xwayland-satellite needs; kept for the life
+    /// of the display.
+    #[allow(dead_code)]
+    pub(crate) viewporter_state: ViewporterState,
     /// The modifier of the layout binds.
     pub mod_key: ModKey,
     /// The tty backend, once started.
@@ -216,6 +221,7 @@ impl State {
         // Any client may ask for the lock; the machine decides.
         let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |_| true);
         let idle = IdleGlue::new(&dh, event_loop.handle(), settings.lock.idle_timeout_s);
+        let viewporter_state = ViewporterState::new::<Self>(&dh);
         Ok(Self {
             start_time: Instant::now(),
             loop_handle: event_loop.handle(),
@@ -257,6 +263,7 @@ impl State {
             trusted_input,
             virtual_keyboard_state,
             virtual_pointer_state,
+            viewporter_state,
             mod_key: ModKey::Super,
             tty: None,
             tty_queue: crate::outputs::queue::ChangeQueue::default(),
