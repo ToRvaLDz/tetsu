@@ -33,6 +33,9 @@ pub enum Trust {
     /// A helper from `[trust] input`: it may bind the virtual input
     /// protocols.
     Input,
+    /// The running xwayland-satellite, known by its pid when it connects:
+    /// its windows are X11 windows. It gets no other privilege.
+    Xwayland,
 }
 
 /// The trust of a connected client; a client without our data is untrusted.

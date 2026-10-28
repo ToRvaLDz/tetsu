@@ -31,5 +31,6 @@ pub mod settings;
 pub mod socket;
 pub mod state;
 pub mod trust;
+pub mod xwayland;
 
 mod handlers;
