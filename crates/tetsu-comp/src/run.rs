@@ -67,6 +67,9 @@ pub fn run(cli: &Cli, store: Store) -> Result<(), Box<dyn Error>> {
                 match command {
                     BusCommand::SetManaged(call) => state.handle_config_command(call),
                     BusCommand::ConfigureOutputs(call) => state.handle_output_command(call),
+                    // Not served by the loop yet: the dropped reply is a
+                    // StateWriteFailed.
+                    BusCommand::SetRenderDevice(_) | BusCommand::SetExplicitSync(_) => {}
                 }
             }
         })

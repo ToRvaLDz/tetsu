@@ -62,6 +62,19 @@ impl<H: Handler> Handler for AsAgent<H> {
     }
 }
 
+/// Records a render call and answers it: never pending.
+fn render_call(command: Command) -> String {
+    let (line, reply) = match command {
+        Command::SetRenderDevice(call) => {
+            (format!("SetRenderDevice:{:?}", call.target), call.reply)
+        }
+        Command::SetExplicitSync(call) => (format!("SetExplicitSync:{:?}", call.mode), call.reply),
+        _ => unreachable!("not a render call"),
+    };
+    let _ = reply.send(Ok(false));
+    line
+}
+
 /// A running gated service.
 pub struct GatedComp {
     pub socket: PathBuf,
@@ -122,6 +135,10 @@ impl GatedComp {
                             ),
                             call.reply,
                         ),
+                        render => {
+                            sl.lock().unwrap().push(render_call(render));
+                            return Ok(());
+                        }
                     };
                     sl.lock().unwrap().push(line);
                     let _ = reply.send(Ok(()));

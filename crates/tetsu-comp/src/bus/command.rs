@@ -9,6 +9,7 @@ use tetsu_bus::server::ErrorReply;
 use tokio::sync::oneshot;
 
 use super::config::SetManaged;
+use super::render::{SetExplicitSync, SetRenderDevice};
 
 /// A `ConfigureOutputs` call, for the loop to run.
 #[derive(Debug)]
@@ -27,6 +28,10 @@ pub enum Command {
     SetManaged(SetManaged),
     /// `output.v1.ConfigureOutputs`.
     ConfigureOutputs(ConfigureOutputs),
+    /// `render.v1.SetRenderDevice`.
+    SetRenderDevice(SetRenderDevice),
+    /// `render.v1.SetExplicitSync`.
+    SetExplicitSync(SetExplicitSync),
 }
 
 /// Hands a command to the loop; gives it back when the loop is gone.

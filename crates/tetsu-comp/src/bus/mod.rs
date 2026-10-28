@@ -6,6 +6,7 @@
 mod command;
 mod config;
 mod hub;
+mod render;
 mod service;
 
 use std::cell::RefCell;
@@ -19,6 +20,7 @@ use std::time::{Duration, Instant};
 use tetsu_bus::access::{EtcFiles, Groups};
 use tetsu_bus::config::ConfigEvent;
 use tetsu_bus::gate::{Authority, GateConfig, Gated, RootOnly};
+use tetsu_bus::render::RenderEvent;
 use tetsu_bus::server;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
@@ -26,6 +28,7 @@ use tokio::task::LocalSet;
 pub use command::{Command, CommandSink, ConfigureOutputs};
 pub use config::{ConfigMirror, SetManaged};
 pub use hub::{Hub, Mirror, Snapshot, WATCH_QUEUE};
+pub use render::{RenderAnswer, RenderMirror, SetExplicitSync, SetRenderDevice};
 pub use service::BusService;
 
 use crate::model::Events;
@@ -54,6 +57,7 @@ const RESTART_INTERVAL: Duration = Duration::from_secs(1);
 enum Message {
     Events(Events),
     Config(Vec<ConfigEvent>),
+    Render(Vec<RenderEvent>),
     Crash,
 }
 
@@ -113,6 +117,17 @@ impl Publisher {
         }
         if let Some(live) = &self.live {
             let _ = live.tx.send(Message::Config(events));
+        }
+    }
+
+    /// Hands render events to the bus thread, in order with the model's.
+    /// Never blocks.
+    pub fn publish_render(&self, events: Vec<RenderEvent>) {
+        if events.is_empty() {
+            return;
+        }
+        if let Some(live) = &self.live {
+            let _ = live.tx.send(Message::Render(events));
         }
     }
 
@@ -207,6 +222,7 @@ fn run(
                 message = rx.recv() => match message {
                     Some(Message::Events(events)) => hub.borrow_mut().publish(&events),
                     Some(Message::Config(events)) => hub.borrow_mut().publish_config(&events),
+                    Some(Message::Render(events)) => hub.borrow_mut().publish_render(&events),
                     Some(Message::Crash) => panic!("the bus thread was asked to crash"),
                     // The compositor is gone.
                     None => return,

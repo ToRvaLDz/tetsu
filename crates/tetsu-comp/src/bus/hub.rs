@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 use tetsu_bus::config::{ConfigEvent, GetConfigReply};
 use tetsu_bus::output::{ListOutputsReply, Output, OutputEvent, OutputKind};
+use tetsu_bus::render::{GetRenderReply, Render, RenderEvent};
 use tetsu_bus::server::StreamItem;
 use tetsu_bus::session::{GetSessionReply, SessionEvent, SessionKind};
 use tetsu_bus::window::{ListWindowsReply, Window, WindowEvent, WindowKind};
@@ -14,6 +15,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
 use super::config::ConfigMirror;
+use super::render::RenderMirror;
 use crate::model::{Events, Model};
 
 /// Events a watcher may have queued before it is cut.
@@ -32,6 +34,8 @@ pub struct Snapshot {
     pub locked: bool,
     /// For `GetConfig`.
     pub config: GetConfigReply,
+    /// For `GetRender`.
+    pub render: Render,
 }
 
 impl Snapshot {
@@ -43,7 +47,14 @@ impl Snapshot {
             outputs: model.outputs_snapshot(),
             locked: false,
             config: GetConfigReply::default(),
+            render: Render::default(),
         }
+    }
+
+    /// The same state with the render state.
+    #[must_use]
+    pub fn with_render(self, render: Render) -> Self {
+        Self { render, ..self }
     }
 
     /// The same state with the config.
@@ -70,6 +81,7 @@ pub struct Mirror {
     outputs: Vec<Output>,
     locked: bool,
     config: ConfigMirror,
+    render: RenderMirror,
 }
 
 impl Mirror {
@@ -84,6 +96,7 @@ impl Mirror {
             outputs: snapshot.outputs.outputs.clone(),
             locked: snapshot.locked,
             config: ConfigMirror::new(snapshot.config.clone()),
+            render: RenderMirror::new(snapshot.render.clone()),
         }
     }
 
@@ -95,6 +108,11 @@ impl Mirror {
     /// For `GetConfig`.
     pub fn config(&self) -> GetConfigReply {
         self.config.reply()
+    }
+
+    /// For `GetRender`.
+    pub fn render(&self) -> GetRenderReply {
+        self.render.reply()
     }
 
     /// Applies one window event.
@@ -268,6 +286,7 @@ pub struct Hub {
     output_watchers: Watchers,
     session_watchers: Watchers,
     config_watchers: Watchers,
+    render_watchers: Watchers,
 }
 
 impl Hub {
@@ -280,6 +299,7 @@ impl Hub {
             output_watchers: Vec::new(),
             session_watchers: Vec::new(),
             config_watchers: Vec::new(),
+            render_watchers: Vec::new(),
         }
     }
 
@@ -316,6 +336,19 @@ impl Hub {
             self.mirror.apply_config(event);
             fan_out(&mut self.config_watchers, event);
         }
+    }
+
+    /// Applies render events to the mirror and sends them to the watchers.
+    pub fn publish_render(&mut self, events: &[RenderEvent]) {
+        for event in events {
+            self.mirror.render.apply(event);
+            fan_out(&mut self.render_watchers, event);
+        }
+    }
+
+    /// A new `WatchRender` stream, `initial` already queued.
+    pub fn watch_render(&mut self) -> mpsc::Receiver<StreamItem> {
+        watch(&mut self.render_watchers, &self.mirror.render.initial())
     }
 
     /// A new `WatchConfig` stream, `initial` already queued.
