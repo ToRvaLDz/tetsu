@@ -2,10 +2,10 @@
 
 The Tetsu Wayland compositor, on Smithay. It maps xdg-shell windows, lays
 them out (dwindle, master or floating, with window rules) and serves the
-window, workspace, output, session and config interfaces of the bus
-(`org.tetsu.comp.window.v1`, `org.tetsu.comp.workspace.v1`,
+window, workspace, output, session, config and render interfaces of the
+bus (`org.tetsu.comp.window.v1`, `org.tetsu.comp.workspace.v1`,
 `org.tetsu.comp.output.v1`, `org.tetsu.comp.session.v1`,
-`org.tetsu.comp.config.v1`),
+`org.tetsu.comp.config.v1`, `org.tetsu.comp.render.v1`),
 `zwlr_layer_shell_v1` for the bar, `ext-session-lock-v1` for the lock and
 `ext-idle-notify-v1` for idle clients such as swayidle.
 X11 apps run through xwayland-satellite (see X11).
@@ -81,7 +81,8 @@ by ` DISPLAY=:<n>` when X11 is on.
   `remove <name>`. Sides are 1 to 16384. `focus-next` and `focus-prev`
   run the focus binds, and `activity` reports user activity through the
   path every input takes, so tests can drive idle. A line that does not
-  parse, or names nothing, is logged and ignored.
+  parse, or names nothing, is logged and ignored. Lines starting with `gpu`
+  add and remove fake render devices (see Render).
 
 - **`TETSU_COMP_HEADLESS_IDLE_UNIT_MS`** (headless only, 1 to 1000): one
   second of `[lock] idle_timeout_s` lasts that many milliseconds, so tests
@@ -95,6 +96,54 @@ by ` DISPLAY=:<n>` when X11 is on.
 Query the bus with `varlinkctl call $TETSU_COMP_SOCKET
 org.tetsu.comp.window.v1.ListWindows '{}'`. The bus socket is
 `$XDG_RUNTIME_DIR/tetsu/comp/<wayland socket name>`, one per instance.
+
+## Render
+
+`org.tetsu.comp.render.v1` serves `GetRender` and `WatchRender` (the
+render device, every device, explicit sync and what waits for unlock) and
+`SetRenderDevice` and `SetExplicitSync`, behind the `display.render`
+capability for the agent. `ListRenderStats` and `WatchRenderStats` answer
+`org.varlink.service.MethodNotImplemented` for now (#108).
+
+A device id is the basename of its render node (`renderD128`), and
+`SetRenderDevice` writes the node path to the managed `render.device`
+(`"auto"` for a null `device_id`). `output_ids` lists the outputs a
+device drives (a display-only card's outputs count for the render
+device).
+`name` and `power_mw` are null for now.
+
+- **tty**: a switch to the device already rendering (only `automatic`
+  changes) applies at once; any other device is written and renders from
+  the next start (`tetsu-comp: render device <node> applies at the next
+  start`), while `GetRender` keeps naming the device that renders now.
+  The explicit sync mode is reported at once; whether it is enabled
+  changes only at the next start, and until then `reason` says `applies at
+  the next start`. `on` is refused (`UnsupportedByHardware`) where the
+  render device cannot do it.
+- **headless** and **winit**: one synthetic device, `headless-0` or
+  `winit-0` (node `/dev/dri/<id>`, which does not exist), drives every
+  output and never supports explicit sync, so `on` is always refused. A
+  switch is a relabel and applies at once. With `--headless-hotplug`,
+  `gpu add <name>` adds a fake device at `/dev/dri/<name>`, `gpu add
+  <name> fail` one whose every switch fails (`SwitchFailed`, counted in
+  `switch_failures`, nothing written), and `gpu remove <name>` removes one
+  (not the one rendering, nor the synthetic one). Names are 1 to 32
+  characters of `a-z`, `0-9` and `-`.
+
+A call is rejected in this order: an unknown device (`DeviceNotFound`) or
+`on` where unsupported, then a key the user file sets
+(`OverriddenByUser`). While the session is locked an accepted call
+answers `pending: true`, shows in `pending_device` or
+`pending_explicit_sync` (the latest call wins) and writes nothing. At
+unlock the file is read again: a pending device that is gone, or a key
+the user file now sets, is dropped with a `pending_dropped` event; the
+rest is applied as above, and one `changed` follows. A switch or write
+that fails at unlock is only logged. Pending changes are lost if the
+compositor exits while locked.
+
+An edit of `render.*` in a file is not a switch: the device applies at the
+next start on every backend, and the explicit sync mode only updates what
+`GetRender` reports. Only `SetRenderDevice` switches at once.
 
 ## Outputs
 
@@ -487,12 +536,15 @@ map, not on later title changes.
 - `gpu/`: the tty backend's decisions, pure and tested first. `select`
   (the render device), `assign` (how each output is served), `formats`
   (CCS filter, color formats, scanout tranches) and `sync` (explicit sync
-  and how a commit is gated).
+  and how a commit is gated). `render.v1`: `control` (the render state and
+  the Set call planners), `pending` (what a locked change becomes at
+  unlock) and `report` (the reported state and its diff), pure; `glue` is
+  the loop side.
 - `engine`: the model plus per-workspace layout state; `apply(Action)`
   and `arrange` give events and rects. Pure.
 - `grab`: the pointer grab that moves a floating window.
 - `bus`: the bus thread. The calls that change things (`SetManaged`,
-  `ConfigureOutputs`) reach the loop as one `Command` channel. The compositor loop sends deltas over an
+  `ConfigureOutputs`, `SetRenderDevice`, `SetExplicitSync`) reach the loop as one `Command` channel. The compositor loop sends deltas over an
   unbounded channel and never waits on it; a watcher that falls 256 events
   behind is disconnected, and a dead thread is restarted.
 - `state`, `handlers`, `input`, `render`, `backend`: the Smithay side.

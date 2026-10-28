@@ -1,8 +1,9 @@
 //! tetsu-comp: the Tetsu compositor.
 //!
-//! Serves `org.tetsu.comp.{window,workspace,output,session,config}.v1`
+//! Serves `org.tetsu.comp.{window,workspace,output,session,config,render}.v1`
 //! through the `tetsu-bus` facade, behind the capability gate (`output` reads
-//! and `ConfigureOutputs`; `config` is the three-layer config), `zwlr_layer_shell_v1`,
+//! and `ConfigureOutputs`; `config` is the three-layer config; `render` the
+//! render device and explicit sync), `zwlr_layer_shell_v1`,
 //! `ext-session-lock-v1` and `ext-idle-notify-v1` (`idle`: after the idle
 //! timeout the locker starts). Windows get server-side decorations (`decor`): the
 //! mode is always server-side and the compositor draws a border, never on a

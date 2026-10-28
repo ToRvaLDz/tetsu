@@ -14,6 +14,10 @@
 //! only logged, and the render device is not chosen again (#70's hot-switch
 //! follow-up).
 //!
+//! `render` reports the devices for `render.v1` (#107). A
+//! `SetRenderDevice` to another device is persisted and applies at the
+//! next start; explicit sync is decided once, so a new mode does too.
+//!
 //! The multi-GPU policy is ported from niri `src/backend/tty.rs` at commit
 //! `fcbc971cf49a987b1e8d5ff1d64da6b1f61a1787` (GPL-3.0-or-later); the
 //! `MultiRenderer` plumbing follows Smithay's `anvil`.
