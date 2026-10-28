@@ -70,8 +70,10 @@ pub use runner::SealRunner;
 /// The shared subvolume that holds `lib/tetsu/keys`.
 pub const VAR_SUBVOLUME: &str = "@var";
 /// TPM policy: the signed PCR 11 (the UKI) plus PCR 7 (Secure Boot keys).
-const PUBLIC_KEY_PCRS: &str = "11";
-const BOUND_PCRS: &str = "7";
+/// Kept as numbers: the token check compares them with the integers
+/// systemd writes, and the CLI form is built from them.
+const PUBLIC_KEY_PCR_LIST: &[u64] = &[11];
+const BOUND_PCR_LIST: &[u64] = &[7];
 /// Seconds a prompt waits before the seal gives up and the boot goes on.
 const ASK_TIMEOUT: &str = "--timeout=120";
 const PIN_ATTEMPTS: usize = 3;
@@ -229,20 +231,33 @@ fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
                 .get("tpm2_pubkey")
                 .and_then(|k| k.as_str())
                 .is_some_and(|k| !k.is_empty())
-            && token
-                .get("tpm2_pubkey_pcrs")
-                .and_then(|p| p.as_array())
-                .is_some_and(|pcrs| {
-                    pcrs.iter().any(|p| {
-                        p.as_u64().map(|n| n.to_string()).as_deref() == Some(PUBLIC_KEY_PCRS)
-                    })
-                })
+            && has_pcrs(token, "tpm2_pubkey_pcrs", PUBLIC_KEY_PCR_LIST)
             && token
                 .get("tpm2-pin")
                 .and_then(|p| p.as_bool())
                 .unwrap_or(false)
                 == wants_pin
     })
+}
+
+/// Whether the token's `key` array holds every PCR of `wanted`.
+fn has_pcrs(token: &serde_json::Value, key: &str, wanted: &[u64]) -> bool {
+    token
+        .get(key)
+        .and_then(|p| p.as_array())
+        .is_some_and(|pcrs| {
+            wanted
+                .iter()
+                .all(|w| pcrs.iter().any(|p| p.as_u64() == Some(*w)))
+        })
+}
+
+/// A PCR list in `systemd-cryptenroll` syntax, e.g. `7+11`.
+fn pcr_arg(pcrs: &[u64]) -> String {
+    pcrs.iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// The part that needs the keys mounted.
@@ -293,8 +308,8 @@ pub fn enroll_args(key_file: &Path, pcr_public: &Path, pin: bool, device: &Path)
         &format!("--unlock-key-file={}", key_file.display()),
         &"--tpm2-device=auto",
         &format!("--tpm2-public-key={}", pcr_public.display()),
-        &format!("--tpm2-public-key-pcrs={PUBLIC_KEY_PCRS}"),
-        &format!("--tpm2-pcrs={BOUND_PCRS}"),
+        &format!("--tpm2-public-key-pcrs={}", pcr_arg(PUBLIC_KEY_PCR_LIST)),
+        &format!("--tpm2-pcrs={}", pcr_arg(BOUND_PCR_LIST)),
     ]);
     if pin {
         args.push("--tpm2-with-pin=yes".into());

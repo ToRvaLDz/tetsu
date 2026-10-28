@@ -560,6 +560,19 @@ fn has_tpm2_slot_reads_the_type_column() {
 }
 
 #[test]
+fn pcr_lists_are_numbers_matched_one_by_one() {
+    assert_eq!(pcr_arg(&[11]), "11");
+    assert_eq!(pcr_arg(&[7, 11]), "7+11");
+    let token: serde_json::Value =
+        serde_json::from_str(r#"{"pcrs":[7,11],"names":["11"]}"#).unwrap();
+    assert!(has_pcrs(&token, "pcrs", &[11]));
+    assert!(has_pcrs(&token, "pcrs", &[11, 7]));
+    assert!(!has_pcrs(&token, "pcrs", &[7, 12]));
+    assert!(!has_pcrs(&token, "names", &[11]));
+    assert!(!has_pcrs(&token, "missing", &[11]));
+}
+
+#[test]
 fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
     use UnlockLevel::{Balanced, Comfort};
     let other = r#"{"tokens":{"0":{"type":"systemd-fido2"},"1":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
