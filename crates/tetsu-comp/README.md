@@ -6,7 +6,8 @@ window, workspace, output, session and config interfaces of the bus
 (`org.tetsu.comp.window.v1`, `org.tetsu.comp.workspace.v1`,
 `org.tetsu.comp.output.v1`, `org.tetsu.comp.session.v1`,
 `org.tetsu.comp.config.v1`),
-`zwlr_layer_shell_v1` for the bar and `ext-session-lock-v1` for the lock.
+`zwlr_layer_shell_v1` for the bar, `ext-session-lock-v1` for the lock and
+`ext-idle-notify-v1` for idle clients such as swayidle.
 
 ## Running
 
@@ -74,8 +75,10 @@ window, workspace, output, session and config interfaces of the bus
   `add-named <name> <w>x<h>` (a replug), `add-modes <name>
   <w>x<h>[,<w>x<h>...]` (an output with up to 16 modes at 60 Hz, the first
   preferred and current; it makes a real mode change testable) and
-  `remove <name>`. Sides are 1 to 16384. A line that does not parse, or
-  names nothing, is logged and ignored.
+  `remove <name>`. Sides are 1 to 16384. `focus-next` and `focus-prev`
+  run the focus binds, and `activity` reports user activity through the
+  path every input takes, so tests can drive idle. A line that does not
+  parse, or names nothing, is logged and ignored.
 
 Query the bus with `varlinkctl call $TETSU_COMP_SOCKET
 org.tetsu.comp.window.v1.ListWindows '{}'`. The bus socket is
@@ -208,6 +211,27 @@ never match a compositor bind. A trusted input client can type into the lock
 surface. A service started by systemd cannot be trusted yet. A virtual
 keyboard's own keymap and `modifiers` requests are not applied.
 
+## Idle
+
+`ext_idle_notifier_v1` (version 2, both notification kinds) is open to
+every client, so an untrusted swayidle works. Any client learns idle
+timing at the granularity of its own timeout.
+
+Activity is every input event: keyboard, pointer, touchpad, from any
+backend, and the virtual keyboard and pointer of trusted `[trust] input`
+helpers (a remote desktop counts as the user). Each event re-arms the
+compositor's idle timer; the clients' notifications are re-armed at most
+once per loop iteration.
+
+After `[lock] idle_timeout_s` seconds with no activity the compositor
+starts `[lock] command` with locker trust, as Mod+Shift+L does; it does
+not lock by itself. So `command = []` means no idle lock, and a locker
+that cannot start or exits without locking leaves the session unlocked
+until the next idle period (both are logged). Idle never starts the locker
+while the session is locked or defunct, and the next idle period starts at
+the unlock. There is no idle inhibitor (`zwp_idle_inhibit_manager_v1`)
+yet: a video with no input locks at the timeout.
+
 ## Build dependencies
 
 Arch: `libinput seatd libxkbcommon xkeyboard-config mesa libdrm wayland`.
@@ -318,6 +342,7 @@ agent's `SetManaged` (and `ConfigureOutputs`) ask `tetsu-capd` first.
 | `window_rule` (the whole array is one value: a higher layer replaces all lower rules, and one bad rule drops the array of its layer) | yes | |
 | `render.device` | no | `org.tetsu.comp.render.v1.SetRenderDevice` |
 | `render.explicit_sync` | no | `org.tetsu.comp.render.v1.SetExplicitSync` |
+| `lock.idle_timeout_s` (0 to 86400 seconds, 0 is off) | yes | |
 | `lock.command`, `trust.input` | no (they run commands) | user file only; ignored in the managed file |
 
 The output keys are `output.<connector>.{enabled, mode, scale, transform,
@@ -337,7 +362,8 @@ returns to automatic. A user-file value wins field by field.
 
 Live now: the gaps, the decorations, the rules (for windows that open from then on),
 `layout.default` and `layout.master_ratio` (for workspaces that have no
-layout state yet) and `lock.command` (the next launch). At the next start:
+layout state yet), `lock.command` (the next launch) and
+`lock.idle_timeout_s` (counted from the last activity). At the next start:
 `render.*` and `trust.input`.
 
 The user file schema:
@@ -368,7 +394,8 @@ The user file schema:
     wait_for_frame_completion = false   # wait for each frame before queueing it
 
     [lock]
-    command = ["swaylock"]   # started by Mod+Shift+L and again when the locker dies; [] = never
+    command = ["swaylock"]   # started by Mod+Shift+L, on idle and again when the locker dies; [] = never
+    idle_timeout_s = 600     # idle seconds before [lock] command starts; 0 = off, up to 86400
 
     [trust]
     # Started once at startup, with the right to bind the virtual input
@@ -399,6 +426,8 @@ map, not on later title changes.
   diagnostics), `merge`, `paths`, `store` (read, poll, write the managed
   file), `set` (plan a `SetManaged`) and `glue` (the loop side).
 - `lock/`: the session lock state machine (pure) and its Smithay glue;
+  `idle/`: the idle timer (pure, on an injected clock) and its glue, where
+  activity comes in (`State::note_activity`);
   `trust`: who a client is, and how trusted helpers are started.
 - `gpu/`: the tty backend's decisions, pure and tested first. `select`
   (the render device), `assign` (how each output is served), `formats`
@@ -412,8 +441,9 @@ map, not on later title changes.
   unbounded channel and never waits on it; a watcher that falls 256 events
   behind is disconnected, and a dead thread is restarted.
 - `state`, `handlers`, `input`, `render`, `backend`: the Smithay side.
-  `handlers/layer_shell.rs` is the layer-shell glue, `handlers/decoration.rs` the decoration modes, `handlers/session_lock.rs`
-  and `handlers/virtual_input.rs` the lock and virtual input glue.
+  `handlers/layer_shell.rs` is the layer-shell glue, `handlers/decoration.rs` the decoration modes, `handlers/session_lock.rs`,
+  `handlers/idle_notify.rs` and `handlers/virtual_input.rs` the lock, idle
+  notifier and virtual input glue.
 
 ## Credits
 
