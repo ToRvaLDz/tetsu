@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use tetsu_comp::idle::{IdleTimer, may_lock, timeout_in, timeout_of};
+use tetsu_comp::idle::{IdleLocker, IdleTimer, idle_locker, may_lock, timeout_in, timeout_of};
 use tetsu_comp::lock::Phase;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -128,4 +128,42 @@ fn a_timeout_counts_in_the_unit_it_is_given() {
     assert_eq!(timeout_in(0, unit), None);
     assert_eq!(timeout_in(30, unit), Some(Duration::from_millis(990)));
     assert_eq!(timeout_in(30, secs(1)), timeout_of(30));
+}
+
+#[test]
+fn an_idle_firing_starts_a_locker_when_none_runs() {
+    assert_eq!(idle_locker(Phase::Unlocked, false), IdleLocker::Start);
+}
+
+#[test]
+fn an_idle_firing_restarts_a_locker_that_runs_and_did_not_lock() {
+    assert_eq!(idle_locker(Phase::Unlocked, true), IdleLocker::Restart);
+}
+
+#[test]
+fn an_idle_firing_leaves_a_session_that_is_not_unlocked() {
+    for phase in [Phase::Locking, Phase::Locked, Phase::Defunct] {
+        for alive in [false, true] {
+            assert_eq!(idle_locker(phase, alive), IdleLocker::Leave, "{phase:?}");
+        }
+    }
+}
+
+#[test]
+fn retries_while_the_last_locker_hangs_keep_one_idle_locker() {
+    // Every firing finds the last locker still running: the count of idle
+    // lockers never grows past one.
+    let mut running = 0_u32;
+    for _ in 0..100 {
+        match idle_locker(Phase::Unlocked, running > 0) {
+            IdleLocker::Leave => {}
+            IdleLocker::Start => running += 1,
+            IdleLocker::Restart => {
+                running -= 1;
+                running += 1;
+            }
+        }
+        assert!(running <= 1, "{running} idle lockers");
+    }
+    assert_eq!(running, 1);
 }

@@ -35,6 +35,10 @@ const TIMEOUT_S: u32 = 30;
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// How long a session that must not lock is watched.
 const QUIET: Duration = Duration::from_millis(2_500);
+/// Where the hung helper records its pid, one file per run.
+const PIDS: &str = "TETSU_COMP_TEST_PIDS";
+/// The longest a hung helper waits for its compositor to go.
+const HUNG_MAX: Duration = Duration::from_secs(30);
 
 /// The locker the compositor starts on idle: it locks, waits for
 /// `locked`, reports it, holds the lock for `HOLD` ms and unlocks. It is
@@ -55,6 +59,26 @@ fn helper_idle_locker() {
     locker.unlock();
 }
 
+/// A locker that hangs before it locks: it records its pid and waits,
+/// without a lock, until the compositor that started it is gone. Then it
+/// exits at once: the harness would report to a closed pipe.
+#[test]
+#[ignore = "run by the compositor under test"]
+fn helper_hung_idle_locker() {
+    if std::env::var(ROLE).as_deref() != Ok("hung") {
+        return;
+    }
+    let dir = std::env::var(PIDS).expect("TETSU_COMP_TEST_PIDS");
+    let pid = std::process::id();
+    std::fs::write(Path::new(&dir).join(pid.to_string()), "").unwrap();
+    let parent = std::os::unix::process::parent_id();
+    let start = Instant::now();
+    while std::os::unix::process::parent_id() == parent && start.elapsed() < HUNG_MAX {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::process::exit(0);
+}
+
 /// A scratch directory and the out-file the helper writes in it.
 struct Scratch {
     dir: tempfile::TempDir,
@@ -69,6 +93,10 @@ impl Scratch {
 
     fn out(&self) -> PathBuf {
         self.dir.path().join("idle-locked")
+    }
+
+    fn pids(&self) -> PathBuf {
+        self.dir.path().join("pids")
     }
 
     fn config_file(&self) -> PathBuf {
@@ -94,6 +122,27 @@ impl Scratch {
             "helper_idle_locker".to_owned(),
             "--ignored".to_owned(),
             "--nocapture".to_owned(),
+        ];
+        let quoted: Vec<String> = argv.iter().map(|a| format!("{a:?}")).collect();
+        format!(
+            "[lock]\ncommand = [{}]\nidle_timeout_s = {idle_timeout_s}\n",
+            quoted.join(", ")
+        )
+    }
+
+    /// A `[lock]` table whose command re-runs this binary as
+    /// `helper_hung_idle_locker`, which never locks.
+    fn hung_table(&self, idle_timeout_s: u32) -> String {
+        std::fs::create_dir_all(self.pids()).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let argv = [
+            "env".to_owned(),
+            format!("{ROLE}=hung"),
+            format!("{PIDS}={}", self.pids().display()),
+            exe.to_string_lossy().into_owned(),
+            "--exact".to_owned(),
+            "helper_hung_idle_locker".to_owned(),
+            "--ignored".to_owned(),
         ];
         let quoted: Vec<String> = argv.iter().map(|a| format!("{a:?}")).collect();
         format!(
@@ -258,4 +307,47 @@ fn an_empty_lock_command_locks_nothing_and_the_compositor_stays_up() {
         std::thread::sleep(Duration::from_millis(250));
     }
     assert!(!bus_locked(&comp));
+}
+
+/// The pids the hung helper recorded, one per run.
+fn recorded_pids(dir: &Path) -> Vec<u32> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().parse().unwrap())
+        .collect()
+}
+
+/// Whether `pid` runs: it exists and is not a zombie waiting to be reaped.
+fn runs(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        let state = stat.rsplit_once(')').map(|(_, rest)| rest.trim_start());
+        !state.is_some_and(|s| s.starts_with('Z') || s.starts_with('X'))
+    })
+}
+
+fn running(pids: &[u32]) -> usize {
+    pids.iter().filter(|pid| runs(**pid)).count()
+}
+
+#[test]
+fn a_hung_idle_locker_is_restarted_not_piled_up() {
+    // The timeout lasts about 1 s: in 4 s idle starts the locker about four
+    // times, and each retry finds the last one still running.
+    let scratch = Scratch::new();
+    let comp = start(Some(&scratch.hung_table(TIMEOUT_S)));
+    let pids = scratch.pids();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(4) {
+        let recorded = recorded_pids(&pids);
+        if running(&recorded) > 1 {
+            // A killed locker may not be gone yet when the next one starts.
+            std::thread::sleep(Duration::from_millis(300));
+            let now = running(&recorded);
+            assert!(now <= 1, "{now} idle lockers run: {recorded:?}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let recorded = recorded_pids(&pids);
+    assert!(recorded.len() >= 3, "idle retried only {recorded:?}");
+    assert!(!bus_locked(&comp), "the hung locker locked");
 }
