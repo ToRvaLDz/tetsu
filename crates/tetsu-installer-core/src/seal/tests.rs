@@ -594,10 +594,17 @@ fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
     }
 }
 
-/// The token systemd 262 wrote on a Comfort test VM, long values cut short.
-const SYSTEMD_COMFORT: &str = include_str!("testdata/systemd-262-comfort-token.json");
-/// The same for Balanced: systemd adds `tpm2-pin` and `tpm2_salt`.
-const SYSTEMD_BALANCED: &str = include_str!("testdata/systemd-262-balanced-token.json");
+/// `cryptsetup luksDump --dump-json-metadata` of the root device of a
+/// Comfort test VM (systemd 262.1-1, installed from 689a589 and sealed by
+/// `tetsu-unlock-seal` on its first boot), captured byte for byte over the
+/// VM's guest agent before the #115 rollback check. Only the string values
+/// longer than 64 characters (`tpm2-blob`, `tpm2_pubkey`, `tpm2_srk`) are
+/// cut to their first 48; keys, their order and every other value are as
+/// systemd and cryptsetup wrote them.
+const SYSTEMD_COMFORT: &str = include_str!("testdata/systemd-262-comfort-metadata.json");
+/// The same capture from a Balanced test VM: systemd adds `tpm2-pin`,
+/// `tpm2_salt` and the `tpm2_argon2id_*` keys.
+const SYSTEMD_BALANCED: &str = include_str!("testdata/systemd-262-balanced-metadata.json");
 
 #[test]
 fn a_token_written_by_systemd_counts_as_sealed() {
