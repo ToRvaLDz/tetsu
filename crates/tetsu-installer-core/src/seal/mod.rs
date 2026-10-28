@@ -19,12 +19,13 @@
 //!   the file says `pending`, `systemd-cryptenroll <device>` lists a `tpm2`
 //!   slot and `cryptsetup luksDump --dump-json-metadata <device>` shows a
 //!   systemd-tpm2 token with Tetsu's policy (a `tpm2_pubkey` whose
-//!   `tpm2_pubkey_pcrs` holds 11, and a `tpm2-pin` that is true for
-//!   Balanced and missing or false for Comfort), the file is rewritten to
-//!   `sealed` with no prompt and no `@var` mount. A tpm2 slot without that
-//!   policy (added by hand, stale, or forged in the unauthenticated header)
-//!   does not count: the normal seal runs and `--wipe-slot=tpm2` replaces
-//!   it. A failing listing or dump changes nothing and the seal goes on.
+//!   `tpm2_pubkey_pcrs` holds 11, `tpm2-pcrs` holding 7, and a `tpm2-pin`
+//!   that is true for Balanced and missing or false for Comfort), the file
+//!   is rewritten to `sealed` with no prompt and no `@var` mount. A tpm2
+//!   slot without that policy (added by hand, stale, or forged in the
+//!   unauthenticated header) does not count: the normal seal runs and
+//!   `--wipe-slot=tpm2` replaces it. A failing listing or dump changes
+//!   nothing and the seal goes on.
 //! * **Where the keys live.** `/var` is the `@var` subvolume, mounted only
 //!   after the switch. The service mounts that subvolume from the opened
 //!   root mapper under `<work>/var` and unmounts it before it returns. It
@@ -215,8 +216,8 @@ fn has_tpm2_slot(listing: &str) -> bool {
 }
 
 /// Whether the LUKS JSON metadata has a systemd-tpm2 token with Tetsu's
-/// policy: a public key that signs PCR 11, and a PIN exactly when the level
-/// is Balanced. Anything unparsable is no.
+/// policy: a public key that signs PCR 11, a binding to PCR 7, and a PIN
+/// exactly when the level is Balanced. Anything unparsable is no.
 fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
     let Ok(metadata) = serde_json::from_str::<serde_json::Value>(json) else {
         return false;
@@ -232,6 +233,7 @@ fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
                 .and_then(|k| k.as_str())
                 .is_some_and(|k| !k.is_empty())
             && has_pcrs(token, "tpm2_pubkey_pcrs", PUBLIC_KEY_PCR_LIST)
+            && has_pcrs(token, "tpm2-pcrs", BOUND_PCR_LIST)
             && token
                 .get("tpm2-pin")
                 .and_then(|p| p.as_bool())
