@@ -14,7 +14,7 @@ After=graphical-session-pre.target
 Type=notify
 NotifyAccess=all
 ExecStart=/usr/bin/tetsu-comp --backend tty -- /usr/libexec/tetsu-comp-ready
-ExecStopPost=-/usr/bin/systemctl --user unset-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE
+ExecStopPost=-/usr/bin/systemctl --user unset-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE DISPLAY
 TimeoutStartSec=30
 # wayland sets the logind session type through libseat; no seatd daemon.
 Environment=XDG_SESSION_TYPE=wayland

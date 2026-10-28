@@ -19,7 +19,7 @@ fi
 cleanup() {
   systemctl --user unset-environment \
     XDG_SESSION_ID XDG_SEAT XDG_VTNR XDG_SESSION_TYPE \
-    WAYLAND_DISPLAY TETSU_COMP_SOCKET || true
+    WAYLAND_DISPLAY TETSU_COMP_SOCKET DISPLAY || true
 }
 # The unit lives in the user manager, not in this session: stop it when greetd
 # or logind ends the script, else it would outlive the session.
