@@ -13,9 +13,10 @@ pub fn timeout_of(secs: u32) -> Option<Duration> {
     (secs > 0).then(|| Duration::from_secs(u64::from(secs)))
 }
 
-/// Whether idle may start the locker in `phase`.
-pub fn may_lock(_phase: Phase) -> bool {
-    true
+/// Whether idle may start the locker in `phase`: only when nothing is
+/// locked. A defunct lock belongs to the relaunch budget.
+pub fn may_lock(phase: Phase) -> bool {
+    phase == Phase::Unlocked
 }
 
 /// When the session has been idle long enough.

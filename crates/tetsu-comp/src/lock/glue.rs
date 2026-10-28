@@ -208,6 +208,8 @@ impl State {
             return;
         };
         if self.lock.unlock(owner) {
+            // A new idle period starts at the unlock.
+            self.idle.timer.activity(Instant::now());
             self.lock_glue.locks.retain(|(id, _)| *id != owner);
             self.lock_glue.surfaces.clear();
             self.lock_glue.pending = None;

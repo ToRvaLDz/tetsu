@@ -7,7 +7,7 @@ use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::wayland::idle_notify::IdleNotifierState;
 
-use super::IdleTimer;
+use super::{IdleTimer, may_lock};
 use crate::state::State;
 
 /// The compositor's idle timer and the clients' idle notifier.
@@ -45,6 +45,19 @@ impl State {
         if !self.idle.forwarded {
             self.idle.forwarded = true;
             self.idle.notifier.notify_activity(&self.seat);
+        }
+    }
+
+    /// The publish tick's share: once the session went idle, the locker
+    /// starts, as the Lock bind starts it.
+    pub(crate) fn idle_tick(&mut self) {
+        if self
+            .idle
+            .timer
+            .due(Instant::now(), may_lock(self.lock.phase()))
+        {
+            eprintln!("tetsu-comp: idle; starting the locker");
+            self.start_locker();
         }
     }
 

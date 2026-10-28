@@ -663,6 +663,7 @@ impl State {
     /// Flushes the model's events to the bus thread and restarts it if it
     /// died. Runs on the publish tick.
     pub fn publish_tick(&mut self) {
+        self.idle_tick();
         self.lock_tick();
         let mut events = self.engine.flush();
         events.session.extend(self.lock.flush());
