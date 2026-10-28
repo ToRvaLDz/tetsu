@@ -13,6 +13,7 @@ pub mod notify;
 mod nullable;
 pub mod output;
 pub mod peer;
+pub mod render;
 pub mod secrets;
 pub mod server;
 pub mod session;
