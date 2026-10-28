@@ -289,3 +289,35 @@ fn changed_events_come_before_removed_ones() {
     let kinds: Vec<_> = diff(&before, &after).iter().map(|e| e.kind).collect();
     assert_eq!(kinds, [ConfigKind::Changed, ConfigKind::Removed]);
 }
+
+#[test]
+fn a_managed_idle_timeout_applies_and_a_user_one_wins() {
+    let managed = view("", "[lock]\nidle_timeout_s = 120\n", "");
+    let entry = managed.entry("lock.idle_timeout_s").unwrap();
+    assert_eq!(entry.origin, Origin::Managed);
+    assert_eq!(entry.default_value, Some(json!(600)));
+    assert_eq!(
+        Settings::from_values(&managed.values()).lock.idle_timeout_s,
+        120
+    );
+
+    let user = view(
+        "",
+        "[lock]\nidle_timeout_s = 120\n",
+        "[lock]\nidle_timeout_s = 0\n",
+    );
+    assert_eq!(
+        user.entry("lock.idle_timeout_s").unwrap().origin,
+        Origin::User
+    );
+    assert_eq!(Settings::from_values(&user.values()).lock.idle_timeout_s, 0);
+}
+
+#[test]
+fn an_invalid_idle_timeout_falls_back_to_the_built_in_value() {
+    let mut values = view("", "", "").values();
+    values.insert("lock.idle_timeout_s".into(), toml::Value::Integer(-5));
+    assert_eq!(Settings::from_values(&values).lock.idle_timeout_s, 600);
+    values.insert("lock.idle_timeout_s".into(), toml::Value::Integer(90_000));
+    assert_eq!(Settings::from_values(&values).lock.idle_timeout_s, 600);
+}

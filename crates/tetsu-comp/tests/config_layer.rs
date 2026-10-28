@@ -5,7 +5,7 @@ use tetsu_comp::config::layer::parse;
 
 #[test]
 fn every_key_is_known_with_its_writable_flag_and_method() {
-    let expected: [(&str, bool, Option<&str>); 13] = [
+    let expected: [(&str, bool, Option<&str>); 14] = [
         ("layout.default", true, None),
         ("layout.gaps_inner", true, None),
         ("layout.gaps_outer", true, None),
@@ -15,6 +15,7 @@ fn every_key_is_known_with_its_writable_flag_and_method() {
         ("decorations.width", true, None),
         ("decorations.active_color", true, None),
         ("decorations.inactive_color", true, None),
+        ("lock.idle_timeout_s", true, None),
         (
             "render.device",
             false,
@@ -43,6 +44,7 @@ fn command_keys_are_recognised() {
         assert!(lookup(name).unwrap().runs_commands, "{name}");
     }
     assert!(!lookup("layout.default").unwrap().runs_commands);
+    assert!(!lookup("lock.idle_timeout_s").unwrap().runs_commands);
 }
 
 #[test]

@@ -277,7 +277,10 @@ impl Settings {
                 .and_then(|v| rules_of(v).ok())
                 .unwrap_or_default(),
             render,
-            lock: LockSettings { command },
+            lock: LockSettings {
+                command,
+                idle_timeout_s: 0,
+            },
             trust: TrustSettings { input },
             decorations,
         }

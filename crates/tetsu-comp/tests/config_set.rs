@@ -238,3 +238,34 @@ fn an_output_key_is_not_writable_through_set_or_remove() {
     );
     wire(&err);
 }
+
+#[test]
+fn the_idle_timeout_is_writable_unless_the_user_file_sets_it() {
+    let next = run("", "", &[("lock.idle_timeout_s", json!(120))], &[]).unwrap();
+    assert_eq!(next["lock.idle_timeout_s"], toml::Value::Integer(120));
+
+    let err = run(
+        "",
+        "[lock]\nidle_timeout_s = 300\n",
+        &[("lock.idle_timeout_s", json!(120))],
+        &[],
+    )
+    .unwrap_err();
+    let (name, params) = wire(&err);
+    assert_eq!(name, "org.tetsu.comp.config.v1.OverriddenByUser");
+    assert_eq!(params, json!({ "keys": ["lock.idle_timeout_s"] }));
+}
+
+#[test]
+fn a_negative_idle_timeout_is_invalid() {
+    let err = run("", "", &[("lock.idle_timeout_s", json!(-5))], &[]).unwrap_err();
+    let (name, params) = wire(&err);
+    assert_eq!(name, "org.tetsu.comp.config.v1.InvalidValue");
+    assert_eq!(params["key"], "lock.idle_timeout_s");
+    assert!(
+        params["reason"]
+            .as_str()
+            .unwrap()
+            .contains("lock.idle_timeout_s")
+    );
+}

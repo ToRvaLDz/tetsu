@@ -42,12 +42,22 @@ pub struct LockSettings {
     /// The locker's argv, started on the lock bind and again when the
     /// locker dies. Empty: nothing is started.
     pub command: Vec<String>,
+    /// Idle seconds before the locker starts; `0` turns it off.
+    pub idle_timeout_s: u32,
+}
+
+impl LockSettings {
+    /// The idle timeout; `None` when it is off.
+    pub fn idle_timeout(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 impl Default for LockSettings {
     fn default() -> Self {
         Self {
             command: vec!["swaylock".to_owned()],
+            idle_timeout_s: 0,
         }
     }
 }
@@ -421,7 +431,10 @@ fn lock(raw: RawLock) -> Result<LockSettings, SettingsError> {
         .command
         .unwrap_or_else(|| LockSettings::default().command);
     lock_command(&command)?;
-    Ok(LockSettings { command })
+    Ok(LockSettings {
+        command,
+        idle_timeout_s: 0,
+    })
 }
 
 fn trust(raw: RawTrust) -> Result<TrustSettings, SettingsError> {

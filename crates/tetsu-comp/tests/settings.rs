@@ -323,3 +323,50 @@ fn a_bad_decoration_colour_names_the_key() {
 fn an_unknown_decorations_key_is_refused() {
     assert!(err("[decorations]\ntitle = true\n").contains("title"));
 }
+
+#[test]
+fn the_idle_timeout_defaults_to_ten_minutes() {
+    let lock = parse("").unwrap().lock;
+    assert_eq!(lock.idle_timeout_s, 600);
+    assert_eq!(
+        lock.idle_timeout(),
+        Some(std::time::Duration::from_secs(600))
+    );
+}
+
+#[test]
+fn an_idle_timeout_of_zero_turns_it_off() {
+    let lock = parse("[lock]\nidle_timeout_s = 0\n").unwrap().lock;
+    assert_eq!(lock.idle_timeout_s, 0);
+    assert_eq!(lock.idle_timeout(), None);
+    let lock = parse("[lock]\nidle_timeout_s = 30\n").unwrap().lock;
+    assert_eq!(lock.idle_timeout_s, 30);
+    assert_eq!(
+        lock.idle_timeout(),
+        Some(std::time::Duration::from_secs(30))
+    );
+}
+
+#[test]
+fn an_idle_timeout_outside_zero_to_a_day_is_refused_naming_the_key() {
+    for text in [
+        "[lock]\nidle_timeout_s = -1\n",
+        "[lock]\nidle_timeout_s = 86401\n",
+    ] {
+        let message = err(text);
+        assert!(message.contains("lock.idle_timeout_s"), "{message}");
+    }
+    assert_eq!(
+        parse("[lock]\nidle_timeout_s = 86400\n")
+            .unwrap()
+            .lock
+            .idle_timeout_s,
+        86_400
+    );
+}
+
+#[test]
+fn an_idle_timeout_that_is_not_a_number_is_refused_naming_the_key() {
+    let message = err("[lock]\nidle_timeout_s = \"10m\"\n");
+    assert!(message.contains("idle_timeout_s"), "{message}");
+}
