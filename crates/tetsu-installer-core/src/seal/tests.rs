@@ -567,6 +567,10 @@ fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
     let wrong_type = r#"{"tokens":{"0":{"type":"other","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD","tpm2-pin":true}}}"#;
     // systemd never wrote the key with a hyphen.
     let hyphen = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pubkey":"QUJD"}}}"#;
+    // The public key must sign PCR 11, the one the UKI measures.
+    let no_pcrs = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey":"QUJD"}}}"#;
+    let other_pcr =
+        r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[7],"tpm2_pubkey":"QUJD"}}}"#;
     for (json, level, expect) in [
         (TOKEN_PIN, Balanced, true),
         (TOKEN_PIN, Comfort, false),
@@ -578,6 +582,8 @@ fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
         (empty_key, Balanced, false),
         (wrong_type, Balanced, false),
         (hyphen, Comfort, false),
+        (no_pcrs, Comfort, false),
+        (other_pcr, Comfort, false),
         (r#"{"tokens":{}}"#, Comfort, false),
         (r#"{"keyslots":{}}"#, Comfort, false),
         ("", Comfort, false),
