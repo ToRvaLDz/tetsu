@@ -10,14 +10,17 @@ use smithay::backend::input::{InputBackend, InputEvent};
 
 use crate::lock::Phase;
 
+/// One idle second, except on the headless test hook.
+pub const SECOND: Duration = Duration::from_secs(1);
+
 /// The timeout `secs` stands for: `0` turns idle off.
 pub fn timeout_of(secs: u32) -> Option<Duration> {
-    (secs > 0).then(|| Duration::from_secs(u64::from(secs)))
+    timeout_in(secs, SECOND)
 }
 
 /// The timeout `secs` stands for when one second lasts `unit`.
-pub fn timeout_in(secs: u32, _unit: Duration) -> Option<Duration> {
-    timeout_of(secs)
+pub fn timeout_in(secs: u32, unit: Duration) -> Option<Duration> {
+    (secs > 0).then(|| unit.saturating_mul(secs))
 }
 
 /// Whether `event` is user activity that re-arms idle: a device that

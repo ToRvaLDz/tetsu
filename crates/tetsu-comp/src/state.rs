@@ -215,7 +215,7 @@ impl State {
         let lock_command = settings.lock.command.clone();
         // Any client may ask for the lock; the machine decides.
         let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |_| true);
-        let idle = IdleGlue::new(&dh, event_loop.handle(), settings.lock.idle_timeout());
+        let idle = IdleGlue::new(&dh, event_loop.handle(), settings.lock.idle_timeout_s);
         Ok(Self {
             start_time: Instant::now(),
             loop_handle: event_loop.handle(),

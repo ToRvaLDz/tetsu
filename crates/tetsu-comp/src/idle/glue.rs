@@ -7,7 +7,7 @@ use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::wayland::idle_notify::IdleNotifierState;
 
-use super::{IdleTimer, may_lock};
+use super::{IdleTimer, SECOND, may_lock, timeout_in};
 use crate::state::State;
 
 /// The compositor's idle timer and the clients' idle notifier.
@@ -16,6 +16,11 @@ pub struct IdleGlue {
     pub(crate) timer: IdleTimer,
     /// `ext_idle_notifier_v1`, seen by every client.
     pub(crate) notifier: IdleNotifierState<State>,
+    /// `[lock] idle_timeout_s`, kept to count it again in a new unit.
+    timeout_s: u32,
+    /// How long one idle second lasts: a second, shorter only on the
+    /// headless test hook.
+    unit: Duration,
     /// Whether activity was forwarded to the notifier in this loop
     /// iteration: it re-arms every client timer, so once is enough.
     forwarded: bool,
@@ -26,13 +31,27 @@ impl IdleGlue {
     pub fn new(
         dh: &DisplayHandle,
         loop_handle: LoopHandle<'static, State>,
-        timeout: Option<Duration>,
+        timeout_s: u32,
     ) -> Self {
         Self {
-            timer: IdleTimer::new(timeout, Instant::now()),
+            timer: IdleTimer::new(timeout_in(timeout_s, SECOND), Instant::now()),
             notifier: IdleNotifierState::new(dh, loop_handle),
+            timeout_s,
+            unit: SECOND,
             forwarded: false,
         }
+    }
+
+    /// A new `[lock] idle_timeout_s`, counted from the last activity.
+    pub(crate) fn set_timeout_s(&mut self, timeout_s: u32) {
+        self.timeout_s = timeout_s;
+        self.timer.set_timeout(timeout_in(timeout_s, self.unit));
+    }
+
+    /// How long one idle second lasts (the headless test hook).
+    pub(crate) fn set_unit(&mut self, unit: Duration) {
+        self.unit = unit;
+        self.set_timeout_s(self.timeout_s);
     }
 }
 

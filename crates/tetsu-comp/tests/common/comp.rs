@@ -71,6 +71,17 @@ impl Comp {
         Self::spawn(&all, config, true, &[], Layers::default())
     }
 
+    /// Like `start_hotplug`, with extra environment variables.
+    pub fn start_hotplug_with_env(
+        args: &[&str],
+        config: Option<&str>,
+        env: &[(&str, &str)],
+    ) -> Self {
+        let mut all = vec!["--headless-hotplug"];
+        all.extend_from_slice(args);
+        Self::spawn(&all, config, true, env, Layers::default())
+    }
+
     /// Like `start_hotplug`, with the layer files written first.
     pub fn start_hotplug_layers(args: &[&str], layers: Layers<'_>) -> Self {
         let mut all = vec!["--headless-hotplug"];

@@ -15,6 +15,10 @@
 //!   (`State::note_activity`), so tests can drive idle.
 //!
 //! A line that does not parse, or names nothing, is logged and ignored.
+//!
+//! `TETSU_COMP_HEADLESS_IDLE_UNIT_MS` (1 to 1000) makes one second of
+//! `[lock] idle_timeout_s` last that many milliseconds, so tests can idle
+//! through a valid timeout fast. Only this test backend reads it.
 
 use std::io::{BufRead, Read};
 use std::time::Duration;
@@ -41,6 +45,10 @@ const MAX_SIDE: i32 = 16_384;
 const MAX_LINE: usize = 256;
 /// The most modes `add-modes` makes.
 const MAX_MODES: usize = 16;
+/// The environment variable of the idle unit test hook.
+pub const IDLE_UNIT_ENV: &str = "TETSU_COMP_HEADLESS_IDLE_UNIT_MS";
+/// The longest idle unit, in milliseconds: a real second.
+const MAX_IDLE_UNIT_MS: u64 = 1_000;
 
 /// A hotplug command read from stdin.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,15 +173,32 @@ fn parse_size(text: &str) -> Result<(i32, i32), String> {
     Ok((side(w)?, side(h)?))
 }
 
-/// The length of one idle second, from `TETSU_COMP_HEADLESS_IDLE_UNIT_MS`.
-pub fn idle_unit_of(_text: &str) -> Option<Duration> {
-    None
+/// The length of one idle second, from `TETSU_COMP_HEADLESS_IDLE_UNIT_MS`:
+/// 1 to 1000 ms.
+pub fn idle_unit_of(text: &str) -> Option<Duration> {
+    let ms: u64 = text.parse().ok()?;
+    (1..=MAX_IDLE_UNIT_MS)
+        .contains(&ms)
+        .then(|| Duration::from_millis(ms))
+}
+
+/// Applies `TETSU_COMP_HEADLESS_IDLE_UNIT_MS` when set; a bad value is
+/// logged and ignored.
+fn apply_idle_unit(state: &mut State) {
+    let Some(raw) = std::env::var_os(IDLE_UNIT_ENV) else {
+        return;
+    };
+    match raw.to_str().and_then(idle_unit_of) {
+        Some(unit) => state.idle.set_unit(unit),
+        None => eprintln!("tetsu-comp: {IDLE_UNIT_ENV}: {raw:?} is not 1 to 1000; ignored"),
+    }
 }
 
 /// Adds `count` virtual outputs, `HEADLESS-1..`, side by side, and starts
 /// their frame timers. With `hotplug`, reads commands from stdin.
 pub fn init(state: &mut State, count: u8, hotplug: bool) -> Result<(), Box<dyn std::error::Error>> {
     state.mod_key = ModKey::Super;
+    apply_idle_unit(state);
     for n in 1..=count {
         add_output(state, &output_name(n), &[OUTPUT_SIZE])?;
     }

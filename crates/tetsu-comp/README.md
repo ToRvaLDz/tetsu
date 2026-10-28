@@ -80,6 +80,11 @@ window, workspace, output, session and config interfaces of the bus
   path every input takes, so tests can drive idle. A line that does not
   parse, or names nothing, is logged and ignored.
 
+- **`TETSU_COMP_HEADLESS_IDLE_UNIT_MS`** (headless only, 1 to 1000): one
+  second of `[lock] idle_timeout_s` lasts that many milliseconds, so tests
+  idle through a valid timeout fast. The tty and winit backends never read
+  it; a bad value is logged and ignored.
+
 Query the bus with `varlinkctl call $TETSU_COMP_SOCKET
 org.tetsu.comp.window.v1.ListWindows '{}'`. The bus socket is
 `$XDG_RUNTIME_DIR/tetsu/comp/<wayland socket name>`, one per instance.

@@ -4,6 +4,8 @@
 //! `unlocked`. Activity holds it off, `0` turns it off, the key reloads
 //! live, and an empty command locks nothing. These tests run on the wall
 //! clock, with wide margins; the timer itself is in `tests/idle.rs`.
+//! A timeout is at least 30 s, so each test makes an idle second last
+//! `UNIT_MS` through the headless hook: 30 s pass in about 1 s.
 
 mod common;
 #[path = "common/locker.rs"]
@@ -20,6 +22,12 @@ const GET_SESSION: &str = "org.tetsu.comp.session.v1.GetSession";
 const WATCH_SESSION: &str = "org.tetsu.comp.session.v1.WatchSession";
 const ROLE: &str = "TETSU_COMP_TEST_ROLE";
 const OUT: &str = "TETSU_COMP_TEST_OUT";
+/// The headless idle unit hook.
+const UNIT_ENV: &str = "TETSU_COMP_HEADLESS_IDLE_UNIT_MS";
+/// One idle second, in milliseconds: `TIMEOUT_S` lasts about 1 s.
+const UNIT_MS: &str = "33";
+/// The shortest valid timeout.
+const TIMEOUT_S: u32 = 30;
 /// The longest wait for the idle lock.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// How long a session that must not lock is watched.
@@ -93,6 +101,11 @@ impl Scratch {
     }
 }
 
+/// The compositor with short idle seconds.
+fn start(config: Option<&str>) -> Comp {
+    Comp::start_with_env(&[], config, &[(UNIT_ENV, UNIT_MS)])
+}
+
 fn bus_locked(comp: &Comp) -> bool {
     let contract = common::contract();
     let mut client = Client::connect(&comp.bus);
@@ -128,7 +141,7 @@ fn stays_unlocked(comp: &mut Comp, out: &Path, mut each: impl FnMut(&mut Comp)) 
 #[test]
 fn an_idle_session_starts_the_locker_and_the_bus_follows() {
     let scratch = Scratch::new();
-    let comp = Comp::start_with(&[], Some(&scratch.lock_table(1)));
+    let comp = start(Some(&scratch.lock_table(TIMEOUT_S)));
     let contract = common::contract();
     let mut watch = Client::connect(&comp.bus);
     watch.send(WATCH_SESSION, true);
@@ -144,7 +157,11 @@ fn an_idle_session_starts_the_locker_and_the_bus_follows() {
 #[test]
 fn activity_holds_the_idle_lock_off() {
     let scratch = Scratch::new();
-    let mut comp = Comp::start_hotplug(&[], Some(&scratch.lock_table(1)));
+    let mut comp = Comp::start_hotplug_with_env(
+        &[],
+        Some(&scratch.lock_table(TIMEOUT_S)),
+        &[(UNIT_ENV, UNIT_MS)],
+    );
     let out = scratch.out();
     stays_unlocked(&mut comp, &out, |comp| comp.control("activity"));
     wait_idle_locked(&out);
@@ -153,7 +170,7 @@ fn activity_holds_the_idle_lock_off() {
 #[test]
 fn a_zero_timeout_never_locks() {
     let scratch = Scratch::new();
-    let mut comp = Comp::start_with(&[], Some(&scratch.lock_table(0)));
+    let mut comp = start(Some(&scratch.lock_table(0)));
     stays_unlocked(&mut comp, &scratch.out(), |_| {});
 }
 
@@ -162,16 +179,20 @@ fn a_new_timeout_in_the_user_file_applies_live() {
     let scratch = Scratch::new();
     scratch.write_config(&scratch.lock_table(0));
     let config = scratch.config_file();
-    let mut comp = Comp::start_with(&["--config", config.to_str().unwrap()], None);
+    let mut comp = Comp::start_with_env(
+        &["--config", config.to_str().unwrap()],
+        None,
+        &[(UNIT_ENV, UNIT_MS)],
+    );
     let out = scratch.out();
     stays_unlocked(&mut comp, &out, |_| {});
-    scratch.write_config(&scratch.lock_table(1));
+    scratch.write_config(&scratch.lock_table(TIMEOUT_S));
     wait_idle_locked(&out);
 }
 
 #[test]
 fn an_empty_lock_command_locks_nothing_and_the_compositor_stays_up() {
-    let comp = Comp::start_with(&[], Some("[lock]\ncommand = []\nidle_timeout_s = 1\n"));
+    let comp = start(Some("[lock]\ncommand = []\nidle_timeout_s = 30\n"));
     let start = Instant::now();
     while start.elapsed() < QUIET {
         assert!(!bus_locked(&comp), "the session locked");

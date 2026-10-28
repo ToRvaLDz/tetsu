@@ -57,7 +57,7 @@ impl State {
         if changed {
             let settings = Settings::from_values(&store.view().values());
             self.lock_glue.set_command(settings.lock.command.clone());
-            self.idle.timer.set_timeout(settings.lock.idle_timeout());
+            self.idle.set_timeout_s(settings.lock.idle_timeout_s);
             self.engine.set_settings(settings);
             self.relayout();
         }
