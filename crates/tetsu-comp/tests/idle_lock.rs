@@ -22,6 +22,8 @@ const GET_SESSION: &str = "org.tetsu.comp.session.v1.GetSession";
 const WATCH_SESSION: &str = "org.tetsu.comp.session.v1.WatchSession";
 const ROLE: &str = "TETSU_COMP_TEST_ROLE";
 const OUT: &str = "TETSU_COMP_TEST_OUT";
+/// How long the helper holds the lock before it unlocks, in ms.
+const HOLD: &str = "TETSU_COMP_TEST_HOLD_MS";
 /// The headless idle unit hook.
 const UNIT_ENV: &str = "TETSU_COMP_HEADLESS_IDLE_UNIT_MS";
 /// One idle second, in milliseconds: `TIMEOUT_S` lasts about 1 s.
@@ -34,8 +36,8 @@ const LOCK_WAIT: Duration = Duration::from_secs(5);
 const QUIET: Duration = Duration::from_millis(2_500);
 
 /// The locker the compositor starts on idle: it locks, waits for
-/// `locked`, reports it and unlocks. It is a test of this binary, run on
-/// purpose; alone it returns at once.
+/// `locked`, reports it, holds the lock for `HOLD` ms and unlocks. It is
+/// a test of this binary, run on purpose; alone it returns at once.
 #[test]
 #[ignore = "run by the compositor under test"]
 fn helper_idle_locker() {
@@ -47,6 +49,8 @@ fn helper_idle_locker() {
     locker.lock();
     locker.wait_locked();
     std::fs::write(Path::new(&out), "locked").unwrap();
+    let hold = std::env::var(HOLD).map_or(0, |ms| ms.parse().unwrap());
+    std::thread::sleep(Duration::from_millis(hold));
     locker.unlock();
 }
 
@@ -71,14 +75,19 @@ impl Scratch {
     }
 
     /// A `[lock]` table whose command re-runs this binary as
-    /// `helper_idle_locker`; `env` hands it its role, as the hotplug
-    /// start takes no environment.
+    /// `helper_idle_locker`; `env` hands it its role and out-file.
     fn lock_table(&self, idle_timeout_s: u32) -> String {
+        self.lock_table_holding(idle_timeout_s, 0)
+    }
+
+    /// Like `lock_table`, with a helper that holds the lock `hold_ms`.
+    fn lock_table_holding(&self, idle_timeout_s: u32, hold_ms: u64) -> String {
         let exe = std::env::current_exe().unwrap();
         let argv = [
             "env".to_owned(),
             format!("{ROLE}=locker"),
             format!("{OUT}={}", self.out().display()),
+            format!("{HOLD}={hold_ms}"),
             exe.to_string_lossy().into_owned(),
             "--exact".to_owned(),
             "helper_idle_locker".to_owned(),
@@ -152,6 +161,34 @@ fn an_idle_session_starts_the_locker_and_the_bus_follows() {
     wait_idle_locked(&scratch.out());
     assert_eq!(watch.event(&contract, WATCH_SESSION)["kind"], "locked");
     assert_eq!(watch.event(&contract, WATCH_SESSION)["kind"], "unlocked");
+}
+
+#[test]
+fn the_unlock_starts_a_new_idle_period() {
+    // One idle second lasts 66 ms: the timeout is about 2 s. The helper
+    // holds the lock longer than that, so an idle period still counted
+    // from the firing would start the locker again at once on unlock.
+    let scratch = Scratch::new();
+    let table = scratch.lock_table_holding(TIMEOUT_S, 2_500);
+    let comp = Comp::start_with_env(&[], Some(&table), &[(UNIT_ENV, "66")]);
+    let contract = common::contract();
+    let mut watch = Client::connect(&comp.bus);
+    watch.send(WATCH_SESSION, true);
+    assert_eq!(watch.event(&contract, WATCH_SESSION)["kind"], "initial");
+    let out = scratch.out();
+    wait_idle_locked(&out);
+    assert_eq!(watch.event(&contract, WATCH_SESSION)["kind"], "locked");
+    assert_eq!(watch.event(&contract, WATCH_SESSION)["kind"], "unlocked");
+    std::fs::remove_file(&out).unwrap();
+
+    let unlocked = Instant::now();
+    while unlocked.elapsed() < Duration::from_millis(1_200) {
+        assert!(!out.exists(), "the locker started again before a timeout");
+        assert!(!bus_locked(&comp), "the session locked again at once");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    wait_idle_locked(&out);
+    assert_eq!(watch.event(&contract, WATCH_SESSION)["kind"], "locked");
 }
 
 #[test]
