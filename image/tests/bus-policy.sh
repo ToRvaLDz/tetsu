@@ -43,9 +43,19 @@ for u in "${sockets[@]}"; do
   base=${listen##*/}
   dir=${listen%/*}
   [ -n "$base" ] && [ -f "$IDL/$base.varlink" ]; expect "$rel: $base is an interface of the IDL" $?
-  [ "$(unit_value "$u" FileDescriptorName)" = "$base" ]; expect "$rel: FileDescriptorName is $base" $?
-  [ "$(unit_value "$u" Symlinks)" = "$dir/registry/$base" ]; expect "$rel: Symlinks is the registry entry" $?
-  [ "$(unit_value "$u" RemoveOnStop)" = yes ]; expect "$rel: RemoveOnStop=yes" $?
+  # The system registry is the one scan directory a daemon cannot be found
+  # without, so its sockets carry the link, the name and RemoveOnStop. A
+  # user socket sits in a directory that discovery scans as well (the
+  # secrets broker's does not link into the registry), so there the link is
+  # optional but, when declared, must be the registry entry.
+  if [ "$dir" = /run/tetsu ]; then
+    [ "$(unit_value "$u" FileDescriptorName)" = "$base" ]; expect "$rel: FileDescriptorName is $base" $?
+    [ "$(unit_value "$u" Symlinks)" = "$dir/registry/$base" ]; expect "$rel: Symlinks is the registry entry" $?
+    [ "$(unit_value "$u" RemoveOnStop)" = yes ]; expect "$rel: RemoveOnStop=yes" $?
+  else
+    link=$(unit_value "$u" Symlinks)
+    [ -z "$link" ] || [ "$link" = "$dir/registry/$base" ]; expect "$rel: Symlinks, if any, is the registry entry" $?
+  fi
   case "$dir" in
     /run/tetsu) want_sock=0666 want_dir=0755 ;;
     %t/tetsu) want_sock=0600 want_dir=0700 ;;
