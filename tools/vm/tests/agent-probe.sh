@@ -56,7 +56,7 @@ say r_cred_cfg "$(try '[ "$(cat "$1")" = vm-marker ]' "$HOME/.config/credstore/v
 say r_cred_cfg_enc "$(try '[ "$(cat "$1")" = vm-marker ]' "$HOME/.config/credstore.encrypted/vm-marker")"
 say r_cred_lib "$(try '[ "$(cat "$1")" = vm-marker ]' "$HOME/.local/lib/credstore/vm-marker")"
 say r_cred_lib_enc "$(try '[ "$(cat "$1")" = vm-marker ]' "$HOME/.local/lib/credstore.encrypted/vm-marker")"
-say r_vault "$(try '[ "$(cat "$1")" = vm-marker ]' "$HOME/.local/share/tetsu/secrets/vm-marker")"
+say r_vault "$(try '[ "$(cat "$1")" = vm-marker ]' "$HOME/.local/share/tetsu/vm-marker")"
 say r_keyring "$(try '[ "$(cat "$1")" = vm-marker ]' "$HOME/.local/share/keyrings/vm-marker")"
 
 # Connections to the buses, the managers and the credential store.

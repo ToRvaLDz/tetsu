@@ -103,7 +103,7 @@ has "$svc" Service InaccessiblePaths /run/dbus; expect "agent: InaccessiblePaths
 inacc=$(unit_get "$svc" Service InaccessiblePaths)
 [ -n "$inacc" ]; expect "agent: InaccessiblePaths= is set" $?
 for want in %E/credstore %E/credstore.encrypted %h/.local/lib/credstore \
-  %h/.local/lib/credstore.encrypted %h/.local/share/tetsu/secrets %h/.local/share/keyrings; do
+  %h/.local/lib/credstore.encrypted %h/.local/share/tetsu %h/.local/share/keyrings; do
   grep -qxF -- "$want" <<<"$inacc"; expect "agent: InaccessiblePaths has $want" $?
 done
 while IFS= read -r p; do

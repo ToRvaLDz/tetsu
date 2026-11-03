@@ -88,13 +88,13 @@ agent_sandbox_checks() {
   check "the unit runs in tetsu-agent.slice with Type=exec" 'Slice=tetsu-agent\.slice' \
     "systemctl --user show -p Slice -p Type tetsu-agent.service"
   check "the denied home directories exist, 0700, made by user tmpfiles" '^700$' \
-    "stat -c %a ~/.config/credstore ~/.config/credstore.encrypted ~/.local/lib/credstore ~/.local/lib/credstore.encrypted ~/.local/share/tetsu/secrets ~/.local/share/keyrings | sort -u"
+    "stat -c %a ~/.config/credstore ~/.config/credstore.encrypted ~/.local/lib/credstore ~/.local/lib/credstore.encrypted ~/.local/share/tetsu ~/.local/share/keyrings | sort -u"
 
   # 2. Setup outside the sandbox: probe, markers, sibling cgroup.
   agent_clone3_probe "$elf"
   gput "$AGENT_DIR/agent-probe.sh" "$pd/probe.sh" 0755
   gput "$elf" "$pd/clone3" 0755
-  gexec "for d in ~/.config/credstore ~/.config/credstore.encrypted ~/.local/lib/credstore ~/.local/lib/credstore.encrypted ~/.local/share/tetsu/secrets ~/.local/share/keyrings ~/.config/tetsu ~/.local/state/tetsu; do mkdir -p \$d && printf vm-marker >\$d/vm-marker; done; echo markers-seeded"
+  gexec "for d in ~/.config/credstore ~/.config/credstore.encrypted ~/.local/lib/credstore ~/.local/lib/credstore.encrypted ~/.local/share/tetsu ~/.local/share/keyrings ~/.config/tetsu ~/.local/state/tetsu; do mkdir -p \$d && printf vm-marker >\$d/vm-marker; done; echo markers-seeded"
   assert_contains "$SCENARIO: markers are seeded in the denied and the read-only locations" "$GOUT" "markers-seeded"
   check "a sibling cgroup is made outside the agent slice, in the user's delegated subtree" '^sibling-ok$' \
     "ucg=/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service); mkdir -p \$ucg/vm-probe-sibling && test -w \$ucg/vm-probe-sibling/cgroup.procs && echo sibling-ok"
@@ -140,7 +140,7 @@ agent_sandbox_checks() {
   agent_expect r_cred_cfg_enc no yes "the config credstore.encrypted marker cannot be read"
   agent_expect r_cred_lib no yes "the ~/.local/lib/credstore marker cannot be read"
   agent_expect r_cred_lib_enc no yes "the ~/.local/lib/credstore.encrypted marker cannot be read"
-  agent_expect r_vault no yes "the tetsu vault marker cannot be read"
+  agent_expect r_vault no yes "the marker in ~/.local/share/tetsu (vault, staged key) cannot be read"
   agent_expect r_keyring no yes "the keyring marker cannot be read"
   agent_expect c_userbus no yes "busctl --user cannot reach the session bus"
   agent_expect c_userbus_path no yes "connecting to %t/bus fails"
@@ -176,7 +176,7 @@ agent_sandbox_checks() {
   say_info "KNOWN-OPEN /proc route (#144): inside=${AGENT_IN[proc_root]-<missing>} control=${AGENT_OUT[proc_root]-<missing>}"
 
   # 6. Back to the shipped unit, unmodified.
-  gexec "pkill -u \$(id -u) -f 'vm-late.sock|sleep 300'; rm -f \$XDG_RUNTIME_DIR/vm-late.sock; rm -rf \$XDG_RUNTIME_DIR/systemd/user/tetsu-agent.service.d; ucg=/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service); rmdir \$ucg/vm-probe-sibling; for d in ~/.config/credstore ~/.config/credstore.encrypted ~/.local/lib/credstore ~/.local/lib/credstore.encrypted ~/.local/share/tetsu/secrets ~/.local/share/keyrings ~/.config/tetsu ~/.local/state/tetsu; do rm -f \$d/vm-marker; done; rm -rf $pd; systemctl --user daemon-reload; systemctl --user reset-failed tetsu-agent.service; systemctl --user start tetsu-agent.service; echo restored"
+  gexec "pkill -u \$(id -u) -f 'vm-late.sock|sleep 300'; rm -f \$XDG_RUNTIME_DIR/vm-late.sock; rm -rf \$XDG_RUNTIME_DIR/systemd/user/tetsu-agent.service.d; ucg=/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service); rmdir \$ucg/vm-probe-sibling; for d in ~/.config/credstore ~/.config/credstore.encrypted ~/.local/lib/credstore ~/.local/lib/credstore.encrypted ~/.local/share/tetsu ~/.local/share/keyrings ~/.config/tetsu ~/.local/state/tetsu; do rm -f \$d/vm-marker; done; rm -rf $pd; systemctl --user daemon-reload; systemctl --user reset-failed tetsu-agent.service; systemctl --user start tetsu-agent.service; echo restored"
   assert_contains "$SCENARIO: the unmodified unit starts" "$GOUT" "restored"
   check "the unmodified unit runs /usr/bin/tetsu-agent" 'path=/usr/bin/tetsu-agent' \
     "systemctl --user show -P ExecStart tetsu-agent.service"

@@ -220,8 +220,8 @@ The sandbox, in `crates/tetsu-agent/dist/tetsu-agent.service`:
   is unset (this amends point 1 of #25). A filtering proxy with an allowlist
   arrives only when a consumer needs a name (#79, if a CLI backend does).
 - The secret stores in `$HOME` (the credstore pair under the config dir and
-  under `~/.local/lib`, `~/.local/share/tetsu/secrets`,
-  `~/.local/share/keyrings`) are masked with `InaccessiblePaths=`, without
+  under `~/.local/lib`, all of `~/.local/share/tetsu` with the vault and the
+  staged installer key, and `~/.local/share/keyrings`) are masked with `InaccessiblePaths=`, without
   `-`. User tmpfiles (`usr/share/user-tmpfiles.d/tetsu.conf`) create them 0700,
   so a mask never races a store made later, and a missing one fails the start
   closed. The unit says `%E/credstore*`; tmpfiles has no `%E` and uses

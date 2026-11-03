@@ -74,7 +74,9 @@ BindReadOnlyPaths=/run/systemd/resolve /run/systemd/journal
 InaccessiblePaths=/run/dbus
 InaccessiblePaths=%E/credstore %E/credstore.encrypted
 InaccessiblePaths=%h/.local/lib/credstore %h/.local/lib/credstore.encrypted
-InaccessiblePaths=%h/.local/share/tetsu/secrets %h/.local/share/keyrings
+# All of ~/.local/share/tetsu is tetsu-secrets private data (the vault and the
+# installer's staged key), so the whole directory is masked, not only secrets/.
+InaccessiblePaths=%h/.local/share/tetsu %h/.local/share/keyrings
 
 # Keeping the mounts in force.
 CapabilityBoundingSet=

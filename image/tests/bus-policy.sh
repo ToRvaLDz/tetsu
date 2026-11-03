@@ -86,7 +86,7 @@ d %h/.config/credstore 0700 - - -
 d %h/.config/credstore.encrypted 0700 - - -
 d %h/.local/lib/credstore 0700 - - -
 d %h/.local/lib/credstore.encrypted 0700 - - -
-d %h/.local/share/tetsu/secrets 0700 - - -
+d %h/.local/share/tetsu 0700 - - -
 d %h/.local/share/keyrings 0700 - - -'
 expect "user tmpfiles lines (the registry, then the agent's denied stores)" $?
 
