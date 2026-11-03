@@ -225,8 +225,9 @@ The sandbox, in `crates/tetsu-agent/dist/tetsu-agent.service`:
   `InaccessiblePaths=`, without `-`. User tmpfiles
   (`usr/share/user-tmpfiles.d/tetsu.conf`) create these directories 0700
   (`~/.local/share/tetsu` itself, not only its `secrets/`), so a mask never
-  races a store made later, and a missing one fails the start closed. The unit says `%E/credstore*`; tmpfiles has no `%E` and uses
-  `%h/.config`, so a non-default `XDG_CONFIG_HOME` fails closed.
+  races a store made later, and a missing one fails the start closed. The
+  unit says `%E/credstore*`; tmpfiles has no `%E` and uses `%h/.config`, so
+  a non-default `XDG_CONFIG_HOME` fails closed.
 - Nothing is writable but `StateDirectory=` and `CacheDirectory=`
   (`tetsu-agent`) and a private `/tmp`; there is no `ReadWritePaths=` (CLI
   backend login dirs are #79's to scope). `~/.config/tetsu` and
@@ -247,8 +248,8 @@ The sandbox, in `crates/tetsu-agent/dist/tetsu-agent.service`:
   `PrivatePIDs`/tetsu-bus follow-up) is under review.
 - Residual: abstract unix sockets are per network namespace and not filtered
   by the mount allowlist, so a *listening* abstract bus would be reachable.
-  None exists on the image; the VM probe tries a connect to each listening
-  abstract name and would catch one.
+  None exists on the image; the VM probe tries a D-Bus and a Varlink connect
+  to each listening abstract name (no positive control: the image has none).
 
 `image/tests/agent-sandbox.sh` pins the staged unit keys and tmpfiles without
 root. `tools/vm/tests/agent.sh` proves the behaviour in the session VM test:

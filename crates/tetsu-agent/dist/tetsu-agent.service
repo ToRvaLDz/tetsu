@@ -53,7 +53,8 @@
 #  - Abstract sockets belong to the network namespace, not the mount
 #    allowlist, so RestrictAddressFamilies=AF_UNIX below would still reach a
 #    *listening* abstract bus. None exists on the image; the VM probe tries a
-#    connect to every listening abstract name and would catch one.
+#    D-Bus and a Varlink connect to every listening abstract name (it has no
+#    positive control, since the image has no such socket).
 #  - MemoryDenyWriteExecute= is not set: CLI backends may run JIT runtimes.
 [Unit]
 Description=Tetsu agent

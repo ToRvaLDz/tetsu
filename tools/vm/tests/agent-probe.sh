@@ -78,7 +78,7 @@ say dbus_env "$([ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && echo unset || echo set
 # @<hex>/bus/<comm>/<role> names in /proc/net/unix are connected sd-bus client
 # ends (no listening flag), not servers, so a name alone proves nothing: try a
 # connect to each listening abstract name (flags 00010000). None exists on the
-# image; the probe would catch one.
+# image, so this has no positive control; it tries D-Bus and Varlink only.
 abstract_bus=no
 while read -r name; do
   [ -n "$name" ] || continue
