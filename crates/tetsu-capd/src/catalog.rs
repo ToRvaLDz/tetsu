@@ -117,6 +117,26 @@ pub const ENTRIES: &[Entry] = &[
         None,
         false,
     ),
+    entry("org.tetsu.secrets.v1.ListSecrets", None, None, false),
+    entry("org.tetsu.secrets.v1.WatchSecrets", None, None, false),
+    entry(
+        "org.tetsu.secrets.v1.Add",
+        Some("secrets.manage"),
+        None,
+        false,
+    ),
+    entry(
+        "org.tetsu.secrets.v1.Rotate",
+        Some("secrets.manage"),
+        None,
+        true,
+    ),
+    entry(
+        "org.tetsu.secrets.v1.Remove",
+        Some("secrets.manage"),
+        None,
+        true,
+    ),
     entry("org.tetsu.tx.v1.Update", Some("system.update"), None, true),
     entry(
         "org.tetsu.tx.v1.Install",
