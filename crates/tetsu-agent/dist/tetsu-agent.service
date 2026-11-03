@@ -78,7 +78,8 @@ InaccessiblePaths=%h/.local/lib/credstore %h/.local/lib/credstore.encrypted
 # installer's staged key), so the whole directory is masked, not only secrets/.
 InaccessiblePaths=%h/.local/share/tetsu %h/.local/share/keyrings
 
-# Keeping the mounts in force.
+# Keeping the mounts in force. The three keys back each other up; the VM
+# mount and unshare probes cover them together, not one by one.
 CapabilityBoundingSet=
 SystemCallFilter=~@mount
 SystemCallFilter=~clone3:ENOSYS
