@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Stage the Tetsu session into a root tree: the binaries, the user units, the
-# launcher scripts, the notifyd D-Bus activation file and the capability
-# table. Static files (greetd config, presets) are in the payload mkosi.extra.
+# Stage the Tetsu session into a root tree: the binaries, the user units
+# (the agent's, sandboxed and not enabled, included), the launcher scripts,
+# the notifyd D-Bus activation file and the capability table. Static files
+# (greetd config, presets) are in the payload mkosi.extra.
 #
 #   image/stage-session --crates            print the session crates
 #   image/stage-session ROOT [RELEASE_DIR]  stage into ROOT (RELEASE_DIR
@@ -9,7 +10,7 @@
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CRATES=(tetsu-comp tetsu-bar tetsu-notifyd tetsu-capd)
+CRATES=(tetsu-comp tetsu-bar tetsu-notifyd tetsu-capd tetsu-agent)
 
 usage() {
   echo "usage: image/stage-session --crates | ROOT [RELEASE_DIR]" >&2
@@ -36,6 +37,8 @@ install -m 0644 "$REPO/crates/tetsu-comp/dist/tetsu-comp.service" "$root/usr/lib
 install -m 0644 "$REPO/crates/tetsu-bar/dist/tetsu-bar.service" "$root/usr/lib/systemd/user/"
 install -m 0644 "$REPO/crates/tetsu-notifyd/dist/tetsu-notifyd.service" "$root/usr/lib/systemd/user/"
 install -m 0644 "$REPO/crates/tetsu-capd/dist/tetsu-capd.service" "$root/usr/lib/systemd/user/"
+install -m 0644 "$REPO/crates/tetsu-agent/dist/tetsu-agent.service" "$root/usr/lib/systemd/user/"
+install -m 0644 "$REPO/crates/tetsu-agent/dist/tetsu-agent.slice" "$root/usr/lib/systemd/user/"
 install -m 0755 "$REPO/crates/tetsu-comp/dist/tetsu-session" "$root/usr/bin/tetsu-session"
 install -m 0755 "$REPO/crates/tetsu-comp/dist/tetsu-comp-ready" "$root/usr/libexec/tetsu-comp-ready"
 install -m 0644 "$REPO/crates/tetsu-notifyd/dist/org.freedesktop.Notifications.service" \

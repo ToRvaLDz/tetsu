@@ -1,0 +1,99 @@
+# Installed as /usr/lib/systemd/user/tetsu-agent.service. The agent runs
+# sandboxed: it reaches the session only through the Varlink sockets of
+# capd and notifyd under %t/tetsu, read-only (a connect needs no write bit on
+# a socket, and the daemons verify who connects).
+#
+# Not enabled by any preset and no [Install]: starting it belongs to the
+# backend and the daemon (#79/#80). Until then it only idles.
+#
+# What the sandbox keeps the agent from, and how:
+#
+#  - The user runtime dir and /run/systemd are allowlists, not denylists:
+#    TemporaryFileSystem= hides everything and only the listed binds come
+#    back. That covers the session bus (%t/bus), the user manager
+#    (%t/systemd/private), %t/credstore*, oo7's pam socket (in %t, at
+#    %t/oo7/pam.sock or %t/oo7-pam.sock depending on the version), the
+#    Wayland and PipeWire sockets, and the system Varlink sockets
+#    (io.systemd.Manager can create transient units, io.systemd.Credentials,
+#    io.systemd.Login and /run/systemd/private), whether they exist at start
+#    or appear later. /run/systemd/resolve (DNS) and /run/systemd/journal
+#    (logging) stay.
+#  - No session bus at all (amends point 1 of #25): %t/bus is hidden and
+#    DBUS_SESSION_BUS_ADDRESS is unset. A filtering proxy with an allowlist
+#    arrives only when a consumer needs a name (#79, if a CLI backend does).
+#  - The system bus: /run/dbus is inaccessible.
+#  - The secret stores in $HOME are masked by InaccessiblePaths=, with no `-`
+#    so a missing directory fails the start instead of leaving it open. Each
+#    one is a fixed directory made by usr/share/user-tmpfiles.d/tetsu.conf,
+#    which is what keeps the mask from racing a store created later. The
+#    config credstore is %E/credstore* (systemd's lookup is
+#    $XDG_CONFIG_HOME/credstore*); tmpfiles has no %E, so it makes
+#    %h/.config/..., and with a non-default XDG_CONFIG_HOME the missing
+#    directory fails the start closed.
+#  - No ReadWritePaths=: the agent writes only its StateDirectory=,
+#    CacheDirectory= and the private /tmp. The login directories of CLI
+#    backends are #79's to scope, narrowly. ~/.config/tetsu and
+#    ~/.local/state/tetsu are read-only through ProtectHome=read-only.
+#  - The mounts stay in force: no capabilities, no mount syscalls, no new
+#    namespaces, no privilege gain. (A CLI backend that sandboxes itself with
+#    namespaces, such as bubblewrap, is for #79 to reconcile.)
+#  - The cgroup tree: the barrier is ReadOnlyPaths=/sys/fs/cgroup plus
+#    SystemCallFilter=~clone3:ENOSYS (libc then falls back to clone(2), which
+#    cannot take CLONE_INTO_CGROUP). ProtectControlGroups=yes is set as #28
+#    asks, but systemd.exec(5) says it is not supported in per-user
+#    managers, so it is belt and braces only; the VM proves the two above.
+#  - No PrivatePIDs=: the agent shares the PID namespace. Known open item:
+#    /proc/<pid>/root of a same-user process (capd, say) is reachable from
+#    here until #144 closes it.
+#  - MemoryDenyWriteExecute= is not set: CLI backends may run JIT runtimes.
+[Unit]
+Description=Tetsu agent
+Documentation=https://github.com/ToRvaLDz/tetsu
+PartOf=graphical-session.target
+After=tetsu-capd.service tetsu-notifyd.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/tetsu-agent
+Slice=tetsu-agent.slice
+
+# File system.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=%t/tetsu /sys/fs/cgroup
+StateDirectory=tetsu-agent
+CacheDirectory=tetsu-agent
+
+# Runtime dirs by allowlist.
+TemporaryFileSystem=%t:ro
+BindReadOnlyPaths=%t/tetsu
+TemporaryFileSystem=/run/systemd:ro
+BindReadOnlyPaths=/run/systemd/resolve /run/systemd/journal
+InaccessiblePaths=/run/dbus
+InaccessiblePaths=%E/credstore %E/credstore.encrypted
+InaccessiblePaths=%h/.local/lib/credstore %h/.local/lib/credstore.encrypted
+InaccessiblePaths=%h/.local/share/tetsu/secrets %h/.local/share/keyrings
+
+# Keeping the mounts in force.
+CapabilityBoundingSet=
+SystemCallFilter=~@mount
+SystemCallFilter=~clone3:ENOSYS
+RestrictNamespaces=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+UMask=0077
+LimitCORE=0
+
+# Cgroups: see the header; belt and braces in a user manager.
+ProtectControlGroups=yes
+
+# Network: local sockets, IP and netlink (name resolution).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# No session bus.
+UnsetEnvironment=DBUS_SESSION_BUS_ADDRESS

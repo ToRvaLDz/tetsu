@@ -1,0 +1,9 @@
+# Installed as /usr/lib/systemd/user/tetsu-agent.slice. Everything the agent
+# runs (its CLI backends and what they spawn) lives in this slice.
+#
+# Do not rename it: Peer::resolve (crates/tetsu-bus/src/peer.rs) reads a
+# peer's cgroup and treats any path with a `tetsu-agent.slice` segment as the
+# agent, which is how the capability gate tells the agent from the user.
+[Unit]
+Description=Tetsu agent
+Documentation=https://github.com/ToRvaLDz/tetsu

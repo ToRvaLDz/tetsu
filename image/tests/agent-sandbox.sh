@@ -92,7 +92,7 @@ has "$svc" Service TemporaryFileSystem '%t:ro'; expect "agent: TemporaryFileSyst
 has "$svc" Service TemporaryFileSystem /run/systemd:ro; expect "agent: TemporaryFileSystem=/run/systemd:ro" $?
 [ "$(unit_get "$svc" Service TemporaryFileSystem | wc -l)" -eq 2 ]
 expect "agent: no other TemporaryFileSystem=" $?
-binds=$(unit_get "$svc" Service BindReadOnlyPaths | sort | tr '\n' ' ')
+binds=$(unit_get "$svc" Service BindReadOnlyPaths | LC_ALL=C sort | tr '\n' ' ')
 [ "$binds" = "%t/tetsu /run/systemd/journal /run/systemd/resolve " ]
 expect "agent: BindReadOnlyPaths= is exactly %t/tetsu and the resolve and journal sockets" $?
 ! grep -qE '^(BindPaths|Bind)=' "$svc" 2>/dev/null; expect "agent: no writable bind" $?

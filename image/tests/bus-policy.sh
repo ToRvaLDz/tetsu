@@ -81,8 +81,14 @@ tf "$EXTRA/usr/lib/tmpfiles.d/tetsu.conf" 'd /run/tetsu 0755 root root -
 d /run/tetsu/registry 0755 root root -'
 expect "system tmpfiles lines" $?
 tf "$EXTRA/usr/share/user-tmpfiles.d/tetsu.conf" 'd %t/tetsu 0700 - - -
-d %t/tetsu/registry 0700 - - -'
-expect "user tmpfiles lines" $?
+d %t/tetsu/registry 0700 - - -
+d %h/.config/credstore 0700 - - -
+d %h/.config/credstore.encrypted 0700 - - -
+d %h/.local/lib/credstore 0700 - - -
+d %h/.local/lib/credstore.encrypted 0700 - - -
+d %h/.local/share/tetsu/secrets 0700 - - -
+d %h/.local/share/keyrings 0700 - - -'
+expect "user tmpfiles lines (the registry, then the agent's denied stores)" $?
 
 # polkit: one action per capability class of the IDL.
 policy="$ROOT/usr/share/polkit-1/actions/org.tetsu.policy"
