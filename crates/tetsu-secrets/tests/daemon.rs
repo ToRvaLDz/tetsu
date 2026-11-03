@@ -3,8 +3,9 @@
 //! runtime directory, and a test socket standing in for the journal.
 
 use std::fs;
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::UnixDatagram;
+use std::os::unix::net::{UnixDatagram, UnixListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -78,6 +79,30 @@ impl Scratch {
             .env("XDG_RUNTIME_DIR", self.runtime())
             .env("CREDENTIALS_DIRECTORY", self.creds())
             .env("TETSU_SECRETS_JOURNAL_SOCKET", self.journal())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+}
+
+impl Scratch {
+    /// Starts the daemon the way systemd starts a socket-activated service:
+    /// `listener` as fd 3, `LISTEN_FDS=1` and `LISTEN_PID` the daemon's pid.
+    /// The pid is known only in the child, so a shell sets it and `exec`s
+    /// (the pid stays); the listener reaches the shell as stdin.
+    fn start_activated(&self, listener: UnixListener) -> Child {
+        let script = concat!("LISTEN_PID=$$ LISTEN_FDS=1 exec \"$0\" serve 3<&0 </dev/null");
+        Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .arg(env!("CARGO_BIN_EXE_tetsu-secrets"))
+            .env_clear()
+            .env("HOME", self.home())
+            .env("XDG_RUNTIME_DIR", self.runtime())
+            .env("CREDENTIALS_DIRECTORY", self.creds())
+            .env("TETSU_SECRETS_JOURNAL_SOCKET", self.journal())
+            .stdin(OwnedFd::from(listener))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -327,4 +352,40 @@ fn a_missing_credential_exits_with_an_unlock_failure() {
     assert_eq!(journal.actions(), [Action::Unlock]);
     let _ = journal.finish();
     assert!(String::from_utf8_lossy(&out.stderr).contains("tetsu-secrets.vault-key"));
+}
+
+#[test]
+fn a_socket_from_systemd_is_served_and_left_in_place() {
+    let scratch = Scratch::new();
+    scratch.set_key(KEY);
+    let journal = Journal::start(&scratch.journal());
+    // What the socket unit does: bind the path before the service starts.
+    let socket = scratch.socket();
+    fs::create_dir_all(socket.parent().unwrap()).unwrap();
+    let listener = UnixListener::bind(&socket).unwrap();
+    let child = scratch.start_activated(listener);
+
+    runtime().block_on(async {
+        let mut client = Client::connect(&socket).await.unwrap();
+        assert!(client.list().await.unwrap().is_empty());
+        client.add(&add_params("demo")).await.unwrap();
+        assert_eq!(client.list().await.unwrap().len(), 1);
+    });
+    let out = terminate(child);
+    assert!(out.status.success(), "{:?}", out.status);
+    // The path belongs to the socket unit: the daemon does not remove it.
+    assert!(socket.exists(), "the activated socket stays");
+    use Action::*;
+    let datagrams = journal.finish();
+    let actions: Vec<_> = datagrams
+        .iter()
+        .map(|d| {
+            Action::ALL
+                .into_iter()
+                .find(|a| contains(d, &format!("MESSAGE_ID={}", a.message_id())))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(actions, [Unlock, List, Add, List]);
+    assert!(contains(&datagrams[0], "TETSU_OUTCOME=ok\n"));
 }
