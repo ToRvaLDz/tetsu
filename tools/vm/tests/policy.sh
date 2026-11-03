@@ -37,7 +37,9 @@ bus_policy_checks() {
     "sudo -n stat -c '%a %U:%G' /etc/polkit-1/rules.d"
   check_not "polkitd loaded the rules without error" 'Error (compiling|evaluating|loading)|SyntaxError|Error on line' \
     "sudo -n journalctl -b -u polkit --no-pager"
-  # A wheel user gets YES when local and active, a challenge (2) otherwise.
+  # A wheel user gets YES in a local active session, a challenge (2)
+  # otherwise. polkit calls a session local only when it has a seat, so a
+  # serial-console login (no seat) is expected to be challenged.
   check "pkcheck for the wheel user matches the session state" '^ok$' \
-    "s=\$(loginctl show-session \"\$XDG_SESSION_ID\" -p Active -p Remote | sort | tr '\\n' ' '); pkcheck --action-id org.tetsu.packages.install --process \$\$ >/dev/null 2>&1; rc=\$?; case \"\$s\" in 'Active=yes Remote=no '*) [ \$rc -eq 0 ] && echo ok;; *) [ \$rc -eq 2 ] && echo ok;; esac"
+    "a=\$(loginctl show-session \"\$XDG_SESSION_ID\" -p Active --value); seat=\$(loginctl show-session \"\$XDG_SESSION_ID\" -p Seat --value); out=\$(pkcheck --action-id org.tetsu.packages.install --process \$\$ 2>&1); rc=\$?; if [ \"\$a\" = yes ] && [ -n \"\$seat\" ]; then want=0; else want=2; fi; [ \$rc -eq \$want ] && echo ok || echo \"active=\$a seat=\$seat rc=\$rc want=\$want out=\$out\""
 }
