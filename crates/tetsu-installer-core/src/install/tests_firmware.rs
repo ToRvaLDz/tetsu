@@ -231,7 +231,7 @@ fn a_restore_failure_warns_with_what_is_left() {
 }
 
 #[test]
-fn a_pk_failure_with_the_pk_in_the_firmware_rolls_nothing_back() {
+fn a_pk_failure_with_the_pk_in_the_firmware_counts_as_enrolled() {
     let run = full_run(
         UnlockLevel::Comfort,
         SecureBoot::SetupMode,
@@ -247,12 +247,16 @@ fn a_pk_failure_with_the_pk_in_the_firmware_rolls_nothing_back() {
         |m| m.fail_containing("PK.auth PK"),
     );
     run.out.result.as_ref().unwrap();
+    assert!(run.out.keys_enrolled);
     assert!(run.lines().iter().all(|l| !l.contains("restore.auth")));
+    // One warning, the note; no "not enrolled" consequence.
+    let warnings = warnings(&run);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(
-        warnings(&run)
-            .iter()
-            .any(|w| w.contains("the PK is in the firmware"))
+        warnings[0].contains("the PK is in the firmware"),
+        "{warnings:?}"
     );
+    assert!(warnings[0].contains("keys are enrolled"), "{warnings:?}");
 }
 
 #[test]

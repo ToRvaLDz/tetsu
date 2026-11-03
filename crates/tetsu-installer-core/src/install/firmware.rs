@@ -227,7 +227,7 @@ impl Executor<'_> {
                 without_microsoft: self.target.without_microsoft,
                 timestamp: now_unix()?,
             };
-            enroll(self.deps.runner, &enrollment, &self.target.efi_root)
+            enroll(self.deps.runner, &enrollment, &self.target.efi_root).map(drop)
         })();
         let _ = fs::remove_dir_all(&work_dir);
         result

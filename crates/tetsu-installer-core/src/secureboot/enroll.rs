@@ -16,9 +16,23 @@ use super::{Enrollment, Step, Var, cmd, efi_time, enrollment_steps, run_steps};
 /// signed by the KEK, so it goes first.
 const RESTORABLE: [Var; 2] = [Var::Db, Var::Kek];
 
+/// How an enrollment that did not fail ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Enrolled {
+    /// Every write succeeded.
+    Clean,
+    /// The PK write reported a failure but the PK is in the firmware: the keys
+    /// are enrolled, and the note says so.
+    PkReportedFailure(String),
+}
+
 /// Enroll the keys, rolling db and KEK back when a write fails before the PK
 /// is in. Best effort: the error says exactly what is left.
-pub fn enroll(runner: &dyn Runner, e: &Enrollment, efi_root: &Path) -> Result<(), InstallError> {
+pub fn enroll(
+    runner: &dyn Runner,
+    e: &Enrollment,
+    efi_root: &Path,
+) -> Result<Enrolled, InstallError> {
     let steps = enrollment_steps(e)?;
     // A restore is not an append, so the firmware takes it only when it is
     // stamped later than the write it replaces.
@@ -48,7 +62,7 @@ pub fn enroll(runner: &dyn Runner, e: &Enrollment, efi_root: &Path) -> Result<()
         }
         written.push(*var);
     }
-    Ok(())
+    Ok(Enrolled::Clean)
 }
 
 /// Put the variables in `written` back, db first. Every restore is tried
@@ -197,7 +211,7 @@ mod tests {
             }
         }
 
-        fn enroll(&self, fake: &Fake) -> Result<(), InstallError> {
+        fn enroll(&self, fake: &Fake) -> Result<Enrolled, InstallError> {
             enroll(fake, &self.enrollment(), &self.root())
         }
 
@@ -367,15 +381,17 @@ mod tests {
     }
 
     #[test]
-    fn a_pk_failure_with_the_pk_in_the_firmware_rolls_nothing_back() {
+    fn a_pk_failure_with_the_pk_in_the_firmware_is_a_success_with_a_note() {
         let s = Setup::new();
         write_pk(&s.root(), &esl(&[&[1, 2, 3]]));
         let fake = Fake::failing(&["PK.auth PK"]);
-        let err = s.enroll(&fake).unwrap_err();
-        let msg = err.to_string();
-        assert_eq!(outcome(err), ("PK", Rollback::PkPresent));
-        assert!(msg.contains("the PK is in the firmware"), "{msg}");
-        assert!(msg.contains("keys are enrolled"), "{msg}");
+        // The keys are enrolled: a success that carries a note.
+        let Enrolled::PkReportedFailure(note) = s.enroll(&fake).unwrap() else {
+            panic!("the PK is in the firmware");
+        };
+        assert!(note.contains("the PK is in the firmware"), "{note}");
+        assert!(note.contains("keys are enrolled"), "{note}");
+        assert!(note.contains("boom"), "{note}");
         assert!(fake.lines().iter().all(|l| !l.contains("restore")));
     }
 

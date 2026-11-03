@@ -379,3 +379,21 @@ fn trust_refuses_a_foreign_pk_and_missing_files() {
     assert!(trust(&ctx(&m, &r, true), &cert_file(&m, "v.txt")).is_err());
     assert!(r.lines.borrow().is_empty());
 }
+
+#[test]
+fn a_pk_failure_with_the_pk_in_the_firmware_marks_the_level_and_notes_it() {
+    let m = Machine::new();
+    m.mode(true, false);
+    m.pk(&DER);
+    m.level("level = \"balanced\"\nstate = \"pending\"\n");
+    let r = Recorder {
+        fail_containing: vec!["PK.auth PK"],
+        ..Recorder::default()
+    };
+    let out = enroll(&ctx(&m, &r, true), false).unwrap();
+    assert!(out.contains("the PK is in the firmware"), "{out}");
+    assert!(out.contains("next boot"), "{out}");
+    assert!(m.level_text().contains("secure_boot = \"enrolled\""));
+    assert!(r.lines.borrow().iter().all(|l| !l.contains("restore.auth")));
+    assert!(!m.path("work").exists());
+}
