@@ -94,8 +94,35 @@ pub fn platform_key_certificates(root: &Path) -> Vec<Vec<u8>> {
 /// Clear the immutable flag efivarfs puts on a variable file as soon as it
 /// exists, so that the next write to it is not refused with EPERM. An absent
 /// file, or a filesystem without the flag ioctls, is nothing to do.
-pub fn make_writable(_root: &Path, _name: &str) -> Result<(), InstallError> {
-    todo!("make_writable")
+pub fn make_writable(root: &Path, name: &str) -> Result<(), InstallError> {
+    use rustix::fs::{IFlags, ioctl_getflags, ioctl_setflags};
+    use rustix::io::Errno;
+
+    let guid = if name == "db" {
+        IMAGE_SECURITY_GUID
+    } else {
+        GLOBAL_VARIABLE_GUID
+    };
+    let path = efivar_path(root, name, guid);
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(InstallError::io(path, e)),
+    };
+    let unsupported = |e: Errno| matches!(e, Errno::NOTTY | Errno::OPNOTSUPP | Errno::NOSYS);
+    let flags = match ioctl_getflags(&file) {
+        Ok(flags) => flags,
+        Err(e) if unsupported(e) => return Ok(()),
+        Err(e) => return Err(InstallError::io(path, e.into())),
+    };
+    if !flags.contains(IFlags::IMMUTABLE) {
+        return Ok(());
+    }
+    match ioctl_setflags(&file, flags - IFlags::IMMUTABLE) {
+        Ok(()) => Ok(()),
+        Err(e) if unsupported(e) => Ok(()),
+        Err(e) => Err(InstallError::io(path, e.into())),
+    }
 }
 
 fn base64_value(c: u8) -> Option<u8> {
