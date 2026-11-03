@@ -36,6 +36,22 @@ pub fn guid(mut b: [u8; 16]) -> String {
     )
 }
 
+/// A custom (version 8) GUID from the first 16 bytes of a digest.
+pub fn derived_guid(_digest: [u8; 16]) -> String {
+    todo!("derived_guid")
+}
+
+/// The owner GUID of Tetsu's entries, derived from the SHA-256 fingerprint
+/// of the PK certificate: the same keys always give the same GUID.
+pub fn owner_guid(_runner: &dyn Runner, _pk_crt: &Path) -> Result<String, InstallError> {
+    todo!("owner_guid")
+}
+
+/// `YYYY-MM-DD HH:MM:SS` (UTC) of Unix seconds, the form `sign-efi-sig-list -t` takes.
+pub fn efi_time(_secs: u64) -> String {
+    todo!("efi_time")
+}
+
 /// Microsoft certificates (DER or PEM) for the Secure Boot lists. The KEK
 /// list takes the key-exchange CAs, the db list the signing CAs; the
 /// caller decides which file goes where.
@@ -305,6 +321,85 @@ mod tests {
         let g = guid([0xff; 16]);
         assert_eq!(g, "ffffffff-ffff-4fff-bfff-ffffffffffff");
         assert_eq!(guid([0; 16]), "00000000-0000-4000-8000-000000000000");
+    }
+
+    /// Answers `openssl` with a fixed line and records the call.
+    struct Openssl(Result<String, ()>, std::cell::RefCell<Vec<String>>);
+
+    impl Runner for Openssl {
+        fn run(&self, _: &str, _: &[OsString]) -> Result<(), tetsu_tx::boot::BootError> {
+            unreachable!()
+        }
+        fn output(&self, p: &str, a: &[OsString]) -> Result<String, tetsu_tx::boot::BootError> {
+            let args: Vec<String> = a.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+            self.1.borrow_mut().push(format!("{p} {}", args.join(" ")));
+            self.0
+                .clone()
+                .map_err(|()| tetsu_tx::boot::BootError::ToolMissing { tool: p.to_owned() })
+        }
+    }
+
+    fn fingerprint(label: &str) -> String {
+        let hex: Vec<String> = (0u8..0x20)
+            .map(|i| format!("{:02X}", if i < 16 { i * 0x11 } else { i }))
+            .collect();
+        format!("{label}={}\n", hex.join(":"))
+    }
+
+    #[test]
+    fn the_derived_guid_is_a_v8_guid() {
+        let mut b = [0u8; 16];
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = u8::try_from(i).unwrap() * 0x11;
+        }
+        assert_eq!(derived_guid(b), "00112233-4455-8677-8899-aabbccddeeff");
+        assert_eq!(
+            derived_guid([0xff; 16]),
+            "ffffffff-ffff-8fff-bfff-ffffffffffff"
+        );
+    }
+
+    #[test]
+    fn the_owner_guid_comes_from_the_pk_fingerprint() {
+        for label in ["SHA256 Fingerprint", "sha256 Fingerprint"] {
+            let r = Openssl(Ok(fingerprint(label)), Default::default());
+            let g = owner_guid(&r, Path::new("/k/PK.crt")).unwrap();
+            assert_eq!(g, "00112233-4455-8677-8899-aabbccddeeff");
+            assert_eq!(
+                *r.1.borrow(),
+                ["openssl x509 -in /k/PK.crt -noout -fingerprint -sha256"]
+            );
+            let again = owner_guid(&r, Path::new("/k/PK.crt")).unwrap();
+            assert_eq!(g, again);
+        }
+    }
+
+    #[test]
+    fn a_malformed_or_short_fingerprint_is_an_error() {
+        let full = fingerprint("SHA256 Fingerprint");
+        let short = full.trim_end().rsplit_once(':').unwrap().0.to_owned();
+        for out in [
+            String::new(),
+            "no equals sign\n".to_owned(),
+            short,
+            full.replace("00:11", "zz:11"),
+            format!("{}:AA\n", full.trim_end()),
+            "SHA256 Fingerprint=\n".to_owned(),
+        ] {
+            let r = Openssl(Ok(out.clone()), Default::default());
+            assert!(owner_guid(&r, Path::new("/k/PK.crt")).is_err(), "{out:?}");
+        }
+        let r = Openssl(Err(()), Default::default());
+        assert!(owner_guid(&r, Path::new("/k/PK.crt")).is_err());
+    }
+
+    #[test]
+    fn efi_time_formats_utc_seconds() {
+        assert_eq!(efi_time(0), "1970-01-01 00:00:00");
+        assert_eq!(efi_time(1_709_208_000), "2024-02-29 12:00:00");
+        assert_eq!(efi_time(951_868_799), "2000-02-29 23:59:59");
+        assert_eq!(efi_time(4_107_542_400), "2100-03-01 00:00:00");
+        assert_eq!(efi_time(1_793_734_685), "2026-11-03 19:38:05");
     }
 
     #[test]
