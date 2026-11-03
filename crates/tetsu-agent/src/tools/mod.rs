@@ -1,9 +1,9 @@
-//! The catalog: one [`Tool`] per method of the contract (literal 1:1).
+//! The catalog: one [`Tool`] per method of the contract (1:1, bar the user-only ones).
 //!
 //! Everything a tool says (id, schema, description) is built from the
 //! contract shipped with this build, so no server can write text that
 //! reaches the model. `org.varlink.service.*` is not part of the contract
-//! and so not a tool.
+//! and so not a tool, and neither is a method of a [`USER_ONLY`] class.
 
 mod schema;
 mod wire;
@@ -25,6 +25,10 @@ pub const REASON: &str = "_reason";
 /// Streaming methods that never end by themselves and whose first reply
 /// is the useful one: the runner keeps their connection open.
 pub const HOLD: [&str; 1] = ["org.tetsu.notify.v1.Show"];
+
+/// Capability classes whose methods only the user may run: never tools.
+/// The vault is written from the CLI, and the agent unit is rejected there.
+pub const USER_ONLY: [&str; 1] = ["secrets.manage"];
 
 /// What the tool description tells about a gated call.
 const MAY_ASK: &str = "May ask the user for approval.";
@@ -111,16 +115,24 @@ impl fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
-/// One tool per method of the contract, sorted by id.
+/// One tool per method of the contract, except the [`USER_ONLY`] ones,
+/// sorted by id.
 pub fn build(contract: &Contract) -> Result<Vec<Tool>, CatalogError> {
     let mut tools = Vec::new();
     for (name, interface) in &contract.interfaces {
         for (method_name, method) in &interface.methods {
+            if is_user_only(method) {
+                continue;
+            }
             tools.push(tool(contract, name, interface, method_name, method)?);
         }
     }
     tools.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(tools)
+}
+
+fn is_user_only(method: &Method) -> bool {
+    matches!(method.doc.capability(), Some(Ok(c)) if USER_ONLY.contains(&c.class.as_str()))
 }
 
 fn tool(

@@ -1,4 +1,4 @@
-//! The catalog: every contract method is exactly one tool.
+//! The catalog: every contract method is exactly one tool, bar the user-only ones.
 
 use std::collections::BTreeSet;
 use std::fs;
