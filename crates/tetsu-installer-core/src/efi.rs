@@ -70,6 +70,17 @@ pub fn platform_key_certificates(root: &Path) -> Vec<Vec<u8>> {
     }
 }
 
+/// The data of `db` or `KEK` as `efivarfs` shows it, without the four
+/// attribute bytes; `None` when the variable is absent or has no data.
+pub fn signature_db(_root: &Path, _name: &str) -> Option<Vec<u8>> {
+    todo!("signature_db")
+}
+
+/// Whether the raw Platform Key variable holds data, whatever it parses to.
+pub fn platform_key_present(_root: &Path) -> bool {
+    todo!("platform_key_present")
+}
+
 fn base64_value(c: u8) -> Option<u8> {
     match c {
         b'A'..=b'Z' => Some(c - b'A'),
@@ -211,5 +222,41 @@ mod tests {
         write_pk(t.path(), &esl(&[&[1, 1, 1]]));
         assert!(!platform_key_is(t.path(), &pem).unwrap());
         assert!(platform_key_is(t.path(), &t.path().join("none")).is_err());
+    }
+
+    fn put_var(root: &Path, name: &str, guid: &str, bytes: &[u8]) {
+        let dir = root.join("sys/firmware/efi/efivars");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}-{guid}")), bytes).unwrap();
+    }
+
+    #[test]
+    fn the_signature_databases_are_read_without_their_attributes() {
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(signature_db(t.path(), "db"), None);
+        assert_eq!(signature_db(t.path(), "KEK"), None);
+        put_var(t.path(), "db", IMAGE_SECURITY_GUID, &[7, 0, 0, 0, 1, 2, 3]);
+        put_var(t.path(), "KEK", GLOBAL_VARIABLE_GUID, &[7, 0, 0, 0, 4, 5]);
+        assert_eq!(signature_db(t.path(), "db"), Some(vec![1, 2, 3]));
+        assert_eq!(signature_db(t.path(), "KEK"), Some(vec![4, 5]));
+        // Attributes only, or not even those: nothing in it.
+        put_var(t.path(), "db", IMAGE_SECURITY_GUID, &[7, 0, 0, 0]);
+        put_var(t.path(), "KEK", GLOBAL_VARIABLE_GUID, &[7]);
+        assert_eq!(signature_db(t.path(), "db"), None);
+        assert_eq!(signature_db(t.path(), "KEK"), None);
+        // Only db and KEK are databases of ours.
+        assert_eq!(signature_db(t.path(), "PK"), None);
+    }
+
+    #[test]
+    fn the_platform_key_is_present_when_the_raw_variable_has_data() {
+        let t = tempfile::tempdir().unwrap();
+        assert!(!platform_key_present(t.path()));
+        put_var(t.path(), "PK", GLOBAL_VARIABLE_GUID, &[7, 0, 0, 0]);
+        assert!(!platform_key_present(t.path()));
+        // Garbage that parses to no certificate still counts.
+        put_var(t.path(), "PK", GLOBAL_VARIABLE_GUID, &[7, 0, 0, 0, 9]);
+        assert!(platform_key_present(t.path()));
+        assert!(platform_key_certificates(t.path()).is_empty());
     }
 }
