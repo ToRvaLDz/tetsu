@@ -537,7 +537,22 @@ async fn send_error(
 
 #[cfg(test)]
 mod tests {
-    use super::passed_fds;
+    use serde_json::json;
+
+    use super::{Request, passed_fds};
+
+    #[test]
+    fn debug_of_a_request_redacts_the_parameters() {
+        let request = Request {
+            method: "org.example.Call".to_owned(),
+            parameters: json!({ "value": "sk-live-4242" }),
+            oneway: false,
+            more: false,
+        };
+        let shown = format!("{request:?}");
+        assert!(shown.contains("org.example.Call"), "{shown}");
+        assert!(!shown.contains("sk-live-4242"), "{shown}");
+    }
 
     #[test]
     fn fds_count_only_for_the_named_pid() {
