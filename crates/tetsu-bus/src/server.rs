@@ -6,8 +6,10 @@
 //! drops the stream, and the handler sees its sender close.
 
 use std::collections::VecDeque;
+use std::env;
 use std::fs;
 use std::io;
+use std::os::fd::{FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -32,20 +34,26 @@ const MAX_QUEUED: usize = 16;
 /// Pause after a failed `accept`, so a full descriptor table is not a spin.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
+/// The first descriptor systemd passes to a socket-activated service.
+const LISTEN_FDS_START: RawFd = 3;
+
 /// A bound server socket. Dropping it removes the socket file, only if it
-/// is still the one this listener bound.
+/// is still the one this listener bound. A socket taken from systemd
+/// (see [`activated`]) has no file of ours to remove.
 #[derive(Debug)]
 pub struct Listener {
     inner: zlink::tokio::unix::Listener,
-    path: PathBuf,
-    inode: u64,
+    bound: Option<(PathBuf, u64)>,
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let ours = fs::symlink_metadata(&self.path).is_ok_and(|m| m.ino() == self.inode);
+        let Some((path, inode)) = &self.bound else {
+            return;
+        };
+        let ours = fs::symlink_metadata(path).is_ok_and(|m| m.ino() == *inode);
         if ours {
-            let _ = fs::remove_file(&self.path);
+            let _ = fs::remove_file(path);
         }
     }
 }
@@ -245,9 +253,50 @@ fn bind_with(path: &Path, dirs: DirPolicy, socket_mode: u32) -> io::Result<Liste
     let inode = fs::symlink_metadata(path)?.ino();
     Ok(Listener {
         inner,
-        path: path.to_owned(),
-        inode,
+        bound: Some((path.to_owned(), inode)),
     })
+}
+
+/// How many descriptors systemd passed to this process (`sd_listen_fds`):
+/// `LISTEN_FDS` when `LISTEN_PID` names `own_pid`, else none.
+fn passed_fds(listen_pid: Option<&str>, listen_fds: Option<&str>, own_pid: u32) -> usize {
+    let for_us = listen_pid.and_then(|p| p.parse::<u32>().ok()) == Some(own_pid);
+    match listen_fds.and_then(|n| n.parse::<usize>().ok()) {
+        Some(n) if for_us => n,
+        _ => 0,
+    }
+}
+
+/// The listening socket systemd passed by socket activation, if any: fd 3
+/// when `LISTEN_PID` is this process and `LISTEN_FDS` is at least 1. The
+/// descriptor is made close-on-exec and `LISTEN_*` is unset, so a process
+/// started later does not take it for its own. Call it before any other
+/// thread starts. The path belongs to the socket unit: the file is neither
+/// created, replaced nor removed here.
+pub fn activated() -> io::Result<Option<Listener>> {
+    let var = |name| env::var(name).ok();
+    let count = passed_fds(
+        var("LISTEN_PID").as_deref(),
+        var("LISTEN_FDS").as_deref(),
+        std::process::id(),
+    );
+    for name in ["LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"] {
+        // SAFETY: called at startup, before this process spawns a thread.
+        #[expect(unsafe_code)]
+        unsafe {
+            env::remove_var(name);
+        }
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+    // SAFETY: systemd handed this process the descriptor and nothing else
+    // here owns it (LISTEN_PID names us).
+    #[expect(unsafe_code)]
+    let fd = unsafe { OwnedFd::from_raw_fd(LISTEN_FDS_START) };
+    rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
+    let inner = zlink::tokio::unix::Listener::try_from(fd).map_err(into_io)?;
+    Ok(Some(Listener { inner, bound: None }))
 }
 
 /// Creates `dir` 0700, or checks that an existing one is ours and private.
@@ -484,4 +533,25 @@ async fn send_error(
     error: &ErrorReply,
 ) -> io::Result<()> {
     write.send_error(error, Vec::new()).await.map_err(into_io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::passed_fds;
+
+    #[test]
+    fn fds_count_only_for_the_named_pid() {
+        assert_eq!(passed_fds(Some("42"), Some("1"), 42), 1);
+        assert_eq!(passed_fds(Some("42"), Some("3"), 42), 3);
+        assert_eq!(passed_fds(Some("41"), Some("1"), 42), 0);
+        assert_eq!(passed_fds(Some("42"), Some("0"), 42), 0);
+    }
+
+    #[test]
+    fn missing_or_malformed_variables_pass_nothing() {
+        assert_eq!(passed_fds(None, Some("1"), 42), 0);
+        assert_eq!(passed_fds(Some("42"), None, 42), 0);
+        assert_eq!(passed_fds(Some("x"), Some("1"), 42), 0);
+        assert_eq!(passed_fds(Some("42"), Some("-1"), 42), 0);
+    }
 }

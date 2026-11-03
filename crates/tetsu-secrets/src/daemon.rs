@@ -158,8 +158,17 @@ fn run(env: &Env) -> Result<(), DaemonError> {
     import_staged_key(env, &runtime, &broker);
 
     let _enter = runtime.enter();
-    let listener = server::bind(&socket(&env.runtime_dir))
-        .map_err(|e| DaemonError::Other(format!("cannot bind the socket: {e}")))?;
+    // Socket activation passes the socket; started by hand, bind the path.
+    let listener = match server::activated() {
+        Ok(Some(listener)) => listener,
+        Ok(None) => server::bind(&socket(&env.runtime_dir))
+            .map_err(|e| DaemonError::Other(format!("cannot bind the socket: {e}")))?,
+        Err(e) => {
+            return Err(DaemonError::Other(format!(
+                "cannot take the socket from systemd: {e}"
+            )));
+        }
+    };
     let mut term =
         signal(SignalKind::terminate()).map_err(|e| DaemonError::Other(e.to_string()))?;
     let mut int = signal(SignalKind::interrupt()).map_err(|e| DaemonError::Other(e.to_string()))?;
