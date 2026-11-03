@@ -91,6 +91,13 @@ pub fn platform_key_certificates(root: &Path) -> Vec<Vec<u8>> {
         .unwrap_or_default()
 }
 
+/// Clear the immutable flag efivarfs puts on a variable file as soon as it
+/// exists, so that the next write to it is not refused with EPERM. An absent
+/// file, or a filesystem without the flag ioctls, is nothing to do.
+pub fn make_writable(_root: &Path, _name: &str) -> Result<(), InstallError> {
+    todo!("make_writable")
+}
+
 fn base64_value(c: u8) -> Option<u8> {
     match c {
         b'A'..=b'Z' => Some(c - b'A'),
@@ -268,5 +275,34 @@ mod tests {
         put_var(t.path(), "PK", GLOBAL_VARIABLE_GUID, &[7, 0, 0, 0, 9]);
         assert!(platform_key_present(t.path()));
         assert!(platform_key_certificates(t.path()).is_empty());
+    }
+
+    #[test]
+    fn making_writable_is_a_no_op_for_an_absent_file_and_without_flag_support() {
+        let t = tempfile::tempdir().unwrap();
+        for name in ["db", "KEK", "PK"] {
+            make_writable(t.path(), name).unwrap();
+        }
+        // Present: tmpfs answers ENOTTY, other filesystems have no flag set.
+        put_var(t.path(), "db", IMAGE_SECURITY_GUID, &[7, 0, 0, 0, 1]);
+        put_var(t.path(), "KEK", GLOBAL_VARIABLE_GUID, &[7, 0, 0, 0, 1]);
+        make_writable(t.path(), "db").unwrap();
+        make_writable(t.path(), "KEK").unwrap();
+        assert_eq!(signature_db(t.path(), "db"), Some(vec![1]));
+    }
+
+    #[test]
+    fn an_unopenable_variable_file_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        put_var(t.path(), "PK", GLOBAL_VARIABLE_GUID, &[7, 0, 0, 0, 1]);
+        let path = efivar_path(t.path(), "PK", GLOBAL_VARIABLE_GUID);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+        // Root opens it anyway.
+        if std::fs::File::open(&path).is_ok() {
+            return;
+        }
+        let err = make_writable(t.path(), "PK").unwrap_err();
+        assert!(err.to_string().contains("PK-"), "{err}");
     }
 }
