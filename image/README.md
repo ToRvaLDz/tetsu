@@ -151,6 +151,16 @@ boots. systemd-boot with the UKI mkosi builds; kernel command line
   `image/microsoft-certs.sha256`. The payload carries the same files, since
   `tetsu secureboot enroll` on the installed system refuses to run without them
   (unless `--without-microsoft`).
+- The enrollment (installer and `tetsu secureboot enroll`) appends to db and
+  KEK first and writes the PK last, since the PK ends Setup Mode. When a write
+  fails before the PK is in, db and KEK are put back as they were (best effort,
+  the firmware is still in Setup Mode); the error names what was restored and,
+  when a restore failed too, what is left, and tells you to reset the Secure
+  Boot keys in the firmware setup. A PK write that reports a failure but leaves
+  the PK in the firmware is not rolled back: the keys are enrolled. The owner
+  GUID of Tetsu's entries is derived from the PK certificate (the first 16 bytes
+  of its SHA-256 fingerprint, as a version 8 GUID), so enrolling again appends
+  the same entries and the firmware keeps one copy.
 - When the target has other systems and an empty Secure Boot db, the installer
   asks for a certificate to trust. It takes a path on a filesystem that is
   already mounted: nothing mounts a USB stick for this question, and the
