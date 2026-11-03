@@ -11,7 +11,7 @@ IMAGE="$REPO/image"
 EXTRA="$IMAGE/mkosi.profiles/payload/mkosi.extra"
 PKGBUILD="$IMAGE/tetsu-base/PKGBUILD"
 STAGE="$IMAGE/stage-session"
-CRATES=(tetsu-comp tetsu-bar tetsu-notifyd tetsu-capd)
+CRATES=(tetsu-comp tetsu-bar tetsu-notifyd tetsu-capd tetsu-agent)
 
 fails=0
 pass() { printf 'ok   %s\n' "$1"; }
@@ -42,7 +42,7 @@ mode_of() { stat -c %a "$1" 2>/dev/null; }
 
 # ------------------------------------------------------------------ staging
 crates=$("$STAGE" --crates 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/ $//')
-[ "$crates" = "${CRATES[*]}" ]; expect "stage-session --crates lists the four session crates" $?
+[ "$crates" = "${CRATES[*]}" ]; expect "stage-session --crates lists the five session crates" $?
 
 root="$tmp/root"
 rel="$tmp/release"
