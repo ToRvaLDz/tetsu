@@ -1,6 +1,13 @@
 //! `org.tetsu.notify.v1`: the wire types, shaped exactly as the IDL.
 
+use std::io;
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
+use zlink::{Call, Connection};
+
+use crate::endpoint::{Endpoint, connect_verified};
+use crate::into_io;
 
 /// The interface name.
 pub const INTERFACE: &str = "org.tetsu.notify.v1";
@@ -46,21 +53,21 @@ pub enum Urgency {
 }
 
 /// The parameters of `Show`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShowParams {
     /// One line.
     pub title: String,
     /// Plain text.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
     /// Null for normal.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgency: Option<Urgency>,
     /// The buttons.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<Action>>,
     /// Null for the server default.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<i64>,
 }
 
@@ -189,6 +196,113 @@ impl PendingEvent {
         Self {
             kind: PendingKind::Changed,
             count: Some(count),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ShowCall<'a> {
+    method: &'static str,
+    parameters: &'a ShowParams,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShowReply {
+    reply: NotifyReply,
+}
+
+/// A Varlink error reply; `error` is required, so a reply never matches it.
+#[derive(Debug, Deserialize)]
+struct RemoteError {
+    error: String,
+}
+
+/// An open `Show` stream. Dropping it closes the connection, which
+/// withdraws the notification.
+#[derive(Debug)]
+pub struct ShowStream {
+    connection: Connection<zlink::tokio::unix::Stream>,
+    ended: bool,
+}
+
+async fn open(
+    mut connection: Connection<zlink::tokio::unix::Stream>,
+    params: &ShowParams,
+    call: fn(Call<ShowCall<'_>>) -> Call<ShowCall<'_>>,
+) -> io::Result<Connection<zlink::tokio::unix::Stream>> {
+    let call = call(Call::new(ShowCall {
+        method: "org.tetsu.notify.v1.Show",
+        parameters: params,
+    }));
+    connection
+        .send_call(&call, Vec::new())
+        .await
+        .map_err(into_io)?;
+    Ok(connection)
+}
+
+async fn connect(path: &Path) -> io::Result<Connection<zlink::tokio::unix::Stream>> {
+    zlink::tokio::unix::connect(path).await.map_err(into_io)
+}
+
+/// Connects to the notification server and calls `Show` with `more`.
+pub async fn show(path: &Path, params: &ShowParams) -> io::Result<ShowStream> {
+    let connection = open(connect(path).await?, params, |call| call.set_more(true)).await?;
+    Ok(ShowStream {
+        connection,
+        ended: false,
+    })
+}
+
+/// Like [`show`], at a fixed endpoint: the server is checked first, and a
+/// wrong one is `PermissionDenied` and receives nothing.
+pub async fn show_at(endpoint: &Endpoint, params: &ShowParams) -> io::Result<ShowStream> {
+    let connection = connect_verified(endpoint).await?;
+    let connection = open(connection, params, |call| call.set_more(true)).await?;
+    Ok(ShowStream {
+        connection,
+        ended: false,
+    })
+}
+
+/// Calls `Show` oneway: no reply is read, so the notification cannot be
+/// answered and only the server's own surfaces can dismiss it.
+pub async fn show_oneway(path: &Path, params: &ShowParams) -> io::Result<()> {
+    open(connect(path).await?, params, |call| call.set_oneway(true))
+        .await
+        .map(drop)
+}
+
+/// Like [`show_oneway`], at a fixed endpoint, with the same server check as
+/// [`show_at`].
+pub async fn show_oneway_at(endpoint: &Endpoint, params: &ShowParams) -> io::Result<()> {
+    let connection = connect_verified(endpoint).await?;
+    open(connection, params, |call| call.set_oneway(true))
+        .await
+        .map(drop)
+}
+
+impl ShowStream {
+    /// The next reply: `shown`, then `invoked` or `dismissed`. After the
+    /// final reply, or once the server went away, an `UnexpectedEof` error.
+    pub async fn next(&mut self) -> io::Result<NotifyReply> {
+        if self.ended {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Show ended"));
+        }
+        let (reply, _fds) = self
+            .connection
+            .receive_reply::<ShowReply, RemoteError>()
+            .await
+            .map_err(into_io)?;
+        match reply {
+            Ok(reply) => {
+                self.ended = reply.continues() != Some(true);
+                reply
+                    .into_parameters()
+                    .map(|parameters| parameters.reply)
+                    .ok_or_else(|| io::Error::other("Show reply without parameters"))
+            }
+            Err(error) => Err(io::Error::other(format!("Show failed: {}", error.error))),
         }
     }
 }

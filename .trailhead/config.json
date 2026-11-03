@@ -8,5 +8,22 @@
         "note": "Runs next to the session's notification server without replacing it; stop it with tools/uat/notifyd-down.sh after the UAT."
       }
     ]
-  }
+  },
+  "models": {
+    "plan": "claude-opus-5-5",
+    "execute": "claude-sonnet-5-5",
+    "research": "claude-sonnet-5-5",
+    "review": "claude-sonnet-5-5",
+    "debug": "claude-sonnet-5-5",
+    "verify": "claude-sonnet-5-5",
+    "codebase-map": "claude-haiku-5-5"
+  },
+  "ticket.language": "en",
+  "design": "artifacts",
+  "design.approval": "explicit",
+  "tdd": "seams",
+  "effort": "standard",
+  "acceptance.browser": "off",
+  "plan_review": "codex",
+  "plan_review.rounds": 3
 }

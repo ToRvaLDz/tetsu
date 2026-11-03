@@ -13,6 +13,7 @@ use tetsu_installer_core::env::Env;
 use tetsu_installer_core::error::InstallError;
 use tetsu_installer_core::frontend::{Frontend, ask_valid};
 use tetsu_installer_core::keyboard::{self, Locale};
+use tetsu_installer_core::locales::{Supported, check_language};
 use tetsu_installer_core::preflight::{Preflight, SecureBoot};
 use tetsu_installer_core::secret::Secret;
 use tetsu_installer_core::secureboot::foreign;
@@ -51,7 +52,7 @@ pub fn collect(
     driver::report(fe, &pf);
 
     let mut asked = false;
-    let locale = locale(fe, file.keyboard.as_ref(), &mut asked)?;
+    let locale = locale(fe, env, file.keyboard.as_ref(), &mut asked)?;
     let disk = disk_choice(fe, env, &pf, file.disk_by_id.as_deref(), &mut asked)?;
     let unlock = unlock(fe, env, &pf, file, &mut asked)?;
     let user = account(fe, file, &unlock.passphrase, &mut asked)?;
@@ -88,6 +89,7 @@ pub fn collect(
 
 fn locale(
     fe: &mut dyn Frontend,
+    env: &Env<'_>,
     given: Option<&KeyboardAnswer>,
     asked: &mut bool,
 ) -> Result<Locale, InstallError> {
@@ -105,11 +107,18 @@ fn locale(
             }
         },
     };
+    let language = match &k.locale {
+        Some(given) => {
+            let supported = Supported::load(&env.root);
+            // The refusal never repeats the value from the file.
+            check_language(given, supported.as_ref())
+                .map_err(|why| fail(format!("keyboard.locale: {why}")))?;
+            given.clone()
+        }
+        None => keyboard::locale_for(&k.layout).to_owned(),
+    };
     Ok(Locale {
-        language: k
-            .locale
-            .clone()
-            .unwrap_or_else(|| keyboard::locale_for(&k.layout).to_owned()),
+        language,
         keyboard: k.layout.clone(),
         timezone,
         rtc_utc: true,
@@ -422,6 +431,57 @@ confirm = true
         assert!(out.contains("Hostname:  tetsu-"));
         assert!(!out.contains("Looks right"));
         assert!(!out.contains("Correct-Horse") && !out.contains("$6$salt"));
+    }
+
+    /// glibc's list on the medium, with one locale outside the generated ones.
+    fn supported(t: &tempfile::TempDir) {
+        let file = t.path().join("usr/share/i18n/SUPPORTED");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, "es_MX.UTF-8 UTF-8\nes_MX ISO-8859-1\n").unwrap();
+    }
+
+    fn with_locale(locale: &str) -> String {
+        let line = format!("layout = \"it\"\nlocale = \"{locale}\"");
+        COMPLETE.replace("layout = \"it\"", &line)
+    }
+
+    #[test]
+    fn a_supported_locale_outside_the_generated_ones_is_accepted() {
+        let t = machine(true);
+        supported(&t);
+        let (a, _) = run(&t, &with_locale("es_MX.UTF-8"), "");
+        assert_eq!(a.unwrap().locale.language, "es_MX.UTF-8");
+    }
+
+    #[test]
+    fn an_unsupported_locale_stops_the_install_without_echoing_it() {
+        let t = machine(true);
+        supported(&t);
+        let (a, _) = run(&t, &with_locale("xx_YY.UTF-8"), "");
+        let err = a.unwrap_err().to_string();
+        assert!(
+            err.contains("keyboard.locale") && err.contains("SUPPORTED"),
+            "{err}"
+        );
+        assert!(!err.contains("xx_YY"), "{err}");
+    }
+
+    #[test]
+    fn a_locale_that_cannot_be_checked_stops_the_install() {
+        let t = machine(true);
+        let (a, _) = run(&t, &with_locale("es_MX.UTF-8"), "");
+        let err = a.unwrap_err().to_string();
+        assert!(
+            err.contains("keyboard.locale") && err.contains("cannot check"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_generated_locale_needs_no_list() {
+        let t = machine(true);
+        let (a, _) = run(&t, &with_locale("it_IT.UTF-8"), "");
+        assert_eq!(a.unwrap().locale.language, "it_IT.UTF-8");
     }
 
     #[test]

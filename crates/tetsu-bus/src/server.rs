@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::instrument::WithSubscriber as _;
 use tracing::subscriber::NoSubscriber;
 use zlink::connection::{ReadConnection, WriteConnection};
@@ -111,6 +111,58 @@ pub enum Response {
     /// A stream of replies. Dropping the receiver (the caller went away)
     /// closes the handler's sender.
     Stream(mpsc::UnboundedReceiver<StreamItem>),
+    /// A stream whose queue is bounded, so the handler can see a backlog
+    /// and cut a slow consumer. If the handler drops the sender without a
+    /// `Last` or `Error` item, the connection is dropped: the caller sees
+    /// end of file and has to call again. Dropping the receiver (the
+    /// caller went away) closes the sender, as with `Stream`.
+    BoundedStream(mpsc::Receiver<StreamItem>),
+    /// One reply the handler sends later, from a task of its own. While it
+    /// is pending the connection keeps being read: if the caller goes away
+    /// the receiver is dropped, so the handler sees its sender close and
+    /// can cancel. Calls pipelined meanwhile are answered afterwards. If
+    /// the handler drops the sender without an answer, the connection is
+    /// dropped: the caller sees end of file.
+    Pending(oneshot::Receiver<Result<Value, ErrorReply>>),
+    /// The whole response, sent later from a task of the handler's own: a
+    /// reply, an error or a stream. While it is pending the connection
+    /// keeps being read, as with `Pending`: if the caller goes away the
+    /// receiver is dropped, so the handler sees its sender close and can
+    /// cancel. A oneway call is waited for too, so the handler can gate
+    /// its effect on the decision; no reply is written for it. If the
+    /// handler drops the sender, or answers with another `Deferred`, the
+    /// connection is dropped.
+    Deferred(oneshot::Receiver<Response>),
+}
+
+/// How a pending reply ended.
+enum Pended {
+    /// The handler answered.
+    Answer(Result<Value, ErrorReply>),
+    /// The handler dropped its sender, or the caller went away or
+    /// pipelined without end: the connection must be dropped.
+    Drop,
+}
+
+/// Where a relayed stream's items come from.
+enum Source {
+    Unbounded(mpsc::UnboundedReceiver<StreamItem>),
+    Bounded(mpsc::Receiver<StreamItem>),
+}
+
+impl Source {
+    async fn recv(&mut self) -> Option<StreamItem> {
+        match self {
+            Self::Unbounded(rx) => rx.recv().await,
+            Self::Bounded(rx) => rx.recv().await,
+        }
+    }
+
+    /// Whether the connection survives a sender dropped without a final
+    /// reply.
+    fn survives_close(&self) -> bool {
+        matches!(self, Self::Unbounded(_))
+    }
 }
 
 impl Response {
@@ -268,14 +320,11 @@ pub async fn serve<H: Handler>(mut listener: Listener, handler: Rc<H>) -> io::Re
 async fn identify(connection: &mut Connection<Socket>) -> io::Result<Peer> {
     let credentials = connection.peer_credentials().await?.clone();
     // A kernel without SO_PEERPIDFD (< 6.5) gives no pidfd: fail closed.
-    let pidfd = credentials
-        .process_fd()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "no peer pidfd"))?;
-    Peer::resolve(
+    Peer::from_credentials(
         credentials.unix_user_id().as_raw(),
         credentials.unix_primary_group_id().as_raw(),
         credentials.process_id().as_raw_nonzero().get(),
-        pidfd,
+        credentials.process_fd(),
     )
 }
 
@@ -296,18 +345,43 @@ async fn run_connection<H: Handler>(
             },
         };
         let response = handler.call(peer.clone(), call.clone()).await;
+        let response = match response {
+            Response::Deferred(deferred) => {
+                match wait_answer(deferred, &mut read, &mut queued).await {
+                    Some(Response::Deferred(_)) | None => return Ok(()),
+                    Some(response) => response,
+                }
+            }
+            response => response,
+        };
         if call.oneway {
             continue;
         }
         match response {
             Response::Reply(value) => send_reply(&mut write, value, false).await?,
             Response::Error(error) => send_error(&mut write, &error).await?,
-            Response::Stream(_) if !call.more => {
+            Response::Stream(_) | Response::BoundedStream(_) if !call.more => {
                 let error = ErrorReply::new("org.varlink.service.ExpectedMore", json!({}));
                 send_error(&mut write, &error).await?;
             }
+            // Resolved above; a second level is refused there.
+            Response::Deferred(_) => return Ok(()),
+            Response::Pending(pending) => {
+                match wait_pending(pending, &mut read, &mut queued).await {
+                    Pended::Answer(Ok(value)) => send_reply(&mut write, value, false).await?,
+                    Pended::Answer(Err(error)) => send_error(&mut write, &error).await?,
+                    Pended::Drop => return Ok(()),
+                }
+            }
             Response::Stream(stream) => {
-                if !relay(stream, &mut read, &mut write, &mut queued).await? {
+                let source = Source::Unbounded(stream);
+                if !relay(source, &mut read, &mut write, &mut queued).await? {
+                    return Ok(());
+                }
+            }
+            Response::BoundedStream(stream) => {
+                let source = Source::Bounded(stream);
+                if !relay(source, &mut read, &mut write, &mut queued).await? {
                     return Ok(());
                 }
             }
@@ -316,9 +390,10 @@ async fn run_connection<H: Handler>(
 }
 
 /// Sends a stream's replies while still reading the connection. Returns
-/// `false` when the caller went away (the stream is dropped with it).
+/// `false` when the caller went away or the connection must be dropped
+/// (the stream is dropped with it).
 async fn relay(
-    mut stream: mpsc::UnboundedReceiver<StreamItem>,
+    mut stream: Source,
     read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
     write: &mut WriteConnection<<Socket as zlink::connection::Socket>::WriteHalf>,
     queued: &mut VecDeque<Request>,
@@ -336,12 +411,45 @@ async fn relay(
                     return Ok(true);
                 }
                 // The handler dropped its sender without a final reply.
-                None => return Ok(true),
+                None => return Ok(stream.survives_close()),
             },
             call = receive(read) => match call {
                 Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
                 // Gone, or pipelining without end: drop the connection.
                 _ => return Ok(false),
+            },
+        }
+    }
+}
+
+/// Waits for a pending answer while still reading the connection. End of
+/// file drops `pending` on return, which the handler sees as its sender
+/// closing.
+async fn wait_pending(
+    pending: oneshot::Receiver<Result<Value, ErrorReply>>,
+    read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
+    queued: &mut VecDeque<Request>,
+) -> Pended {
+    wait_answer(pending, read, queued)
+        .await
+        .map_or(Pended::Drop, Pended::Answer)
+}
+
+/// Waits for `pending` while still reading the connection. `None` when the
+/// handler dropped its sender, or the caller went away or pipelined without
+/// end: the connection must be dropped, and `pending` with it.
+async fn wait_answer<T>(
+    mut pending: oneshot::Receiver<T>,
+    read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
+    queued: &mut VecDeque<Request>,
+) -> Option<T> {
+    loop {
+        tokio::select! {
+            answer = &mut pending => return answer.ok(),
+            call = receive(read) => match call {
+                Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
+                // Gone, or pipelining without end: drop the connection.
+                _ => return None,
             },
         }
     }

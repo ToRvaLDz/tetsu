@@ -30,6 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup show
+      # System libraries of the Smithay backends (tetsu-comp)
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libseat-dev libinput-dev libgbm-dev libdrm-dev libxkbcommon-dev libegl-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -39,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - run: pacman -Syu --noconfirm --needed systemd systemd-ukify sbsigntools openssl binutils rustup gcc git
+      - run: pacman -Syu --noconfirm --needed systemd systemd-ukify sbsigntools openssl binutils rustup gcc git pkgconf libinput seatd libxkbcommon xkeyboard-config mesa libdrm wayland
       - uses: actions/checkout@v4
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
@@ -69,12 +71,16 @@ jobs:
       - name: Syntax-check every script
         run: |
           fail=0
-          for f in tools/vm/tetsu-vm tools/vm/fetch-arch-iso tools/vm/lib/*.sh tools/vm/tests/*.sh image/build image/tests/*.sh; do
+          for f in tools/vm/tetsu-vm tools/vm/fetch-arch-iso tools/vm/lib/*.sh tools/vm/tests/*.sh image/build image/stage-session image/tests/*.sh; do
             bash -n "$f" || fail=1
           done
+          sh -n crates/tetsu-comp/dist/tetsu-session || fail=1
+          sh -n crates/tetsu-comp/dist/tetsu-comp-ready || fail=1
           exit "$fail"
       # socat backs the `send` unit test
       - run: sudo apt-get update && sudo apt-get install -y socat
       - run: tools/vm/tests/unit.sh
       # The base set is the depends of the tetsu-base package, nothing else
       - run: image/tests/tetsu-base.sh
+      # The session: units, order, launcher scripts, greetd config, staging
+      - run: image/tests/session.sh

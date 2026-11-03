@@ -2,4 +2,5 @@
 
 pub mod app;
 pub mod cli;
+pub mod comp;
 pub mod secureboot;

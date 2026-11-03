@@ -97,10 +97,51 @@ fn stage_one_runs_the_commands_in_order() {
     assert!(btrfs[0].ends_with("@snapshots"));
     let nspawn = lines
         .iter()
-        .find(|l| l.starts_with("systemd-nspawn"))
+        .find(|l| l.starts_with("systemd-nspawn") && l.contains("mkinitcpio"))
         .unwrap();
     assert!(nspawn.contains(&format!("-D {w}/top/@snapshots/1/root")));
     assert!(nspawn.ends_with("mkinitcpio -k 6.12.1-arch1-1 -g /usr/lib/tetsu/initrd.img"));
+}
+
+#[test]
+fn the_keyring_is_made_offline_over_snapshot_one_before_the_initrd() {
+    let run = stage_one(UnlockLevel::Comfort, |_| {});
+    run.out.result.as_ref().unwrap();
+    let w = run.root.path().join("work");
+    let root = format!("-D {}/top/@snapshots/1/root", w.display());
+    let lines = run.out.machine.lines();
+    let nspawn: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("systemd-nspawn"))
+        .collect();
+    assert_eq!(nspawn.len(), 3, "{nspawn:#?}");
+    assert!(nspawn[0].ends_with("pacman-key --init"));
+    assert!(nspawn[1].ends_with("pacman-key --populate archlinux"));
+    assert!(nspawn[2].contains("mkinitcpio"));
+    for l in &nspawn {
+        assert!(l.contains(&root) && l.contains("--private-network"), "{l}");
+    }
+    // Its own scratch /var, not the initrd build's.
+    assert!(nspawn[0].contains("keyring-var:/var"), "{}", nspawn[0]);
+    assert!(
+        run.path("top/@snapshots/1/root/etc/pacman.d/gnupg/trustdb.gpg")
+            .exists()
+    );
+}
+
+#[test]
+fn a_missing_trust_database_fails_the_install() {
+    let root = tempfile::tempdir().unwrap();
+    let a = answers(UnlockLevel::Comfort);
+    let t = target(root.path(), SecureBoot::SetupMode);
+    let plan = disk_plan(&InstallPlan::build(&a, &t));
+    let out = run_with(&a, &t, &plan, NEVER, |m| m.no_trustdb.set(true));
+    let err = out.result.unwrap_err().to_string();
+    assert!(err.contains("trustdb.gpg"), "{err}");
+    assert!(
+        !out.machine.lines().iter().any(|l| l.contains("mkinitcpio")),
+        "the initrd is not built after a failed keyring"
+    );
 }
 
 #[test]

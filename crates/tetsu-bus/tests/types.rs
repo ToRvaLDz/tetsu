@@ -16,6 +16,8 @@ use tetsu_bus::tx::{
     DefaultBoot, ListParams, PackageChange, PackageSource, PackagesParams, Phase, Progress,
     RollbackParams, Status, Transaction, TxEvent, TxEventKind, TxKind, TxState, UserPackage,
 };
+use tetsu_bus::window::{Placement, Window, WindowEvent, WindowKind};
+use tetsu_bus::workspace::{Workspace, WorkspaceEvent, WorkspaceKind};
 
 fn fixture(interface: &str, name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -278,4 +280,121 @@ fn a_sensitive_value_is_redacted_in_debug_and_travels_on_the_wire() {
     assert!(!format!("{:?}", add.value).contains("demo-value"));
     let wire = serde_json::to_value(&add).unwrap();
     assert_eq!(wire["value"], json!("demo-value"));
+}
+
+fn win() -> Window {
+    Window {
+        id: "win-42".into(),
+        app_id: Some("foot".into()),
+        title: Some("tmux".into()),
+        pid: Some(4242),
+        workspace_id: Some("ws-3".into()),
+        placement: Placement::Tiled,
+        fullscreen: false,
+        xwayland: false,
+    }
+}
+
+#[test]
+fn window_events_match_the_fixtures() {
+    const I: &str = "org.tetsu.comp.window.v1";
+    let initial: WindowEvent = round_trips(I, "WindowEvent.initial");
+    assert_eq!(
+        initial,
+        WindowEvent::initial(vec![win()], Some("win-42".into()))
+    );
+    let opened: WindowEvent = round_trips(I, "WindowEvent.opened");
+    assert_eq!(opened, WindowEvent::opened(win()));
+    let changed: WindowEvent = round_trips(I, "WindowEvent.changed");
+    let expected = Window {
+        title: Some("tmux: 2 panes".into()),
+        fullscreen: true,
+        ..win()
+    };
+    assert_eq!(changed, WindowEvent::changed(expected));
+    let closed: WindowEvent = round_trips(I, "WindowEvent.closed");
+    assert_eq!(closed, WindowEvent::closed("win-42"));
+    let focused: WindowEvent = round_trips(I, "WindowEvent.focused");
+    assert_eq!(focused, WindowEvent::focused(None));
+}
+
+#[test]
+fn a_window_keeps_its_nullable_fields_as_null() {
+    let bare = Window {
+        app_id: None,
+        title: None,
+        pid: None,
+        workspace_id: None,
+        ..win()
+    };
+    let wire = serde_json::to_value(bare).unwrap();
+    for field in ["app_id", "title", "pid", "workspace_id"] {
+        assert_eq!(wire[field], Value::Null, "{field}");
+    }
+    let focused = serde_json::to_value(WindowEvent::focused(Some("win-1".into()))).unwrap();
+    assert_eq!(focused, json!({ "kind": "focused", "focused_id": "win-1" }));
+}
+
+#[test]
+fn window_unknown_values_map_to_unknown() {
+    let event: WindowEvent = serde_json::from_value(json!({ "kind": "moved" })).unwrap();
+    assert_eq!(event.kind, WindowKind::Unknown);
+    let mut wire = serde_json::to_value(win()).unwrap();
+    wire["placement"] = json!("scrolling");
+    let window: Window = serde_json::from_value(wire).unwrap();
+    assert_eq!(window.placement, Placement::Unknown);
+}
+
+#[test]
+fn workspace_events_match_the_fixtures() {
+    const I: &str = "org.tetsu.comp.workspace.v1";
+    let dev = Workspace {
+        id: "ws-3".into(),
+        name: Some("dev".into()),
+        output_id: Some("out-7".into()),
+        index: 0,
+    };
+    let unnamed = Workspace {
+        id: "ws-4".into(),
+        name: None,
+        output_id: Some("out-7".into()),
+        index: 1,
+    };
+    let initial: WorkspaceEvent = round_trips(I, "WorkspaceEvent.initial");
+    let active = [("out-7".to_owned(), "ws-3".to_owned())].into();
+    assert_eq!(
+        initial,
+        WorkspaceEvent::initial(vec![dev.clone(), unnamed], active, Some("ws-3".into()))
+    );
+    let added: WorkspaceEvent = round_trips(I, "WorkspaceEvent.added");
+    assert_eq!(added, WorkspaceEvent::added(dev.clone()));
+    let changed: WorkspaceEvent = round_trips(I, "WorkspaceEvent.changed");
+    assert_eq!(
+        changed,
+        WorkspaceEvent::changed(Workspace { index: 1, ..dev })
+    );
+    let removed: WorkspaceEvent = round_trips(I, "WorkspaceEvent.removed");
+    assert_eq!(removed, WorkspaceEvent::removed("ws-4"));
+    let activated: WorkspaceEvent = round_trips(I, "WorkspaceEvent.activated");
+    assert_eq!(
+        activated,
+        WorkspaceEvent::activated(Some("ws-3".into()), "out-7")
+    );
+    let focused: WorkspaceEvent = round_trips(I, "WorkspaceEvent.focused");
+    assert_eq!(focused, WorkspaceEvent::focused(Some("ws-3".into())));
+}
+
+#[test]
+fn an_activated_event_without_a_workspace_writes_null() {
+    let wire = serde_json::to_value(WorkspaceEvent::activated(None, "out-7")).unwrap();
+    assert_eq!(
+        wire,
+        json!({ "kind": "activated", "id": null, "output_id": "out-7" })
+    );
+}
+
+#[test]
+fn workspace_unknown_kind_maps_to_unknown() {
+    let event: WorkspaceEvent = serde_json::from_value(json!({ "kind": "renamed" })).unwrap();
+    assert_eq!(event.kind, WorkspaceKind::Unknown);
 }

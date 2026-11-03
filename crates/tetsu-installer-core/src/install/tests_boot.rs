@@ -4,6 +4,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use tetsu_tx::store::record::{Records, TxKind};
+
 use crate::error::InstallError;
 use crate::preflight::SecureBoot;
 use crate::unlock::UnlockLevel;
@@ -215,6 +217,19 @@ fn the_snapshot_is_sealed_before_the_uki_and_recorded_after() {
     assert!(run.work("top/@snapshots/1/committed").is_file());
     let record = fs::read_to_string(run.work("top/@var/lib/tetsu/transactions/1.json")).unwrap();
     assert!(record.contains("\"counter\": 1"), "{record}");
+}
+
+#[test]
+fn the_snapshot_1_record_is_an_initial_install() {
+    let run = run_two_stages(UnlockLevel::Comfort, |_| {});
+    run.out.result.as_ref().unwrap();
+    let records = Records::new(&run.work("top/@var/lib/tetsu/transactions"))
+        .load()
+        .unwrap();
+    let first = &records[&1];
+    assert_eq!(first.kind, Some(TxKind::InitialInstall));
+    assert_eq!(first.source, None);
+    assert!(!first.reconstructed);
 }
 
 #[test]

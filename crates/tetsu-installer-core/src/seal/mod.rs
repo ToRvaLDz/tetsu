@@ -13,7 +13,19 @@
 //!   and the file is rewritten in place. The seal goes first and the state
 //!   second; if the state cannot be written the next boot seals again, and
 //!   `--wipe-slot=tpm2` makes that replace the old slot instead of adding
-//!   one.
+//!   one. The file lives inside the snapshot, so a rollback to a snapshot
+//!   taken before the seal brings back `pending` while the LUKS header
+//!   already holds the TPM2 slot. The header is the source of truth: when
+//!   the file says `pending`, `systemd-cryptenroll <device>` lists a `tpm2`
+//!   slot and `cryptsetup luksDump --dump-json-metadata <device>` shows a
+//!   systemd-tpm2 token with Tetsu's policy (a `tpm2_pubkey` whose
+//!   `tpm2_pubkey_pcrs` holds 11, `tpm2-pcrs` holding 7, and a `tpm2-pin`
+//!   that is true for Balanced and missing or false for Comfort), the file
+//!   is rewritten to `sealed` with no prompt and no `@var` mount. A tpm2
+//!   slot without that policy (added by hand, stale, or forged in the
+//!   unauthenticated header) does not count: the normal seal runs and
+//!   `--wipe-slot=tpm2` replaces it. A failing listing or dump changes
+//!   nothing and the seal goes on.
 //! * **Where the keys live.** `/var` is the `@var` subvolume, mounted only
 //!   after the switch. The service mounts that subvolume from the opened
 //!   root mapper under `<work>/var` and unmounts it before it returns. It
@@ -59,8 +71,10 @@ pub use runner::SealRunner;
 /// The shared subvolume that holds `lib/tetsu/keys`.
 pub const VAR_SUBVOLUME: &str = "@var";
 /// TPM policy: the signed PCR 11 (the UKI) plus PCR 7 (Secure Boot keys).
-const PUBLIC_KEY_PCRS: &str = "11";
-const BOUND_PCRS: &str = "7";
+/// Kept as numbers: the token check compares them with the integers
+/// systemd writes, and the CLI form is built from them.
+const PUBLIC_KEY_PCR_LIST: &[u64] = &[11];
+const BOUND_PCR_LIST: &[u64] = &[7];
 /// Seconds a prompt waits before the seal gives up and the boot goes on.
 const ASK_TIMEOUT: &str = "--timeout=120";
 const PIN_ATTEMPTS: usize = 3;
@@ -101,6 +115,9 @@ pub enum Outcome {
     NotNeeded,
     /// Sealed this boot.
     Sealed,
+    /// The header already held a TPM2 slot (a rollback brought `pending`
+    /// back); the file now says `sealed` again.
+    AlreadySealed,
     /// Still pending, with the reason for the one status line.
     Waiting(String),
 }
@@ -138,6 +155,14 @@ pub fn run(paths: &SealPaths, runner: &dyn SealRunner) -> Result<Outcome, Instal
     let cmdline =
         fs::read_to_string(&cmdline_path).map_err(|e| InstallError::io(&cmdline_path, e))?;
     let luks = cmdline::luks_root(&cmdline)?;
+    if header_has_tetsu_seal(runner, &luks.device, file.level) {
+        UnlockFile {
+            state: SealState::Sealed,
+            ..file
+        }
+        .write(&paths.level_file())?;
+        return Ok(Outcome::AlreadySealed);
+    }
 
     let run_dir = RunDir::create(&paths.work_dir)?;
     let var = paths.var_mount();
@@ -161,6 +186,80 @@ pub fn run(paths: &SealPaths, runner: &dyn SealRunner) -> Result<Outcome, Instal
         (Err(e), _) => Err(e),
         (Ok(_), Err(e)) => Err(e.into()),
     }
+}
+
+/// Whether the header already holds Tetsu's seal for `level`. The slot
+/// listing needs no unlock; a tpm2 row is then checked against its token
+/// (`cryptsetup luksDump --dump-json-metadata`), so a hand-added or stale
+/// token does not stand in for the seal. Any failure means "unknown" and
+/// counts as no.
+fn header_has_tetsu_seal(runner: &dyn Runner, device: &Path, level: UnlockLevel) -> bool {
+    let listed = runner
+        .output("systemd-cryptenroll", &argv(&[&device]))
+        .is_ok_and(|listing| has_tpm2_slot(&listing));
+    listed
+        && runner
+            .output(
+                "cryptsetup",
+                &argv(&[&"luksDump", &"--dump-json-metadata", &device]),
+            )
+            .is_ok_and(|json| has_tetsu_token(&json, level))
+}
+
+/// Whether a `systemd-cryptenroll` slot listing has a `tpm2` row. Rows are
+/// `<slot> <type>`; the header row has the type `TYPE`.
+fn has_tpm2_slot(listing: &str) -> bool {
+    listing
+        .lines()
+        .filter_map(|row| row.split_whitespace().nth(1))
+        .any(|kind| kind == "tpm2")
+}
+
+/// Whether the LUKS JSON metadata has a systemd-tpm2 token with Tetsu's
+/// policy: a public key that signs PCR 11, a binding to PCR 7, and a PIN
+/// exactly when the level is Balanced. Anything unparsable is no.
+fn has_tetsu_token(json: &str, level: UnlockLevel) -> bool {
+    let Ok(metadata) = serde_json::from_str::<serde_json::Value>(json) else {
+        return false;
+    };
+    let Some(tokens) = metadata.get("tokens").and_then(|t| t.as_object()) else {
+        return false;
+    };
+    let wants_pin = level == UnlockLevel::Balanced;
+    tokens.values().any(|token| {
+        token.get("type").and_then(|t| t.as_str()) == Some("systemd-tpm2")
+            && token
+                .get("tpm2_pubkey")
+                .and_then(|k| k.as_str())
+                .is_some_and(|k| !k.is_empty())
+            && has_pcrs(token, "tpm2_pubkey_pcrs", PUBLIC_KEY_PCR_LIST)
+            && has_pcrs(token, "tpm2-pcrs", BOUND_PCR_LIST)
+            && token
+                .get("tpm2-pin")
+                .and_then(|p| p.as_bool())
+                .unwrap_or(false)
+                == wants_pin
+    })
+}
+
+/// Whether the token's `key` array holds every PCR of `wanted`.
+fn has_pcrs(token: &serde_json::Value, key: &str, wanted: &[u64]) -> bool {
+    token
+        .get(key)
+        .and_then(|p| p.as_array())
+        .is_some_and(|pcrs| {
+            wanted
+                .iter()
+                .all(|w| pcrs.iter().any(|p| p.as_u64() == Some(*w)))
+        })
+}
+
+/// A PCR list in `systemd-cryptenroll` syntax, e.g. `7+11`.
+fn pcr_arg(pcrs: &[u64]) -> String {
+    pcrs.iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// The part that needs the keys mounted.
@@ -211,8 +310,8 @@ pub fn enroll_args(key_file: &Path, pcr_public: &Path, pin: bool, device: &Path)
         &format!("--unlock-key-file={}", key_file.display()),
         &"--tpm2-device=auto",
         &format!("--tpm2-public-key={}", pcr_public.display()),
-        &format!("--tpm2-public-key-pcrs={PUBLIC_KEY_PCRS}"),
-        &format!("--tpm2-pcrs={BOUND_PCRS}"),
+        &format!("--tpm2-public-key-pcrs={}", pcr_arg(PUBLIC_KEY_PCR_LIST)),
+        &format!("--tpm2-pcrs={}", pcr_arg(BOUND_PCR_LIST)),
     ]);
     if pin {
         args.push("--tpm2-with-pin=yes".into());

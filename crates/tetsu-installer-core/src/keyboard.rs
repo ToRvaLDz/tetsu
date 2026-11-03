@@ -1,8 +1,14 @@
 //! Keyboard step: the layout drives the default language and timezone.
 //! The RTC is always kept in UTC.
+//!
+//! The table's locales (plus the fallback) are the ones the payload
+//! pregenerates; any other language goes through [`crate::locales`].
+
+use std::collections::BTreeSet;
 
 use crate::error::InstallError;
 use crate::frontend::{Frontend, ask_valid, choose_from};
+use crate::locales::{Supported, check_language};
 
 /// Locale used when the layout is not in the table.
 pub const FALLBACK_LOCALE: &str = "en_US.UTF-8";
@@ -199,6 +205,17 @@ pub fn validate_timezone(tz: &str) -> Result<(), String> {
         .ok_or_else(|| format!("not a timezone name: {tz} (expected Area/City)"))
 }
 
+/// The locales the payload generates: the table's plus the fallback.
+pub fn pregenerated_locales() -> BTreeSet<&'static str> {
+    let table = LAYOUTS.iter().map(|l| l.locale);
+    table.chain([FALLBACK_LOCALE]).collect()
+}
+
+/// Whether the payload already generates `language`.
+pub fn is_pregenerated(language: &str) -> bool {
+    pregenerated_locales().contains(language)
+}
+
 /// Accepts `ll_CC.UTF-8` shaped locales.
 pub fn validate_locale(locale: &str) -> Result<(), String> {
     let ok = locale.strip_suffix(".UTF-8").is_some_and(|base| {
@@ -239,8 +256,12 @@ pub fn run(fe: &mut dyn Frontend) -> Result<Locale, InstallError> {
 }
 
 /// Redo language and timezone only, from the summary.
-pub fn edit_regional(fe: &mut dyn Frontend, current: &Locale) -> Result<Locale, InstallError> {
-    let language = ask_valid(fe, "Language (locale)", &validate_locale)?;
+pub fn edit_regional(
+    fe: &mut dyn Frontend,
+    current: &Locale,
+    supported: Result<&Supported, &String>,
+) -> Result<Locale, InstallError> {
+    let language = ask_valid(fe, "Language (locale)", &|l| check_language(l, supported))?;
     let timezone = ask_valid(fe, "Timezone (Area/City)", &validate_timezone)?;
     Ok(Locale {
         language,
@@ -316,7 +337,8 @@ mod tests {
             rtc_utc: true,
         };
         let mut fe = Script::new().text("en_GB.UTF-8").text("Europe/London");
-        let l = edit_regional(&mut fe, &cur).unwrap();
+        let none = String::new();
+        let l = edit_regional(&mut fe, &cur, Err(&none)).unwrap();
         assert_eq!(
             (l.keyboard.as_str(), l.language.as_str()),
             ("it", "en_GB.UTF-8")

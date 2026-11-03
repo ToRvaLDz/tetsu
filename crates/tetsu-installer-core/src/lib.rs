@@ -12,6 +12,7 @@ pub mod error;
 pub mod frontend;
 pub mod install;
 pub mod keyboard;
+pub mod locales;
 pub mod preflight;
 pub mod seal;
 pub mod secret;

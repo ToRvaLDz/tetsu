@@ -201,6 +201,8 @@ scenario_etc_sync() {
     "for i in \$(seq 1 60); do systemctl is-active tetsu-boot-check && break; sleep 1; done; systemctl is-active tetsu-boot-check" 120
   check "snapshot 1 is recorded good" '"boot": "good"' \
     "for i in \$(seq 1 30); do sudo -n grep -q good /var/lib/tetsu/transactions/1.json && break; sleep 1; done; sudo -n cat /var/lib/tetsu/transactions/1.json" 90
+  check "snapshot 1 is the initial install" '"kind": "initial_install"' \
+    "sudo -n cat /var/lib/tetsu/transactions/1.json"
   # The hook is in the initrd the installer built.
   check "the initrd holds the sync binary" 'usr/bin/tetsu-etc-sync$' \
     "sudo -n lsinitcpio /usr/lib/tetsu/initrd.img | grep tetsu-etc-sync"

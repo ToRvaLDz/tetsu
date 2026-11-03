@@ -1,0 +1,24 @@
+# Installed as /usr/lib/systemd/user/tetsu-comp.service. tetsu-capd authorizes
+# Check callers by this unit name, so it must not be renamed. Started by
+# /usr/bin/tetsu-session, never enabled.
+[Unit]
+Description=Tetsu compositor
+Documentation=https://github.com/ToRvaLDz/tetsu
+BindsTo=graphical-session.target
+Before=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+
+[Service]
+# Ready when the first client (the hook) says so: sockets are bound.
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/bin/tetsu-comp --backend tty -- /usr/libexec/tetsu-comp-ready
+ExecStopPost=-/usr/bin/systemctl --user unset-environment WAYLAND_DISPLAY TETSU_COMP_SOCKET XDG_SESSION_TYPE
+TimeoutStartSec=30
+# wayland sets the logind session type through libseat; no seatd daemon.
+Environment=XDG_SESSION_TYPE=wayland
+Environment=LIBSEAT_BACKEND=logind
+# A stale manager environment must never pick another backend.
+UnsetEnvironment=WAYLAND_DISPLAY DISPLAY TETSU_COMP_SOCKET
+Slice=session.slice

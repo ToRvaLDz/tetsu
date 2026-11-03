@@ -7,6 +7,7 @@ mod boot;
 pub mod config;
 pub mod exec;
 mod firmware;
+mod locale_gen;
 pub mod log;
 pub mod plan;
 pub mod rundir;
@@ -22,6 +23,8 @@ mod tests;
 mod tests_boot;
 #[cfg(test)]
 mod tests_firmware;
+#[cfg(test)]
+mod tests_locale;
 
 pub use exec::{Deps, Executor};
 pub use plan::{Action, InstallPlan, KeyKind, Stage};

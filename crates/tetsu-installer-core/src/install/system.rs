@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tetsu_tx::store::snapshot::FIRST_COUNTER;
-use tetsu_tx::tx::nspawn::Nspawn;
+use tetsu_tx::tx::nspawn::{Network, Nspawn};
 use tetsu_tx::tx::steps::{build_initrd, kernel_version};
 
 use crate::agent::AgentBackend;
 use crate::error::InstallError;
-use crate::keyboard::validate_timezone;
+use crate::keyboard::{validate_locale, validate_timezone};
 use crate::user::{Password, validate_full_name, validate_username};
 
 use super::config::{self, OWNER_ID};
@@ -41,7 +41,7 @@ pub(super) fn write_file(path: &Path, content: &str, mode: u32) -> Result<(), In
 }
 
 /// A text file that may not exist yet.
-fn read_or_empty(path: &Path) -> Result<String, InstallError> {
+pub(super) fn read_or_empty(path: &Path) -> Result<String, InstallError> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(text),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
@@ -54,12 +54,25 @@ fn invalid(what: &str, why: String) -> InstallError {
 }
 
 impl Executor<'_> {
-    fn etc(&self) -> PathBuf {
+    pub(super) fn etc(&self) -> PathBuf {
         self.target.layout().etc(FIRST_COUNTER)
     }
 
-    fn snapshot_root(&self) -> PathBuf {
+    pub(super) fn snapshot_root(&self) -> PathBuf {
         self.target.layout().root(FIRST_COUNTER)
+    }
+
+    /// A container over snapshot 1 with its own scratch `/var`, for the
+    /// steps that run the target's own tools offline.
+    pub(super) fn offline_container(&self, scratch: &str) -> Result<Nspawn, InstallError> {
+        let scratch = self.run.subdir(scratch)?;
+        fs::create_dir_all(&self.target.cache_dir)
+            .map_err(|e| InstallError::io(&self.target.cache_dir, e))?;
+        Ok(Nspawn::new(
+            &self.snapshot_root(),
+            &scratch,
+            &self.target.cache_dir,
+        ))
     }
 
     fn home(&self) -> PathBuf {
@@ -73,12 +86,14 @@ impl Executor<'_> {
             Action::WriteUser => self.write_user(),
             Action::LockRoot => self.lock_root(),
             Action::WriteLocale => self.write_locale(),
+            Action::GenerateLocale => self.generate_locale(),
             Action::WriteHostname => self.write_hostname(),
             Action::WriteFstab => self.write_fstab(),
             Action::WriteCmdline => self.write_cmdline(),
             Action::WriteAgentBackend => self.write_agent_backend(),
             Action::StageApiKey => self.stage_api_key(),
             Action::WriteUnlockLevel => self.write_unlock_level(),
+            Action::InitKeyring => self.init_keyring(),
             Action::BuildInitrd => self.build_initrd(),
             other => Err(InstallError::Failed(format!(
                 "{other:?} is not implemented yet"
@@ -177,6 +192,7 @@ impl Executor<'_> {
 
     fn write_locale(&mut self) -> Result<(), InstallError> {
         let l = &self.answers.locale;
+        validate_locale(&l.language).map_err(|w| invalid("language", w))?;
         validate_timezone(&l.timezone).map_err(|w| invalid("timezone", w))?;
         let etc = self.etc();
         write_file(
@@ -266,14 +282,34 @@ impl Executor<'_> {
         )
     }
 
+    /// Make the pacman keyring with the target's own `pacman-key`, offline,
+    /// so the first `tetsu-tx update` finds it. Each device gets a local
+    /// signing key made here; the payload ships no keyring secrets.
+    fn init_keyring(&mut self) -> Result<(), InstallError> {
+        let ns = self.offline_container("keyring-var")?;
+        let steps: [&[&str]; 2] = [
+            &["pacman-key", "--init"],
+            &["pacman-key", "--populate", "archlinux"],
+        ];
+        for command in steps {
+            let args = ns.args(Network::Offline, command);
+            self.deps.runner.run("systemd-nspawn", &args)?;
+        }
+        let trustdb = self.etc().join("pacman.d/gnupg/trustdb.gpg");
+        if !trustdb.is_file() {
+            return Err(InstallError::Failed(format!(
+                "pacman-key did not write {}",
+                trustdb.display()
+            )));
+        }
+        Ok(())
+    }
+
     /// Build the initrd offline in a container over snapshot 1.
     fn build_initrd(&mut self) -> Result<(), InstallError> {
         let root = self.snapshot_root();
         let version = kernel_version(&root)?;
-        let scratch = self.run.subdir("initrd-var")?;
-        fs::create_dir_all(&self.target.cache_dir)
-            .map_err(|e| InstallError::io(&self.target.cache_dir, e))?;
-        let ns = Nspawn::new(&root, &scratch, &self.target.cache_dir);
+        let ns = self.offline_container("initrd-var")?;
         build_initrd(self.deps.runner, &ns, &version)?;
         self.state.kernel_version = Some(version);
         Ok(())
