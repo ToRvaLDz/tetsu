@@ -31,6 +31,8 @@ pub const KERNEL: &str = "6.12.1-arch1-1";
 pub const FIRMWARE_BEFORE: &str =
     "BootCurrent: 0001\nBootOrder: 0001,0000\nBoot0000* Windows\nBoot0001* Fedora\n";
 /// The PARTUUID of the target's new ESP.
+/// The owner GUID the fake PK fingerprint derives to.
+pub const OWNER_GUID: &str = "00112233-4455-8677-8899-aabbccddeeff";
 pub const ESP_PARTUUID: &str = "11111111-2222-4333-8444-555555555555";
 pub const FIRMWARE_AFTER: &str = "BootCurrent: 0001\nBootOrder: 0002,0001,0000\nBoot0000* Windows\nBoot0001* Fedora\nBoot0002* Tetsu\n";
 
@@ -183,6 +185,12 @@ impl Machine {
             "openssl" if args.first().map(String::as_str) == Some("passwd") => {
                 return "$6$salt$hashedhashedhashed\n".to_owned();
             }
+            "openssl" if args.iter().any(|a| a == "-fingerprint") => {
+                let hex: Vec<String> = (0u8..32)
+                    .map(|i| format!("{:02X}", if i < 16 { i * 0x11 } else { i }))
+                    .collect();
+                return format!("sha256 Fingerprint={}\n", hex.join(":"));
+            }
             "openssl" => {
                 for flag in ["-keyout", "-out"] {
                     if let Some(out) = Self::after(args, flag) {
@@ -318,6 +326,7 @@ pub fn target(root: &Path, secure_boot: crate::preflight::SecureBoot) -> Install
     // them set their own.
     t.without_microsoft = true;
     t.run_dir = root.join("run");
+    t.efi_root = root.join("efi");
     t.cache_dir = root.join("cache");
     t
 }

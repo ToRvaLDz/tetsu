@@ -46,6 +46,8 @@ pub struct InstallTarget {
     pub trust_cert: Option<PathBuf>,
     /// Firmware state found by the preflight.
     pub secure_boot: SecureBoot,
+    /// Root the firmware variables are read under (`/sys/firmware/efi`).
+    pub efi_root: PathBuf,
     /// `console=` parameters of the installer's own kernel command line,
     /// carried over so a machine driven over a serial line stays so.
     pub console_args: Vec<String>,
@@ -63,6 +65,7 @@ impl InstallTarget {
             without_microsoft: false,
             trust_cert: None,
             secure_boot,
+            efi_root: PathBuf::from("/"),
             console_args: Vec::new(),
         }
     }

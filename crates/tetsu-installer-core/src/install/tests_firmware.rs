@@ -12,7 +12,7 @@ use crate::secret::Secret;
 use crate::secureboot::MicrosoftCerts;
 use crate::unlock::UnlockLevel;
 
-use super::fake::{ESP_PARTUUID, Outcome, answers, run_plan, run_with, target};
+use super::fake::{ESP_PARTUUID, OWNER_GUID, Outcome, answers, run_plan, run_with, target};
 use super::plan::InstallPlan;
 
 const NEVER: &dyn Fn() -> bool = &|| false;
@@ -94,8 +94,14 @@ fn enrollment_writes_db_then_kek_then_pk_with_one_owner_guid() {
     assert!(guids.iter().all(|g| *g == guids[0]));
     let g = guids[0];
     assert_eq!(g.len(), 36);
-    assert_eq!(&g[14..15], "4");
-    assert!("89ab".contains(&g[19..20]));
+    // Derived from the PK certificate, not random.
+    assert_eq!(g, OWNER_GUID);
+    let fingerprint = lines
+        .iter()
+        .position(|l| l.ends_with("PK.crt -noout -fingerprint -sha256"))
+        .unwrap();
+    assert!(lines[fingerprint].starts_with("openssl x509 -in "));
+    assert!(fingerprint < position(&lines, "cert-to-efi-sig-list"));
     // The scratch files are gone.
     assert!(!run.root.path().join("run/secureboot").exists());
 }
@@ -173,6 +179,80 @@ fn an_enrollment_failure_takes_the_off_path_and_the_install_goes_on() {
     // Keys are kept.
     assert!(run.work("top/@var/lib/tetsu/keys/db.key").is_file());
     assert!(run.out.log.iter().any(|l| l.starts_with("[warning]")));
+}
+
+#[test]
+fn a_pk_write_failure_restores_db_and_kek_and_the_install_goes_on() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |m| m.fail_containing("PK.auth PK"),
+    );
+    run.out.result.as_ref().unwrap();
+    assert!(!run.out.keys_enrolled);
+    let lines = run.lines();
+    let restores: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("efi-updatevar") && l.contains("restore.auth"))
+        .collect();
+    assert_eq!(restores.len(), 2, "{lines:#?}");
+    assert!(restores[0].ends_with(" db") && restores[1].ends_with(" KEK"));
+    let warnings = warnings(&run);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("db and KEK were restored")),
+        "{warnings:?}"
+    );
+    // The off path: the boot entry is still created.
+    assert!(lines.iter().any(|l| l.starts_with("efibootmgr --create")));
+}
+
+#[test]
+fn a_restore_failure_warns_with_what_is_left() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, _| {},
+        |m| {
+            m.fail_containing("PK.auth PK");
+            m.fail_containing("db.restore.auth db");
+        },
+    );
+    run.out.result.as_ref().unwrap();
+    let warnings = warnings(&run);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("KEK was restored") && w.contains("left in db")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_pk_failure_with_the_pk_in_the_firmware_rolls_nothing_back() {
+    let run = full_run(
+        UnlockLevel::Comfort,
+        SecureBoot::SetupMode,
+        |_, t| {
+            let dir = t.efi_root.join("sys/firmware/efi/efivars");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("PK-8be4df61-93ca-11d2-aa0d-00e098032b8c"),
+                [7, 0, 0, 0, 1],
+            )
+            .unwrap();
+        },
+        |m| m.fail_containing("PK.auth PK"),
+    );
+    run.out.result.as_ref().unwrap();
+    assert!(run.lines().iter().all(|l| !l.contains("restore.auth")));
+    assert!(
+        warnings(&run)
+            .iter()
+            .any(|w| w.contains("the PK is in the firmware"))
+    );
 }
 
 #[test]
