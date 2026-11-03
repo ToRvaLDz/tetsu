@@ -49,7 +49,10 @@ pub fn enroll(
 
     let mut written = Vec::new();
     for (var, step) in &steps.writes {
-        if let Err(source) = run_steps(runner, std::slice::from_ref(step)) {
+        // efivarfs makes a variable file immutable once it exists.
+        let wrote = efi::make_writable(efi_root, var.name())
+            .and_then(|()| run_steps(runner, std::slice::from_ref(step)));
+        if let Err(source) = wrote {
             if *var == Var::Pk && efi::platform_key_present(efi_root) {
                 // Setup Mode is over: the keys are in, whatever the tool said.
                 return Ok(Enrolled::PkReportedFailure(format!(
@@ -61,7 +64,7 @@ pub fn enroll(
             return Err(InstallError::EnrollmentFailed {
                 var: var.name(),
                 source: Box::new(source),
-                outcome: roll_back(runner, e, restore_time, &written),
+                outcome: roll_back(runner, e, restore_time, efi_root, &written),
             });
         }
         written.push(*var);
@@ -71,13 +74,21 @@ pub fn enroll(
 
 /// Put the variables in `written` back, db first. Every restore is tried
 /// whatever happened to the one before.
-fn roll_back(runner: &dyn Runner, e: &Enrollment, time: u64, written: &[Var]) -> Rollback {
+fn roll_back(
+    runner: &dyn Runner,
+    e: &Enrollment,
+    time: u64,
+    efi_root: &Path,
+    written: &[Var],
+) -> Rollback {
     if written.is_empty() {
         return Rollback::NothingWritten;
     }
     let (mut restored, mut left) = (Vec::new(), Vec::new());
     for var in written {
-        match run_steps(runner, &restore_steps(e, time, *var)) {
+        let done = efi::make_writable(efi_root, var.name())
+            .and_then(|()| run_steps(runner, &restore_steps(e, time, *var)));
+        match done {
             Ok(()) => restored.push(var.name()),
             Err(e) => left.push((var.name(), e.to_string())),
         }
@@ -396,7 +407,7 @@ mod tests {
         let path = s
             .root()
             .join("sys/firmware/efi/efivars/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
         if fs::File::open(&path).is_ok() {
             return; // root opens it anyway
         }

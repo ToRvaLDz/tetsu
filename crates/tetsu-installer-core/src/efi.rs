@@ -324,7 +324,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         put_var(t.path(), "PK", GLOBAL_VARIABLE_GUID, &[7, 0, 0, 0, 1]);
         let path = efivar_path(t.path(), "PK", GLOBAL_VARIABLE_GUID);
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
         // Root opens it anyway.
         if std::fs::File::open(&path).is_ok() {
             return;

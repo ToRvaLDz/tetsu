@@ -116,10 +116,12 @@ fn enrollment_message(var: &str, source: &InstallError, outcome: &Rollback) -> S
             } else {
                 format!("{} {} restored; ", names(restored), were(restored))
             };
+            let why: Vec<String> = left.iter().map(|(v, e)| format!("{v} ({e})")).collect();
+            let why: Vec<&str> = why.iter().map(String::as_str).collect();
             format!(
                 "{failed}: {done}Tetsu's entries are left in {}: reset the Secure Boot keys in \
                  the firmware setup (or clear them and run `tetsu secureboot enroll` again)",
-                names(&left.iter().map(|(v, _)| *v).collect::<Vec<_>>())
+                names(&why)
             )
         }
     }
