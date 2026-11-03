@@ -12,8 +12,6 @@
 AGENT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Where the probe and its files live in the guest (expanded by the guest shell).
 AGENT_PDIR='$HOME/.cache/tetsu-vm-probe'
-# Open items reported next to the summary, never counted as passes.
-AGENT_KNOWN_OPEN=()
 
 # gput LOCAL REMOTE MODE: copy a file to the guest through the serial
 # console (base64 in short lines), and compare the checksum.
@@ -72,15 +70,8 @@ agent_journal() {
   gexec "journalctl --user _SYSTEMD_INVOCATION_ID=$1 -o cat --no-pager | grep '^P:'" 60
 }
 
-agent_known_open_summary() {
-  local k
-  [ "${#AGENT_KNOWN_OPEN[@]}" -gt 0 ] || return 0
-  printf '\nknown open (reported, not counted as passes):\n'
-  for k in "${AGENT_KNOWN_OPEN[@]}"; do printf '  KNOWN-OPEN %s\n' "$k"; done
-}
-
 agent_sandbox_checks() {
-  local inv elf="$WORK/clone3-probe" pd=$AGENT_PDIR
+  local inv v elf="$WORK/clone3-probe" pd=$AGENT_PDIR
 
   # 1. What is installed: a plain unit, no preset, the denied directories made.
   check "tetsu-agent.service is installed and not enabled by any preset" '^static$' \
@@ -98,10 +89,12 @@ agent_sandbox_checks() {
   assert_contains "$SCENARIO: markers are seeded in the denied and the read-only locations" "$GOUT" "markers-seeded"
   check "a sibling cgroup is made outside the agent slice, in the user's delegated subtree" '^sibling-ok$' \
     "ucg=/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service); mkdir -p \$ucg/vm-probe-sibling && test -w \$ucg/vm-probe-sibling/cgroup.procs && echo sibling-ok"
-  gexec "printf 'SIB=%s\\nGO=%s\\nCLONE3=%s\\nCAPD_PID=%s\\n' \"/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service)/vm-probe-sibling\" \"$pd/go\" \"$pd/clone3\" \"\$(systemctl --user show -P MainPID tetsu-capd.service)\" >$pd/probe.env; rm -f $pd/go; cat $pd/probe.env"
-  assert_contains "$SCENARIO: the probe environment names capd's pid" "$GOUT" "CAPD_PID="
-  grep -qE '^CAPD_PID=[1-9][0-9]*[[:space:]]*$' <<<"$GOUT" \
-    || fail "$SCENARIO: CAPD_PID is a non-empty number (capd is running)" "$(grep '^CAPD_PID=' <<<"$GOUT")"
+  gexec "printf 'SIB=%s\\nGO=%s\\nCLONE3=%s\\nCAPD_PID=%s\\nNOTIFYD_PID=%s\\n' \"/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service)/vm-probe-sibling\" \"$pd/go\" \"$pd/clone3\" \"\$(systemctl --user show -P MainPID tetsu-capd.service)\" \"\$(systemctl --user show -P MainPID tetsu-notifyd.service)\" >$pd/probe.env; rm -f $pd/go; cat $pd/probe.env"
+  assert_contains "$SCENARIO: the probe environment names the daemons' pids" "$GOUT" "NOTIFYD_PID="
+  for v in CAPD_PID NOTIFYD_PID; do
+    grep -qE "^$v=[1-9][0-9]*[[:space:]]*\$" <<<"$GOUT" \
+      || fail "$SCENARIO: $v is a non-empty number (the daemon is running)" "$(grep "^$v=" <<<"$GOUT")"
+  done
 
   # 3. Inside: the shipped unit with only ExecStart= swapped.
   gexec "d=\$XDG_RUNTIME_DIR/systemd/user/tetsu-agent.service.d; mkdir -p \$d && printf '[Service]\\nExecStart=\\nExecStart=/usr/bin/bash %s in %s\\n' \"$pd/probe.sh\" \"$pd/probe.env\" >\$d/zz-vm-probe.conf && systemctl --user daemon-reload && systemctl --user start --no-block tetsu-agent.service && echo started"
@@ -163,26 +156,26 @@ agent_sandbox_checks() {
   agent_expect systemd_run_user no yes "systemd-run --user fails inside"
   agent_expect tpm no yes "/dev/tpmrm0 is absent inside and present outside"
   agent_expect dbus_env unset - "DBUS_SESSION_BUS_ADDRESS is unset inside"
-  agent_expect abstract_bus no - "no @-abstract bus address exists in /proc/net/unix"
+  agent_expect abstract_bus no - "no listening abstract socket accepts a bus or varlink connection"
   agent_expect cg_self yes no "the probe's /proc/self/cgroup is in tetsu-agent.slice"
   agent_expect cg_child yes no "a forked child's cgroup is in tetsu-agent.slice"
   agent_expect cg_join no yes "writing the probe's pid to a sibling cgroup's cgroup.procs fails"
   agent_expect clone3 enosys 'errno-*' "clone3 returns ENOSYS inside and not outside"
-  agent_expect userns yes no "the probe runs in a user namespace"
+  agent_expect userns yes no "the probe runs in a user namespace (the barrier of the /proc/<pid> route below)"
   agent_expect m_mount no no "mount fails inside"
   agent_expect m_umount no no "umount fails inside"
   agent_expect m_unshare no yes "unshare of a user namespace fails inside (RestrictNamespaces)"
   agent_expect m_unshare_mount no yes "mounting in a fresh namespace fails inside"
   # The empty bounding set, ~@mount and RestrictNamespaces are covered together
   # by the mount, unshare and unshare-mount probes above, not each in isolation.
-  # Known open item: not a pass, not a failure. It is reported only when the
-  # control can do the read; otherwise the probe proves nothing and the check fails.
-  if [ "${AGENT_OUT[proc_root]-<missing>}" = yes ]; then
-    AGENT_KNOWN_OPEN+=("/proc route (#144): reading /proc/<capd pid>/root/ from inside: inside=${AGENT_IN[proc_root]-<missing>} control=yes")
-    say_info "KNOWN-OPEN /proc route (#144): inside=${AGENT_IN[proc_root]-<missing>} control=yes"
-  else
-    fail "$SCENARIO: the /proc/<capd pid>/root control can read it outside" "proc_root: control=${AGENT_OUT[proc_root]-<missing>} (want yes), inside=${AGENT_IN[proc_root]-<missing>}"
-  fi
+  # The /proc/<pid> route to same-user daemons is closed by the implicit user
+  # namespace (cross-userns ptrace check); the control proves each op can work.
+  for who in capd notifyd; do
+    agent_expect "proc_root_$who" no yes "ls /proc/<$who pid>/root/ is denied inside"
+    agent_expect "proc_cwd_$who" no yes "ls /proc/<$who pid>/cwd/ is denied inside"
+    agent_expect "proc_root_link_$who" no yes "readlink /proc/<$who pid>/root is denied inside"
+    agent_expect "proc_fd_link_$who" no yes "readlink /proc/<$who pid>/fd/0 is denied inside"
+  done
 
   # 6. Back to the shipped unit, unmodified.
   gexec "pkill -u \$(id -u) -f 'vm-late.sock|sleep 300'; rm -f \$XDG_RUNTIME_DIR/vm-late.sock; rm -rf \$XDG_RUNTIME_DIR/systemd/user/tetsu-agent.service.d; ucg=/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service); rmdir \$ucg/vm-probe-sibling; for d in ~/.config/credstore ~/.config/credstore.encrypted ~/.local/lib/credstore ~/.local/lib/credstore.encrypted ~/.local/share/tetsu ~/.local/share/keyrings ~/.config/tetsu ~/.local/state/tetsu; do rm -f \$d/vm-marker; done; rm -rf $pd; systemctl --user daemon-reload; systemctl --user reset-failed tetsu-agent.service; systemctl --user start tetsu-agent.service; echo restored"
@@ -197,4 +190,6 @@ agent_sandbox_checks() {
   # is the real placement of the unmodified unit.
   check "the unit's journal line is in tetsu-agent.slice" '^_SYSTEMD_CGROUP=.*/tetsu-agent\.slice/' \
     "$(guest_poll 30 'journalctl --user _SYSTEMD_USER_UNIT=tetsu-agent.service SYSLOG_IDENTIFIER=tetsu-agent -o cat --no-pager | grep -q "only the rules act"'); journalctl --user _SYSTEMD_USER_UNIT=tetsu-agent.service SYSLOG_IDENTIFIER=tetsu-agent -o verbose --no-pager | grep '^ *_SYSTEMD_CGROUP=' | sed 's/^ *//' | tail -n 1"
+  check "the unmodified run printed its line" 'only the rules act[[:space:]]*$' \
+    "journalctl --user _SYSTEMD_USER_UNIT=tetsu-agent.service SYSLOG_IDENTIFIER=tetsu-agent -o cat --no-pager | grep 'only the rules act' | tail -n 1"
 }

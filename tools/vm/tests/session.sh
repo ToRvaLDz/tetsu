@@ -142,7 +142,6 @@ main() {
   preflight
   trap 'stop_vm' EXIT
   scenario_session
-  agent_known_open_summary
   summary
 }
 

@@ -10,7 +10,7 @@
 # ENV-FILE sets SIB (a cgroup outside the agent slice, in the user's delegated
 # subtree), GO (the file that releases the `in` probe once the late socket
 # exists), CLONE3 (a binary that returns the errno of clone3(NULL, 0)) and
-# CAPD_PID.
+# CAPD_PID and NOTIFYD_PID.
 set -u
 
 mode=$1
@@ -73,7 +73,21 @@ say systemd_run_user "$(try 'systemd-run --user --wait --collect -q true')"
 say dns "$(try 'resolvectl query --legend=no localhost')"
 say tpm "$(try 'test -c /dev/tpmrm0')"
 say dbus_env "$([ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && echo unset || echo set)"
-say abstract_bus "$(awk '$NF ~ /^@/ && $NF ~ /bus/ { f = 1 } END { print f ? "yes" : "no" }' /proc/net/unix)"
+# Abstract sockets belong to the network namespace and are not filtered by the
+# mount allowlist, so a *listening* abstract bus would be reachable. The
+# @<hex>/bus/<comm>/<role> names in /proc/net/unix are connected sd-bus client
+# ends (no listening flag), not servers, so a name alone proves nothing: try a
+# connect to each listening abstract name (flags 00010000). None exists on the
+# image; the probe would catch one.
+abstract_bus=no
+while read -r name; do
+  [ -n "$name" ] || continue
+  if [ "$(try 'busctl --address="unix:abstract=$1" --no-pager status' "${name#@}")" = yes ] \
+    || [ "$(try 'varlinkctl info "unix:@$1"' "${name#@}")" = yes ]; then
+    abstract_bus=yes
+  fi
+done < <(awk '$4 == "00010000" && $NF ~ /^@/ { print $NF }' /proc/net/unix)
+say abstract_bus "$abstract_bus"
 
 # The cgroup tree: the probe and a forked child sit in the agent slice, and
 # neither the clone3 route nor a write to the sibling cgroup is left.
@@ -90,9 +104,16 @@ say m_umount "$(try 'umount /sys/fs/cgroup')"
 say m_unshare "$(try 'unshare -Urm true')"
 say m_unshare_mount "$(try 'unshare -Urm mount -t tmpfs tmpfs /mnt')"
 
-# Known open item (#144): the shared PID namespace leaves /proc/<pid>/root of
-# a same-user process reachable. Reported, never counted as a pass.
-say proc_root "$(try 'ls "/proc/$1/root/" >/dev/null' "$CAPD_PID")"
+# The shared PID namespace: the /proc/<pid> route to a same-user process
+# (capd, notifyd). The user manager puts the sandboxed unit in an implicit user
+# namespace, so the cross-userns ptrace check denies these; outside it allows.
+for who in capd notifyd; do
+  case $who in capd) pid=$CAPD_PID ;; *) pid=$NOTIFYD_PID ;; esac
+  say "proc_root_$who" "$(try 'ls "/proc/$1/root/" >/dev/null' "$pid")"
+  say "proc_cwd_$who" "$(try 'ls "/proc/$1/cwd/" >/dev/null' "$pid")"
+  say "proc_root_link_$who" "$(try 'readlink "/proc/$1/root" >/dev/null' "$pid")"
+  say "proc_fd_link_$who" "$(try 'readlink "/proc/$1/fd/0" >/dev/null' "$pid")"
+done
 
 # A socket made in the runtime dir after the unit started must not show up.
 if [ "$mode" = in ]; then

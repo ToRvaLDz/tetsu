@@ -139,7 +139,7 @@ one RestrictAddressFamilies 'AF_UNIX AF_INET AF_INET6 AF_NETLINK'
 one UnsetEnvironment DBUS_SESSION_BUS_ADDRESS
 ! grep -qE '^(MemoryDenyWriteExecute|PrivatePIDs)=' "$svc" 2>/dev/null
 expect "agent: no MemoryDenyWriteExecute= (JIT) and no PrivatePIDs= (option c, #144)" $?
-grep -q '#144' "$svc" 2>/dev/null; expect "agent: the unit comment records the /proc gap (#144)" $?
+grep -q '#144' "$svc" 2>/dev/null; expect "agent: the unit comment points to the #144 follow-up" $?
 ! grep -qE '^(Environment|PassEnvironment)=.*DBUS' "$svc" 2>/dev/null
 expect "agent: no session bus address is given" $?
 
