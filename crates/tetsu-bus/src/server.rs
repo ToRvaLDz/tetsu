@@ -59,7 +59,7 @@ impl Drop for Listener {
 }
 
 /// A method call as the handler sees it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Request {
     /// Fully qualified method name.
     pub method: String,
@@ -69,6 +69,18 @@ pub struct Request {
     pub oneway: bool,
     /// The caller accepts a stream of replies.
     pub more: bool,
+}
+
+/// The parameters may hold a secret value: `Debug` leaves them out.
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("parameters", &format_args!("<redacted>"))
+            .field("oneway", &self.oneway)
+            .field("more", &self.more)
+            .finish()
+    }
 }
 
 /// A Varlink error reply.
