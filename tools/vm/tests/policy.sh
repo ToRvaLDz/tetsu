@@ -31,8 +31,10 @@ bus_policy_checks() {
   gexec "pkaction | grep '^org\\.tetsu\\.' | sort | tr -d '\\r'"
   got=$GOUT
   assert_eq "$SCENARIO: pkaction lists one action per capability class" "$want" "$got"
-  check "polkit rules.d is 0750 root:polkitd" '^750 root:polkitd$' \
+  check "polkit vendor rules.d is 0755 root:root, as the package ships it" '^755 root:root$' \
     "sudo -n stat -c '%a %U:%G' /usr/share/polkit-1/rules.d"
+  check "polkit admin rules.d is 0750 root:polkitd" '^750 root:polkitd$' \
+    "sudo -n stat -c '%a %U:%G' /etc/polkit-1/rules.d"
   check_not "polkitd loaded the rules without error" 'Error (compiling|evaluating|loading)|SyntaxError|Error on line' \
     "sudo -n journalctl -b -u polkit --no-pager"
   # A wheel user gets YES when local and active, a challenge (2) otherwise.
