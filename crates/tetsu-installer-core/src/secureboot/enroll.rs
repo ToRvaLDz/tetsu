@@ -2,18 +2,98 @@
 //! appended before the PK, and the PK write is the one that ends Setup Mode.
 //! When a write fails before it, the variables already written are put back.
 
+use std::fs;
 use std::path::Path;
 
 use tetsu_tx::boot::tool::Runner;
 
-use crate::error::InstallError;
+use crate::efi;
+use crate::error::{InstallError, Rollback};
 
-use super::Enrollment;
+use super::{Enrollment, Step, Var, cmd, efi_time, enrollment_steps, run_steps};
+
+/// The two variables a rollback puts back, in dependency order: the db is
+/// signed by the KEK, so it goes first.
+const RESTORABLE: [Var; 2] = [Var::Db, Var::Kek];
 
 /// Enroll the keys, rolling db and KEK back when a write fails before the PK
 /// is in. Best effort: the error says exactly what is left.
-pub fn enroll(_runner: &dyn Runner, _e: &Enrollment, _efi_root: &Path) -> Result<(), InstallError> {
-    todo!("enroll")
+pub fn enroll(runner: &dyn Runner, e: &Enrollment, efi_root: &Path) -> Result<(), InstallError> {
+    let steps = enrollment_steps(e)?;
+    // A restore is not an append, so the firmware takes it only when it is
+    // stamped later than the write it replaces.
+    let restore_time = e.timestamp.checked_add(1).ok_or_else(|| {
+        InstallError::Failed("the enrollment timestamp is out of range".to_owned())
+    })?;
+    for var in RESTORABLE {
+        let data = efi::signature_db(efi_root, var.name()).unwrap_or_default();
+        let path = e.work_dir.join(format!("{}.orig.esl", var.name()));
+        fs::write(&path, data).map_err(|err| InstallError::io(path, err))?;
+    }
+    run_steps(runner, &steps.prepare)?;
+
+    let mut written = Vec::new();
+    for (var, step) in &steps.writes {
+        if let Err(source) = run_steps(runner, std::slice::from_ref(step)) {
+            let outcome = if *var == Var::Pk && efi::platform_key_present(efi_root) {
+                Rollback::PkPresent
+            } else {
+                roll_back(runner, e, restore_time, &written)
+            };
+            return Err(InstallError::EnrollmentFailed {
+                var: var.name(),
+                source: Box::new(source),
+                outcome,
+            });
+        }
+        written.push(*var);
+    }
+    Ok(())
+}
+
+/// Put the variables in `written` back, db first. Every restore is tried
+/// whatever happened to the one before.
+fn roll_back(runner: &dyn Runner, e: &Enrollment, time: u64, written: &[Var]) -> Rollback {
+    if written.is_empty() {
+        return Rollback::NothingWritten;
+    }
+    let (mut restored, mut left) = (Vec::new(), Vec::new());
+    for var in written {
+        match run_steps(runner, &restore_steps(e, time, *var)) {
+            Ok(()) => restored.push(var.name()),
+            Err(_) => left.push(var.name()),
+        }
+    }
+    if left.is_empty() {
+        Rollback::Restored(restored)
+    } else {
+        Rollback::Left { restored, left }
+    }
+}
+
+/// Sign the saved list for `var` and write it as a full replacement; from an
+/// empty list that is the authenticated empty write that deletes the variable.
+fn restore_steps(e: &Enrollment, time: u64, var: Var) -> [Step; 2] {
+    let name = var.name();
+    let signer = var.signer();
+    let work = |suffix: &str| e.work_dir.join(format!("{name}.{suffix}"));
+    [
+        cmd(
+            "sign-efi-sig-list",
+            &[
+                &"-t",
+                &efi_time(time),
+                &"-k",
+                &e.keys_dir.join(format!("{signer}.key")),
+                &"-c",
+                &e.keys_dir.join(format!("{signer}.crt")),
+                &name,
+                &work("orig.esl"),
+                &work("restore.auth"),
+            ],
+        ),
+        cmd("efi-updatevar", &[&"-f", &work("restore.auth"), &name]),
+    ]
 }
 
 #[cfg(test)]

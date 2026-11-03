@@ -319,9 +319,12 @@ pub fn enrollment_steps(e: &Enrollment) -> Result<EnrollmentSteps, InstallError>
 
     // PK signs itself and the KEK list, the KEK signs the db list. db and
     // KEK are appended, so they are signed for APPEND_WRITE.
+    let ts = efi_time(e.timestamp);
     steps.push(cmd(
         "sign-efi-sig-list",
         &[
+            &"-t",
+            &ts,
             &"-k",
             &key("PK"),
             &"-c",
@@ -335,6 +338,8 @@ pub fn enrollment_steps(e: &Enrollment) -> Result<EnrollmentSteps, InstallError>
         "sign-efi-sig-list",
         &[
             &"-a",
+            &"-t",
+            &ts,
             &"-k",
             &key("PK"),
             &"-c",
@@ -348,6 +353,8 @@ pub fn enrollment_steps(e: &Enrollment) -> Result<EnrollmentSteps, InstallError>
         "sign-efi-sig-list",
         &[
             &"-a",
+            &"-t",
+            &ts,
             &"-k",
             &key("KEK"),
             &"-c",
