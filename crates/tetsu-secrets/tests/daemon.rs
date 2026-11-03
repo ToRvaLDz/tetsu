@@ -92,7 +92,7 @@ impl Scratch {
     /// The pid is known only in the child, so a shell sets it and `exec`s
     /// (the pid stays); the listener reaches the shell as stdin.
     fn start_activated(&self, listener: UnixListener) -> Child {
-        let script = concat!("LISTEN_PID=$$ LISTEN_FDS=1 exec \"$0\" serve 3<&0 </dev/null");
+        let script = "LISTEN_PID=$$ LISTEN_FDS=1 exec \"$0\" serve 3<&0 </dev/null";
         Command::new("sh")
             .arg("-c")
             .arg(script)
