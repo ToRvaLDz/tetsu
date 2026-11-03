@@ -110,7 +110,7 @@ fn parse_add(rest: &[String]) -> Result<Command, String> {
                     allow.push(ToolId::parse(tool).map_err(|e| e.to_string())?);
                 }
             }
-            _ if name.starts_with('-') => return Err(format!("unknown option {name}")),
+            _ if name.starts_with('-') => return Err("unknown option".to_owned()),
             _ if id.is_none() => id = Some(SecretId::parse(arg).map_err(|e| e.to_string())?),
             _ => return Err("unexpected argument".to_owned()),
         }
@@ -134,7 +134,7 @@ fn parse_log(rest: &[String]) -> Result<Command, String> {
                 let count = option_value(name, inline, &mut iter)?;
                 lines = Some(count.parse().map_err(|_| "-n needs a number".to_owned())?);
             }
-            _ if name.starts_with('-') => return Err(format!("unknown option {name}")),
+            _ if name.starts_with('-') => return Err("unknown option".to_owned()),
             _ => return Err("unexpected argument".to_owned()),
         }
     }
