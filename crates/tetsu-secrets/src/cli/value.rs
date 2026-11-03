@@ -80,7 +80,8 @@ const DELETE: u8 = 0x7f;
 /// editing by the driver): Enter ends it, Backspace and Ctrl-U edit it,
 /// Ctrl-D ends it too, and Ctrl-C or Ctrl-\\ give `Interrupted`.
 fn read_secret_line(mut tty: impl Read) -> io::Result<Zeroizing<String>> {
-    let mut line = Zeroizing::new(Vec::new());
+    // Room up front: a reallocation would leave an unwiped copy behind.
+    let mut line = Zeroizing::new(Vec::with_capacity(4096));
     let mut byte = [0u8; 1];
     loop {
         match tty.read(&mut byte) {
@@ -101,6 +102,10 @@ fn read_secret_line(mut tty: impl Read) -> io::Result<Zeroizing<String>> {
                     }
                 }
             }
+            // Without ICANON the driver no longer eats Ctrl-W, Ctrl-R
+            // and the like: a stray control byte must not end up in the
+            // value unseen.
+            control if control < 0x20 => {}
             other => line.push(other),
         }
     }
