@@ -157,7 +157,8 @@ boots. systemd-boot with the UKI mkosi builds; kernel command line
   the firmware is still in Setup Mode); the error names what was restored and,
   when a restore failed too, what is left, and tells you to reset the Secure
   Boot keys in the firmware setup. A PK write that reports a failure but leaves
-  the PK in the firmware is not rolled back: the keys are enrolled. The owner
+  the PK in the firmware is not rolled back and does not fail the enrollment:
+  the keys are enrolled and a note says so. The owner
   GUID of Tetsu's entries is derived from the PK certificate (the first 16 bytes
   of its SHA-256 fingerprint, as a version 8 GUID), so enrolling again appends
   the same entries and the firmware keeps one copy.

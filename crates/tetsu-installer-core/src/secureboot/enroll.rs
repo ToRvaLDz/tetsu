@@ -27,7 +27,8 @@ pub enum Enrolled {
 }
 
 /// Enroll the keys, rolling db and KEK back when a write fails before the PK
-/// is in. Best effort: the error says exactly what is left.
+/// is in. A PK write that fails but leaves the PK in the firmware is a
+/// success with a note. Best effort: the error says exactly what is left.
 pub fn enroll(
     runner: &dyn Runner,
     e: &Enrollment,
@@ -49,15 +50,18 @@ pub fn enroll(
     let mut written = Vec::new();
     for (var, step) in &steps.writes {
         if let Err(source) = run_steps(runner, std::slice::from_ref(step)) {
-            let outcome = if *var == Var::Pk && efi::platform_key_present(efi_root) {
-                Rollback::PkPresent
-            } else {
-                roll_back(runner, e, restore_time, &written)
-            };
+            if *var == Var::Pk && efi::platform_key_present(efi_root) {
+                // Setup Mode is over: the keys are in, whatever the tool said.
+                return Ok(Enrolled::PkReportedFailure(format!(
+                    "the PK write reported a failure ({source}) but the PK is in the firmware: \
+                     the keys are enrolled (db and KEK are left as enrolled) and Secure Boot \
+                     can be turned on"
+                )));
+            }
             return Err(InstallError::EnrollmentFailed {
                 var: var.name(),
                 source: Box::new(source),
-                outcome,
+                outcome: roll_back(runner, e, restore_time, &written),
             });
         }
         written.push(*var);

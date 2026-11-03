@@ -83,9 +83,6 @@ pub enum Rollback {
         restored: Vec<&'static str>,
         left: Vec<&'static str>,
     },
-    /// The PK write reported a failure but the PK is in the firmware: the
-    /// enrollment is complete and nothing was rolled back.
-    PkPresent,
 }
 
 /// `db`, `db and KEK`, `db, KEK and PK`.
@@ -124,10 +121,6 @@ fn enrollment_message(var: &str, source: &InstallError, outcome: &Rollback) -> S
                 names(left)
             )
         }
-        Rollback::PkPresent => format!(
-            "the PK write reported a failure ({source}) but the PK is in the firmware: the keys \
-             are enrolled (db and KEK are left as enrolled) and Secure Boot can be turned on"
-        ),
     }
 }
 

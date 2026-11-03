@@ -11,7 +11,7 @@ use tetsu_installer_core::install::rundir::RunDir;
 use tetsu_installer_core::preflight::{SecureBoot, is_uefi, secure_boot_state};
 use tetsu_installer_core::secureboot::trust::{Trust, trust_steps};
 use tetsu_installer_core::secureboot::{
-    Enrollment, MicrosoftCerts, Step, enroll as enroll_steps, guid, now_unix, owner_guid,
+    Enrolled, Enrollment, MicrosoftCerts, Step, enroll as enroll_steps, guid, now_unix, owner_guid,
     require_microsoft, run_steps,
 };
 use tetsu_installer_core::unlock::UnlockLevel;
@@ -144,8 +144,12 @@ pub fn enroll(ctx: &Context<'_>, without_microsoft: bool) -> Result<String, Stri
         &ctx.paths.root,
     );
     let _ = fs::remove_dir_all(run.path());
-    result.map_err(|e| e.to_string())?;
-    Ok(mark_enrolled(&ctx.paths.level_file))
+    let enrolled = result.map_err(|e| e.to_string())?;
+    let done = mark_enrolled(&ctx.paths.level_file);
+    Ok(match enrolled {
+        Enrolled::Clean => done,
+        Enrolled::PkReportedFailure(note) => format!("Note: {note}.\n{done}"),
+    })
 }
 
 /// Set `secure_boot = "enrolled"` for the levels that seal at the next

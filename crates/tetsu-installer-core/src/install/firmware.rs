@@ -7,7 +7,7 @@ use std::fs;
 use crate::error::InstallError;
 use crate::secureboot::trust::{Trust, trust_steps};
 use crate::secureboot::{
-    Enrollment, enroll, guid, now_unix, owner_guid, require_microsoft, run_steps,
+    Enrolled, Enrollment, enroll, guid, now_unix, owner_guid, require_microsoft, run_steps,
 };
 
 use super::exec::Executor;
@@ -227,10 +227,14 @@ impl Executor<'_> {
                 without_microsoft: self.target.without_microsoft,
                 timestamp: now_unix()?,
             };
-            enroll(self.deps.runner, &enrollment, &self.target.efi_root).map(drop)
+            enroll(self.deps.runner, &enrollment, &self.target.efi_root)
         })();
         let _ = fs::remove_dir_all(&work_dir);
-        result
+        // The keys are in either way; a PK write that lied only warns.
+        if let Enrolled::PkReportedFailure(note) = result? {
+            self.warn(&note);
+        }
+        Ok(())
     }
 
     /// Add the imported certificate to the db, signed with the KEK just
