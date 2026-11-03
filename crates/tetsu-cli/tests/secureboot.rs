@@ -22,6 +22,8 @@ const DER: [u8; 6] = [0x30, 0x82, 0x01, 0x01, 0x02, 0x03];
 struct Recorder {
     lines: RefCell<Vec<String>>,
     fail_on: Option<&'static str>,
+    /// A call whose line contains one of these fails.
+    fail_containing: Vec<&'static str>,
 }
 
 impl Runner for Recorder {
@@ -33,7 +35,8 @@ impl Runner for Recorder {
         self.lines
             .borrow_mut()
             .push(format!("{program} {}", args.join(" ")));
-        if self.fail_on == Some(program) {
+        let line = format!("{program} {}", args.join(" "));
+        if self.fail_on == Some(program) || self.fail_containing.iter().any(|p| line.contains(p)) {
             return Err(BootError::ToolMissing {
                 tool: program.to_owned(),
             });
@@ -46,7 +49,15 @@ impl Runner for Recorder {
     }
 
     fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
-        self.run(program, args).map(|()| String::new())
+        self.run(program, args)?;
+        // The PK fingerprint the owner GUID is derived from.
+        if program == "openssl" && args.iter().any(|a| a == "-fingerprint") {
+            let hex: Vec<String> = (0u8..32)
+                .map(|i| format!("{:02X}", if i < 16 { i * 0x11 } else { i }))
+                .collect();
+            return Ok(format!("sha256 Fingerprint={}\n", hex.join(":")));
+        }
+        Ok(String::new())
     }
 }
 
@@ -136,7 +147,10 @@ fn ctx<'a>(m: &Machine, runner: &'a Recorder, is_root: bool) -> Context<'a> {
     }
 }
 
+/// The random GUID `trust` uses (the entropy is fixed to 0x11 bytes).
 const GUID: &str = "11111111-1111-4111-9111-111111111111";
+/// The GUID `enroll` derives from the fake PK fingerprint.
+const OWNER: &str = "00112233-4455-8677-8899-aabbccddeeff";
 
 #[test]
 fn enroll_runs_the_installer_sequence_and_marks_the_level() {
@@ -151,7 +165,14 @@ fn enroll_runs_the_installer_sequence_and_marks_the_level() {
     assert_eq!(
         lines[0],
         format!(
-            "cert-to-efi-sig-list -g {GUID} {} {}/PK.own.esl",
+            "openssl x509 -in {} -noout -fingerprint -sha256",
+            m.path("keys/PK.crt").display()
+        )
+    );
+    assert_eq!(
+        lines[1],
+        format!(
+            "cert-to-efi-sig-list -g {OWNER} {} {}/PK.own.esl",
             m.path("keys/PK.crt").display(),
             work.display()
         )
@@ -168,6 +189,42 @@ fn enroll_runs_the_installer_sequence_and_marks_the_level() {
         "level = \"balanced\"\nstate = \"pending\"\nsecure_boot = \"enrolled\"\n"
     );
     assert!(!work.exists(), "the scratch directory is removed");
+}
+
+#[test]
+fn a_failed_pk_write_is_rolled_back_and_the_message_says_so() {
+    let m = Machine::new();
+    m.mode(true, false);
+    m.level("level = \"comfort\"\nstate = \"pending\"\n");
+    let r = Recorder {
+        fail_containing: vec!["PK.auth PK"],
+        ..Recorder::default()
+    };
+    let err = enroll(&ctx(&m, &r, true), false).unwrap_err();
+    assert!(err.contains("the PK write failed"), "{err}");
+    assert!(err.contains("db and KEK were restored"), "{err}");
+    let lines = r.lines.borrow();
+    let restores: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("efi-updatevar") && l.contains("restore.auth"))
+        .collect();
+    assert_eq!(restores.len(), 2);
+    assert!(!m.level_text().contains("enrolled"));
+    assert!(!m.path("work").exists());
+}
+
+#[test]
+fn a_failed_restore_tells_the_user_to_reset_the_keys() {
+    let m = Machine::new();
+    m.mode(true, false);
+    // The restore of the db fails as well.
+    let r = Recorder {
+        fail_containing: vec!["PK.auth PK", "db.restore.auth db"],
+        ..Recorder::default()
+    };
+    let err = enroll(&ctx(&m, &r, true), false).unwrap_err();
+    assert!(err.contains("Tetsu's entries are left in"), "{err}");
+    assert!(err.contains("reset the Secure Boot keys"), "{err}");
 }
 
 #[test]
