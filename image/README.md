@@ -115,8 +115,9 @@ set is defined in one place; `image/tests/tetsu-base.sh` pins that shape.
   - polkit: `org.tetsu.policy` is generated from the `@capability` classes of
     the IDL (`cargo xtask polkit-policy`), one `auth_admin` action per class,
     `_` written `-`. `50-tetsu.rules` lets `wheel` users through: `YES` when
-    local and active, `AUTH_ADMIN_KEEP` otherwise. The postinst keeps
-    `rules.d` at 0750 `root:polkitd`.
+    local and active, `AUTH_ADMIN_KEEP` otherwise. It sits in the vendor
+    `/usr/share/polkit-1/rules.d` (0755 `root:root`, as polkit ships it);
+    `/etc/polkit-1/rules.d` stays the admin's.
 
 ## Installer medium
 

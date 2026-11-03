@@ -7,11 +7,6 @@ root=$BUILDROOT
 # sudoers drop-ins must be 0440; git cannot carry that mode.
 chmod 0440 "$root/etc/sudoers.d/10-wheel"
 
-# polkitd reads its rules as the polkitd user: the package ships rules.d
-# 0750 root:polkitd, and the extra tree resets the directory mode.
-chmod 0750 "$root/usr/share/polkit-1/rules.d"
-mkosi-chroot chgrp polkitd /usr/share/polkit-1/rules.d
-
 # Locales named by the installer's keyboard table (etc/locale.gen is staged
 # by image/build from crates/tetsu-installer-core/src/keyboard.rs).
 if [ -s "$root/etc/locale.gen" ]; then
