@@ -102,7 +102,7 @@ async fn serve(path: &std::path::Path, replace: bool) -> Result<(), String> {
     // The socket exists before the bus name, which is what readiness means
     // for `Type=dbus`.
     let listener =
-        server::listen(path).map_err(|e| format!("cannot listen on {}: {e}", path.display()))?;
+        server::bind(path).map_err(|e| format!("cannot bind {}: {e}", path.display()))?;
     let _bus = fdo::serve(
         zbus::connection::Builder::session(),
         commands.clone(),
