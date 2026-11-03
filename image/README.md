@@ -244,8 +244,8 @@ The sandbox, in `crates/tetsu-agent/dist/tetsu-agent.service`:
   process is closed: the user manager runs the sandboxed unit in an implicit
   user namespace, and the cross-userns ptrace check denies it (empty bounding
   set). The VM test proves it against capd and notifyd, and would fail if the
-  unit stopped running in a user namespace. #144 (the
-  `PrivatePIDs`/tetsu-bus follow-up) is under review.
+  unit stopped running in a user namespace. #144 adds `PrivatePIDs=` with a
+  PID-namespace-proof tetsu-bus check as defence in depth.
 - Residual: abstract unix sockets are per network namespace and not filtered
   by the mount allowlist, so a *listening* abstract bus would be reachable.
   None exists on the image; the VM probe tries a D-Bus and a Varlink connect

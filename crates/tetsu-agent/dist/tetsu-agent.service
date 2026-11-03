@@ -48,8 +48,8 @@
 #    manager puts the sandboxed unit in: the cross-userns ptrace check denies
 #    it, with an empty bounding set and no CAP_SYS_PTRACE. The VM check proves
 #    it, and a change that stopped the unit running in a user namespace would
-#    reopen it (that check would then fail). #144 (PrivatePIDs/tetsu-bus
-#    follow-up) is under review.
+#    reopen it (that check would then fail). #144 adds PrivatePIDs= with a
+#    PID-namespace-proof tetsu-bus check as defence in depth.
 #  - Abstract sockets belong to the network namespace, not the mount
 #    allowlist, so RestrictAddressFamilies=AF_UNIX below would still reach a
 #    *listening* abstract bus. None exists on the image; the VM probe tries a
