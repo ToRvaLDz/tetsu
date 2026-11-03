@@ -39,7 +39,7 @@ const LISTEN_FDS_START: RawFd = 3;
 
 /// A bound server socket. Dropping it removes the socket file, only if it
 /// is still the one this listener bound. A socket taken from systemd
-/// (see [`activated`]) has no file of ours to remove.
+/// (see [`take_passed_socket`]) has no file of ours to remove.
 #[derive(Debug)]
 pub struct Listener {
     inner: zlink::tokio::unix::Listener,
@@ -279,13 +279,23 @@ fn passed_fds(listen_pid: Option<&str>, listen_fds: Option<&str>, own_pid: u32) 
     }
 }
 
-/// The listening socket systemd passed by socket activation, if any: fd 3
-/// when `LISTEN_PID` is this process and `LISTEN_FDS` is at least 1. The
-/// descriptor is made close-on-exec and `LISTEN_*` is unset, so a process
-/// started later does not take it for its own. Call it before any other
-/// thread starts. The path belongs to the socket unit: the file is neither
-/// created, replaced nor removed here.
-pub fn activated() -> io::Result<Option<Listener>> {
+/// The listening socket systemd passed by socket activation, taken out of
+/// the process but not yet registered with a runtime: see
+/// [`take_passed_socket`] and [`PassedSocket::into_listener`].
+#[derive(Debug)]
+pub struct PassedSocket(OwnedFd);
+
+/// Takes the listening socket systemd passed by socket activation, if any:
+/// fd 3 when `LISTEN_PID` is this process and `LISTEN_FDS` is at least 1.
+/// The descriptor is made close-on-exec and `LISTEN_*` is unset, so a
+/// process started later does not take it for its own.
+///
+/// This edits the process environment, so call it first thing in `main`,
+/// before a runtime or any other thread exists. Turn the result into a
+/// listener later, inside the runtime, with [`PassedSocket::into_listener`].
+/// The path belongs to the socket unit: the file is neither created,
+/// replaced nor removed here.
+pub fn take_passed_socket() -> io::Result<Option<PassedSocket>> {
     let var = |name| env::var(name).ok();
     let count = passed_fds(
         var("LISTEN_PID").as_deref(),
@@ -293,7 +303,8 @@ pub fn activated() -> io::Result<Option<Listener>> {
         std::process::id(),
     );
     for name in ["LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"] {
-        // SAFETY: called at startup, before this process spawns a thread.
+        // SAFETY: documented to run before this process spawns a thread, so
+        // nothing reads the environment concurrently.
         #[expect(unsafe_code)]
         unsafe {
             env::remove_var(name);
@@ -307,8 +318,15 @@ pub fn activated() -> io::Result<Option<Listener>> {
     #[expect(unsafe_code)]
     let fd = unsafe { OwnedFd::from_raw_fd(LISTEN_FDS_START) };
     rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
-    let inner = zlink::tokio::unix::Listener::try_from(fd).map_err(into_io)?;
-    Ok(Some(Listener { inner, bound: None }))
+    Ok(Some(PassedSocket(fd)))
+}
+
+impl PassedSocket {
+    /// Serves on the passed socket. Needs a running tokio runtime context.
+    pub fn into_listener(self) -> io::Result<Listener> {
+        let inner = zlink::tokio::unix::Listener::try_from(self.0).map_err(into_io)?;
+        Ok(Listener { inner, bound: None })
+    }
 }
 
 /// Creates `dir` 0700, or checks that an existing one is ours and private.

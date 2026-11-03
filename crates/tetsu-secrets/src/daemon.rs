@@ -126,6 +126,10 @@ fn unlock_entry(outcome: Outcome, reason: Option<String>) -> AuditEntry {
 }
 
 fn run(env: &Env) -> Result<(), DaemonError> {
+    // First of all: this edits the environment, so no thread may exist yet
+    // (the runtime and the vault's blocking pool start threads).
+    let passed = server::take_passed_socket()
+        .map_err(|e| DaemonError::Other(format!("cannot take the socket from systemd: {e}")))?;
     // Same-uid processes, the agent among them, cannot read this memory.
     set_dumpable_behavior(DumpableBehavior::NotDumpable)
         .map_err(|e| DaemonError::Other(format!("cannot clear the dumpable flag: {e}")))?;
@@ -159,15 +163,12 @@ fn run(env: &Env) -> Result<(), DaemonError> {
 
     let _enter = runtime.enter();
     // Socket activation passes the socket; started by hand, bind the path.
-    let listener = match server::activated() {
-        Ok(Some(listener)) => listener,
-        Ok(None) => server::bind(&socket(&env.runtime_dir))
+    let listener = match passed {
+        Some(passed) => passed
+            .into_listener()
+            .map_err(|e| DaemonError::Other(format!("cannot take the socket from systemd: {e}")))?,
+        None => server::bind(&socket(&env.runtime_dir))
             .map_err(|e| DaemonError::Other(format!("cannot bind the socket: {e}")))?,
-        Err(e) => {
-            return Err(DaemonError::Other(format!(
-                "cannot take the socket from systemd: {e}"
-            )));
-        }
     };
     let mut term =
         signal(SignalKind::terminate()).map_err(|e| DaemonError::Other(e.to_string()))?;
