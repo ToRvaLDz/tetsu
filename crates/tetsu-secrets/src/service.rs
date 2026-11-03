@@ -95,7 +95,11 @@ fn parse_id(parameters: &Value) -> Result<SecretId, Invalid> {
     SecretId::parse(text).map_err(|e| model_error(&e))
 }
 
-/// The `value` parameter, moved out of the request so no copy stays in it.
+/// The `value` parameter, moved out of the request's own parameters so the
+/// request holds no copy of it after this. Not a scrub of the process: the
+/// transport read buffer and the copy made when the call is received are
+/// not zeroized. `PR_SET_DUMPABLE=0` (set at startup) is what keeps other
+/// same-uid processes from reading that memory.
 fn take_value(parameters: &mut Value) -> Result<Secret, Invalid> {
     let Some(Value::String(text)) = parameters.get_mut("value") else {
         return Err("value");
