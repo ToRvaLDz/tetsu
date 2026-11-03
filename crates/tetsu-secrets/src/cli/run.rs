@@ -11,7 +11,7 @@ use tetsu_bus::secrets::{
 };
 
 use super::parse::{Command, USAGE, log_argv, parse};
-use super::value::{Prompt, TtyPrompt, read_value};
+use super::value::{Prompt, TtyPrompt, ValueError, read_value};
 use crate::paths::socket;
 
 /// What a command reads and writes.
@@ -33,6 +33,16 @@ impl Io<'_> {
         let _ = writeln!(self.err, "tetsu secrets: {message}");
         1
     }
+
+    /// The exit code for a value that was not read: 130, as a shell reports
+    /// it, when the user interrupted the prompt.
+    fn value_failed(&mut self, error: &ValueError) -> u8 {
+        if matches!(error, ValueError::Interrupted) {
+            let _ = writeln!(self.err);
+            return 130;
+        }
+        self.fail(error)
+    }
 }
 
 /// Runs `command` against the broker at `socket`; the exit code is 0 for
@@ -47,7 +57,7 @@ pub async fn run(command: Command, socket: &Path, io: &mut Io<'_>) -> u8 {
         } => {
             let value = match read_value(io.stdin_is_tty, io.prompt, io.stdin) {
                 Ok(value) => value,
-                Err(e) => return io.fail(e),
+                Err(e) => return io.value_failed(&e),
             };
             let (wire_kind, header_name) = kind.to_wire();
             let params = AddParams {
@@ -74,7 +84,7 @@ pub async fn run(command: Command, socket: &Path, io: &mut Io<'_>) -> u8 {
         Command::Rotate { id } => {
             let value = match read_value(io.stdin_is_tty, io.prompt, io.stdin) {
                 Ok(value) => value,
-                Err(e) => return io.fail(e),
+                Err(e) => return io.value_failed(&e),
             };
             let params = RotateParams {
                 id: id.to_string(),

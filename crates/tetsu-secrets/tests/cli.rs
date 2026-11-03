@@ -335,3 +335,17 @@ fn an_unknown_option_is_not_echoed() {
         assert!(!err.contains("sk-live-4242"), "{err}");
     }
 }
+
+struct Interrupting;
+
+impl Prompt for Interrupting {
+    fn read_hidden(&mut self, _label: &str) -> io::Result<String> {
+        Err(io::ErrorKind::Interrupted.into())
+    }
+}
+
+#[test]
+fn an_interrupted_prompt_is_its_own_error() {
+    let e = read_value(true, &mut Interrupting, &mut Cursor::new(Vec::new())).unwrap_err();
+    assert!(matches!(e, ValueError::Interrupted), "{e}");
+}
