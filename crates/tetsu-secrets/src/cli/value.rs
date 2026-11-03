@@ -199,4 +199,21 @@ mod tests {
             assert_eq!(e.kind(), io::ErrorKind::Interrupted);
         }
     }
+
+    #[test]
+    fn other_control_bytes_never_reach_the_value() {
+        // Ctrl-W, Ctrl-R, Esc and Tab are dropped, not stored.
+        assert_eq!(line(b"a\x17b\x12c\x1b\td\n").unwrap(), "abcd");
+    }
+
+    #[test]
+    fn ctrl_d_ends_the_line() {
+        assert_eq!(line(b"abc\x04rest").unwrap(), "abc");
+    }
+
+    #[test]
+    fn invalid_utf8_is_refused() {
+        let e = line(b"a\xffb\n").unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+    }
 }
