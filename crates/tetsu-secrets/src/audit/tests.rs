@@ -179,3 +179,24 @@ fn a_dead_socket_is_an_error() {
     let sink = JournalSink::new(dir.path().join("nobody.sock"));
     assert!(sink.record(&entry(Action::Add)).is_err());
 }
+
+#[test]
+fn a_full_journal_buffer_is_an_error_not_a_stall() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.sock");
+    // Bound but never read: its queue fills up.
+    let _socket = UnixDatagram::bind(&path).unwrap();
+    let sink = JournalSink::new(&path);
+    let (done, outcome) = mpsc::channel();
+    std::thread::spawn(move || {
+        let failed = (0..100_000).any(|_| sink.record(&entry(Action::Add)).is_err());
+        let _ = done.send(failed);
+    });
+    let failed = outcome
+        .recv_timeout(Duration::from_secs(5))
+        .expect("record stalled on a full buffer");
+    assert!(failed, "the buffer never filled");
+}
