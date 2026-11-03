@@ -220,9 +220,13 @@ impl Executor<'_> {
             owner_guid: guid(bytes),
             microsoft: self.target.microsoft_certs.clone(),
             without_microsoft: self.target.without_microsoft,
+            timestamp: 0,
         };
-        let result =
-            enrollment_steps(&enrollment).and_then(|steps| run_steps(self.deps.runner, &steps));
+        let result = enrollment_steps(&enrollment).and_then(|steps| {
+            let writes = steps.writes.into_iter().map(|(_, s)| s);
+            let all: Vec<_> = steps.prepare.into_iter().chain(writes).collect();
+            run_steps(self.deps.runner, &all)
+        });
         let _ = fs::remove_dir_all(&work_dir);
         result
     }

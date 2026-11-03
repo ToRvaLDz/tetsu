@@ -125,14 +125,20 @@ pub fn enroll(ctx: &Context<'_>, without_microsoft: bool) -> Result<String, Stri
             owner_guid,
             microsoft: MicrosoftCerts::from_dir(&ctx.paths.microsoft_dir),
             without_microsoft,
+            timestamp: 0,
         };
-        enrollment_steps(&enrollment).map_err(|e| match e {
-            InstallError::NoMicrosoftCerts => format!(
-                "{e} ({}); pass --without-microsoft to enroll Tetsu's keys alone",
-                ctx.paths.microsoft_dir.display()
-            ),
-            other => other.to_string(),
-        })
+        enrollment_steps(&enrollment)
+            .map(|steps| {
+                let writes = steps.writes.into_iter().map(|(_, s)| s);
+                steps.prepare.into_iter().chain(writes).collect()
+            })
+            .map_err(|e| match e {
+                InstallError::NoMicrosoftCerts => format!(
+                    "{e} ({}); pass --without-microsoft to enroll Tetsu's keys alone",
+                    ctx.paths.microsoft_dir.display()
+                ),
+                other => other.to_string(),
+            })
     })?;
     Ok(mark_enrolled(&ctx.paths.level_file))
 }

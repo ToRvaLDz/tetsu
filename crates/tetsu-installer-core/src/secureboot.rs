@@ -15,8 +15,11 @@ use tetsu_tx::boot::tool::Runner;
 
 use crate::error::InstallError;
 
+pub mod enroll;
 pub mod foreign;
 pub mod trust;
+
+pub use enroll::enroll;
 
 /// Owner GUID efitools conventions use for Microsoft's certificates.
 pub const MICROSOFT_OWNER_GUID: &str = "77fa9abd-0359-4d32-bd60-28f4e78f784b";
@@ -166,6 +169,37 @@ pub struct Enrollment {
     /// Enroll Tetsu's keys alone, on purpose. Without it an empty
     /// `microsoft` is refused: the db would lack the Microsoft UEFI CA.
     pub without_microsoft: bool,
+    /// Unix seconds (UTC) the signed writes carry: the restores of a rollback
+    /// carry the second after, which the firmware needs to take them.
+    pub timestamp: u64,
+}
+
+/// A variable the enrollment writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Var {
+    Db,
+    Kek,
+    Pk,
+}
+
+impl Var {
+    /// The name `efi-updatevar` and `sign-efi-sig-list` take.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Db => "db",
+            Self::Kek => "KEK",
+            Self::Pk => "PK",
+        }
+    }
+
+    /// The key that signs a write of this variable: the KEK signs the db, the
+    /// PK the KEK and itself.
+    pub fn signer(self) -> &'static str {
+        match self {
+            Self::Db => "KEK",
+            Self::Kek | Self::Pk => "PK",
+        }
+    }
 }
 
 /// One external command.
@@ -229,12 +263,31 @@ fn microsoft_lists(
     lists
 }
 
-/// The full argv sequence of an enrollment. Refuses to enroll without the
-/// Microsoft certificates unless `without_microsoft` says so.
-pub fn enrollment_steps(e: &Enrollment) -> Result<Vec<Step>, InstallError> {
-    if e.microsoft.is_empty() && !e.without_microsoft {
+/// An enrollment as steps: the preparation (lists, concatenation, signing)
+/// and the three writes, which the caller runs one by one to roll back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnrollmentSteps {
+    pub prepare: Vec<Step>,
+    /// db, KEK, then PK last.
+    pub writes: Vec<(Var, Step)>,
+}
+
+/// Refuse to enroll without the Microsoft certificates unless
+/// `without_microsoft` says so.
+pub fn require_microsoft(
+    microsoft: &MicrosoftCerts,
+    without_microsoft: bool,
+) -> Result<(), InstallError> {
+    if microsoft.is_empty() && !without_microsoft {
         return Err(InstallError::NoMicrosoftCerts);
     }
+    Ok(())
+}
+
+/// The full argv sequence of an enrollment. Refuses to enroll without the
+/// Microsoft certificates unless `without_microsoft` says so.
+pub fn enrollment_steps(e: &Enrollment) -> Result<EnrollmentSteps, InstallError> {
+    require_microsoft(&e.microsoft, e.without_microsoft)?;
     let key = |n: &str| e.keys_dir.join(format!("{n}.key"));
     let crt = |n: &str| e.keys_dir.join(format!("{n}.crt"));
     let work = |n: &str| e.work_dir.join(n);
@@ -306,16 +359,24 @@ pub fn enrollment_steps(e: &Enrollment) -> Result<Vec<Step>, InstallError> {
     ));
 
     // db, KEK, then PK last.
-    steps.push(cmd(
-        "efi-updatevar",
-        &[&"-a", &"-f", &work("db.auth"), &"db"],
-    ));
-    steps.push(cmd(
-        "efi-updatevar",
-        &[&"-a", &"-f", &work("KEK.auth"), &"KEK"],
-    ));
-    steps.push(cmd("efi-updatevar", &[&"-f", &work("PK.auth"), &"PK"]));
-    Ok(steps)
+    let writes = vec![
+        (
+            Var::Db,
+            cmd("efi-updatevar", &[&"-a", &"-f", &work("db.auth"), &"db"]),
+        ),
+        (
+            Var::Kek,
+            cmd("efi-updatevar", &[&"-a", &"-f", &work("KEK.auth"), &"KEK"]),
+        ),
+        (
+            Var::Pk,
+            cmd("efi-updatevar", &[&"-f", &work("PK.auth"), &"PK"]),
+        ),
+    ];
+    Ok(EnrollmentSteps {
+        prepare: steps,
+        writes,
+    })
 }
 
 /// Run `steps` in order, stopping at the first failure.
@@ -346,7 +407,14 @@ mod tests {
             owner_guid: "11111111-2222-4333-8444-555555555555".into(),
             microsoft,
             without_microsoft: true,
+            timestamp: 1_793_734_685,
         }
+    }
+
+    /// The preparation and the writes, in the order they run.
+    fn flat(steps: EnrollmentSteps) -> Vec<Step> {
+        let writes = steps.writes.into_iter().map(|(_, s)| s);
+        steps.prepare.into_iter().chain(writes).collect()
     }
 
     fn some_microsoft() -> MicrosoftCerts {
@@ -465,7 +533,9 @@ mod tests {
 
     #[test]
     fn own_keys_only() {
-        let got = lines(&enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap());
+        let got = lines(&flat(
+            enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap(),
+        ));
         let guid = "11111111-2222-4333-8444-555555555555";
         assert_eq!(
             got,
@@ -475,16 +545,47 @@ mod tests {
                 format!("cert-to-efi-sig-list -g {guid} /k/db.crt /w/db.own.esl"),
                 "cat /w/KEK.own.esl > /w/KEK.esl".to_owned(),
                 "cat /w/db.own.esl > /w/db.esl".to_owned(),
-                "sign-efi-sig-list -k /k/PK.key -c /k/PK.crt PK /w/PK.own.esl /w/PK.auth"
+                "sign-efi-sig-list -t 2026-11-03 19:38:05 -k /k/PK.key -c /k/PK.crt PK /w/PK.own.esl /w/PK.auth"
                     .to_owned(),
-                "sign-efi-sig-list -a -k /k/PK.key -c /k/PK.crt KEK /w/KEK.esl /w/KEK.auth"
+                "sign-efi-sig-list -a -t 2026-11-03 19:38:05 -k /k/PK.key -c /k/PK.crt KEK /w/KEK.esl /w/KEK.auth"
                     .to_owned(),
-                "sign-efi-sig-list -a -k /k/KEK.key -c /k/KEK.crt db /w/db.esl /w/db.auth"
+                "sign-efi-sig-list -a -t 2026-11-03 19:38:05 -k /k/KEK.key -c /k/KEK.crt db /w/db.esl /w/db.auth"
                     .to_owned(),
                 "efi-updatevar -a -f /w/db.auth db".to_owned(),
                 "efi-updatevar -a -f /w/KEK.auth KEK".to_owned(),
                 "efi-updatevar -f /w/PK.auth PK".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn the_timestamp_is_one_argv_element_on_every_signature() {
+        let steps = enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap();
+        let signs: Vec<&Command> = steps
+            .prepare
+            .iter()
+            .filter_map(|s| match s {
+                Step::Run(c) if c.program == "sign-efi-sig-list" => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(signs.len(), 3);
+        for c in signs {
+            let at = c.args.iter().position(|a| a == "-t").unwrap();
+            assert_eq!(c.args[at + 1], "2026-11-03 19:38:05");
+        }
+    }
+
+    #[test]
+    fn the_writes_are_tagged_by_variable() {
+        let steps = enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap();
+        let vars: Vec<Var> = steps.writes.iter().map(|(v, _)| *v).collect();
+        assert_eq!(vars, [Var::Db, Var::Kek, Var::Pk]);
+        assert!(
+            steps
+                .prepare
+                .iter()
+                .all(|s| !lines(std::slice::from_ref(s))[0].starts_with("efi-updatevar"))
         );
     }
 
@@ -509,7 +610,7 @@ mod tests {
             kek: vec!["/ms/kek.der".into()],
             db: vec!["/ms/win.der".into(), "/ms/uefi.pem".into()],
         };
-        let got = lines(&enrollment_steps(&enrollment(ms)).unwrap());
+        let got = lines(&flat(enrollment_steps(&enrollment(ms)).unwrap()));
         let g = |s: &str| {
             got.iter()
                 .position(|l| l == s)
@@ -535,7 +636,9 @@ mod tests {
 
     #[test]
     fn the_pk_is_written_last_and_the_others_are_appended() {
-        let got = lines(&enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap());
+        let got = lines(&flat(
+            enrollment_steps(&enrollment(MicrosoftCerts::default())).unwrap(),
+        ));
         let writes: Vec<&String> = got
             .iter()
             .filter(|l| l.starts_with("efi-updatevar"))

@@ -56,9 +56,79 @@ pub enum InstallError {
          would stop Windows and firmware option ROMs from booting"
     )]
     NoMicrosoftCerts,
+    /// A Secure Boot enrollment failed at a write and was rolled back as far
+    /// as it could be; the message says what the firmware holds now.
+    #[error("{}", enrollment_message(.var, .source, .outcome))]
+    EnrollmentFailed {
+        /// The variable whose write failed: `db`, `KEK` or `PK`.
+        var: &'static str,
+        #[source]
+        source: Box<InstallError>,
+        outcome: Rollback,
+    },
     /// The QR code cannot be built for the payload.
     #[error("cannot build QR code: {0}")]
     Qr(String),
+}
+
+/// What a failed enrollment left in the firmware.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Rollback {
+    /// The first write failed: nothing changed.
+    NothingWritten,
+    /// Every variable written before the failure was put back.
+    Restored(Vec<&'static str>),
+    /// Some restores failed: Tetsu's entries are still in `left`.
+    Left {
+        restored: Vec<&'static str>,
+        left: Vec<&'static str>,
+    },
+    /// The PK write reported a failure but the PK is in the firmware: the
+    /// enrollment is complete and nothing was rolled back.
+    PkPresent,
+}
+
+/// `db`, `db and KEK`, `db, KEK and PK`.
+fn names(vars: &[&str]) -> String {
+    match vars {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
+fn were(vars: &[&str]) -> &'static str {
+    if vars.len() == 1 { "was" } else { "were" }
+}
+
+fn enrollment_message(var: &str, source: &InstallError, outcome: &Rollback) -> String {
+    let failed = format!("the {var} write failed ({source})");
+    match outcome {
+        Rollback::NothingWritten => {
+            format!("{failed}: nothing was written, db and KEK are unchanged")
+        }
+        Rollback::Restored(vars) => format!(
+            "{failed}: {} {} restored, the firmware is still in Setup Mode",
+            names(vars),
+            were(vars)
+        ),
+        Rollback::Left { restored, left } => {
+            let done = if restored.is_empty() {
+                String::new()
+            } else {
+                format!("{} {} restored; ", names(restored), were(restored))
+            };
+            format!(
+                "{failed}: {done}Tetsu's entries are left in {}: reset the Secure Boot keys in \
+                 the firmware setup (or clear them and run `tetsu secureboot enroll` again)",
+                names(left)
+            )
+        }
+        Rollback::PkPresent => format!(
+            "the PK write reported a failure ({source}) but the PK is in the firmware: the keys \
+             are enrolled (db and KEK are left as enrolled) and Secure Boot can be turned on"
+        ),
+    }
 }
 
 impl InstallError {
