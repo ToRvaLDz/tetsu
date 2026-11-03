@@ -79,7 +79,7 @@ fn roll_back(runner: &dyn Runner, e: &Enrollment, time: u64, written: &[Var]) ->
     for var in written {
         match run_steps(runner, &restore_steps(e, time, *var)) {
             Ok(()) => restored.push(var.name()),
-            Err(_) => left.push(var.name()),
+            Err(e) => left.push((var.name(), e.to_string())),
         }
     }
     if left.is_empty() {
@@ -334,24 +334,31 @@ mod tests {
         assert_eq!(fs::read(s.work("KEK.orig.esl")).unwrap(), b"OLD-KEK");
     }
 
+    /// The variables a failed restore left, and the restored ones.
+    fn left(err: InstallError) -> (Vec<&'static str>, Vec<(&'static str, String)>) {
+        match outcome(err) {
+            ("PK", Rollback::Left { restored, left }) => (restored, left),
+            other => panic!("not a partial rollback: {other:?}"),
+        }
+    }
+
     #[test]
     fn a_failing_restore_is_listed_and_the_next_one_is_still_tried() {
         let s = Setup::new();
         let fake = Fake::failing(&["PK.auth PK", "db.restore.auth db"]);
         let err = s.enroll(&fake).unwrap_err();
         let msg = err.to_string();
-        assert_eq!(
-            outcome(err),
-            (
-                "PK",
-                Rollback::Left {
-                    restored: vec!["KEK"],
-                    left: vec!["db"]
-                }
-            )
-        );
+        let (restored, left) = left(err);
+        assert_eq!(restored, ["KEK"]);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].0, "db");
+        // The reason is kept, so a rejected restore can be diagnosed.
+        assert!(left[0].1.contains("boom"), "{left:?}");
         assert!(msg.contains("KEK was restored"), "{msg}");
-        assert!(msg.contains("Tetsu's entries are left in db"), "{msg}");
+        assert!(
+            msg.contains("Tetsu's entries are left in db (") && msg.contains("boom"),
+            "{msg}"
+        );
         assert!(
             msg.contains("reset the Secure Boot keys in the firmware setup"),
             "{msg}"
@@ -371,17 +378,34 @@ mod tests {
         let fake = Fake::failing(&["PK.auth PK", "restore.auth"]);
         let err = s.enroll(&fake).unwrap_err();
         let msg = err.to_string();
+        let (restored, left) = left(err);
+        assert!(restored.is_empty());
         assert_eq!(
-            outcome(err),
-            (
-                "PK",
-                Rollback::Left {
-                    restored: vec![],
-                    left: vec!["db", "KEK"]
-                }
-            )
+            left.iter().map(|(v, _)| *v).collect::<Vec<_>>(),
+            ["db", "KEK"]
         );
-        assert!(msg.contains("left in db and KEK"), "{msg}");
+        assert!(msg.contains("left in db ("), "{msg}");
+        assert!(msg.contains("and KEK ("), "{msg}");
+    }
+
+    #[test]
+    fn a_variable_that_cannot_be_made_writable_fails_its_write() {
+        use std::os::unix::fs::PermissionsExt;
+        let s = Setup::new();
+        s.var("db", "d719b2cb-3d3a-4596-a3bc-dad00e67656f", b"OLD");
+        let path = s
+            .root()
+            .join("sys/firmware/efi/efivars/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0)).unwrap();
+        if fs::File::open(&path).is_ok() {
+            return; // root opens it anyway
+        }
+        let fake = Fake::default();
+        let err = s.enroll(&fake).unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(outcome(err), ("db", Rollback::NothingWritten));
+        assert!(msg.contains("db-"), "{msg}");
+        assert!(fake.lines().iter().all(|l| !l.starts_with("efi-updatevar")));
     }
 
     #[test]

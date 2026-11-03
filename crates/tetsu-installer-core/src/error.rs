@@ -81,7 +81,8 @@ pub enum Rollback {
     /// Some restores failed: Tetsu's entries are still in `left`.
     Left {
         restored: Vec<&'static str>,
-        left: Vec<&'static str>,
+        /// The variable and why its restore failed.
+        left: Vec<(&'static str, String)>,
     },
 }
 
@@ -118,7 +119,7 @@ fn enrollment_message(var: &str, source: &InstallError, outcome: &Rollback) -> S
             format!(
                 "{failed}: {done}Tetsu's entries are left in {}: reset the Secure Boot keys in \
                  the firmware setup (or clear them and run `tetsu secureboot enroll` again)",
-                names(left)
+                names(&left.iter().map(|(v, _)| *v).collect::<Vec<_>>())
             )
         }
     }
