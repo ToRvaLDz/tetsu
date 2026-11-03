@@ -238,9 +238,17 @@ The sandbox, in `crates/tetsu-agent/dist/tetsu-agent.service`:
   take `CLONE_INTO_CGROUP`). `ProtectControlGroups=yes` is set as #28 asks,
   but systemd 262 does not support it in per-user managers, so it is belt and
   braces; the VM proves the two above.
-- Known open item: there is no `PrivatePIDs=`, so `/proc/<pid>/root` of a
-  same-user process (capd, say) stays reachable from the agent until #144.
-  `tools/vm/tests/agent.sh` prints it as `KNOWN-OPEN` and does not count it.
+- There is no `PrivatePIDs=` (capd and notifyd verification needs the shared
+  PID namespace), but the `/proc/<pid>/root|cwd|fd` route of a same-user
+  process is closed: the user manager runs the sandboxed unit in an implicit
+  user namespace, and the cross-userns ptrace check denies it (empty bounding
+  set). The VM test proves it against capd and notifyd, and would fail if the
+  unit stopped running in a user namespace. #144 (the
+  `PrivatePIDs`/tetsu-bus follow-up) is under review.
+- Residual: abstract unix sockets are per network namespace and not filtered
+  by the mount allowlist, so a *listening* abstract bus would be reachable.
+  None exists on the image; the VM probe tries a connect to each listening
+  abstract name and would catch one.
 
 `image/tests/agent-sandbox.sh` pins the staged unit keys and tmpfiles without
 root. `tools/vm/tests/agent.sh` proves the behaviour in the session VM test:
