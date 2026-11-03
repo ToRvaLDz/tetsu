@@ -12,6 +12,8 @@ REPO=$(cd "$HERE/../../.." && pwd)
 . "$HERE/../lib/wait.sh"
 # shellcheck source=policy.sh
 . "$HERE/policy.sh"
+# shellcheck source=agent.sh
+. "$HERE/agent.sh"
 
 IMAGE=${TETSU_INSTALLER_IMAGE:-$REPO/target/image/tetsu-installer.raw}
 

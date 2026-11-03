@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Acceptance test of the Tetsu session: install in a VM, boot to greetd, log
 # in through greetd's own IPC, check the compositor and the three daemons
-# (units, order, sockets), then end the session.
+# (units, order, sockets), prove the agent unit's sandbox, then end the session.
 #
 #   tools/vm/tests/session.sh
 #
@@ -17,7 +17,7 @@ WORK_ROOT=${TETSU_SESSION_WORK:-$(cd "$HERE/../../.." && pwd)/target/vm-session}
 
 # On a failure, the journals are the evidence.
 journal_evidence() {
-  gexec "journalctl --user -b --no-pager -n 60 -u tetsu-comp -u tetsu-notifyd -u tetsu-capd -u tetsu-bar 2>&1" 60 || true
+  gexec "journalctl --user -b --no-pager -n 60 -u tetsu-comp -u tetsu-notifyd -u tetsu-capd -u tetsu-bar -u tetsu-agent 2>&1" 60 || true
   evidence "user journal: $GOUT"
   gexec "sudo -n journalctl -b --no-pager -n 60 -u greetd 2>&1" 60 || true
   evidence "greetd journal: $GOUT"
@@ -98,7 +98,10 @@ session_checks() {
     && [ "$nfy_a" -le "$cap_s" ] && [ "$tgt_a" -le "$bar_s" ] || out=wrong-order
   assert_eq "$SCENARIO: comp <= target <= notifyd <= capd, target <= bar" ok "$out"
 
-  # 5. Ends cleanly.
+  # 5. The agent unit's sandbox (#82), while the daemons it talks to are up.
+  agent_sandbox_checks
+
+  # 6. Ends cleanly.
   gexec "systemctl --user stop tetsu-comp.service; echo stopped"
   gexec "$(guest_poll 60 '! systemctl --user is-active -q graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service'); systemctl --user is-active graphical-session.target tetsu-notifyd.service tetsu-capd.service tetsu-bar.service | sort -u" 90
   assert_eq "$SCENARIO: the target and the daemons are inactive" "inactive" "$(tail -n 1 <<<"$GOUT")"
@@ -139,6 +142,7 @@ main() {
   preflight
   trap 'stop_vm' EXIT
   scenario_session
+  agent_known_open_summary
   summary
 }
 
