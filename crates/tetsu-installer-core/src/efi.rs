@@ -50,35 +50,45 @@ pub fn x509_certificates(mut data: &[u8]) -> Vec<Vec<u8>> {
 /// `EFI_IMAGE_SECURITY_DATABASE_GUID`, the vendor of `db` and `dbx`.
 const IMAGE_SECURITY_GUID: &str = "d719b2cb-3d3a-4596-a3bc-dad00e67656f";
 
+fn efivar_path(root: &Path, name: &str, guid: &str) -> std::path::PathBuf {
+    root.join("sys/firmware/efi/efivars")
+        .join(format!("{name}-{guid}"))
+}
+
+/// The data of a variable without the four attribute bytes; `None` when it
+/// is absent or has no data.
+fn variable_data(root: &Path, name: &str, guid: &str) -> Option<Vec<u8>> {
+    let mut bytes = std::fs::read(efivar_path(root, name, guid)).ok()?;
+    (bytes.len() > 4).then(|| bytes.split_off(4))
+}
+
 /// Whether the firmware's `db` holds no entry: the variable is absent or
 /// only has its four attribute bytes.
 pub fn db_is_empty(root: &Path) -> bool {
-    let path = root
-        .join("sys/firmware/efi/efivars")
-        .join(format!("db-{IMAGE_SECURITY_GUID}"));
-    std::fs::read(path).map_or(true, |bytes| bytes.len() <= 4)
-}
-
-/// The certificates in the Platform Key variable; none when it is absent.
-pub fn platform_key_certificates(root: &Path) -> Vec<Vec<u8>> {
-    let path = root
-        .join("sys/firmware/efi/efivars")
-        .join(format!("PK-{GLOBAL_VARIABLE_GUID}"));
-    match std::fs::read(path) {
-        Ok(bytes) if bytes.len() > 4 => x509_certificates(&bytes[4..]),
-        _ => Vec::new(),
-    }
+    variable_data(root, "db", IMAGE_SECURITY_GUID).is_none()
 }
 
 /// The data of `db` or `KEK` as `efivarfs` shows it, without the four
 /// attribute bytes; `None` when the variable is absent or has no data.
-pub fn signature_db(_root: &Path, _name: &str) -> Option<Vec<u8>> {
-    todo!("signature_db")
+pub fn signature_db(root: &Path, name: &str) -> Option<Vec<u8>> {
+    let guid = match name {
+        "db" => IMAGE_SECURITY_GUID,
+        "KEK" => GLOBAL_VARIABLE_GUID,
+        _ => return None,
+    };
+    variable_data(root, name, guid)
 }
 
 /// Whether the raw Platform Key variable holds data, whatever it parses to.
-pub fn platform_key_present(_root: &Path) -> bool {
-    todo!("platform_key_present")
+pub fn platform_key_present(root: &Path) -> bool {
+    variable_data(root, "PK", GLOBAL_VARIABLE_GUID).is_some()
+}
+
+/// The certificates in the Platform Key variable; none when it is absent.
+pub fn platform_key_certificates(root: &Path) -> Vec<Vec<u8>> {
+    variable_data(root, "PK", GLOBAL_VARIABLE_GUID)
+        .map(|data| x509_certificates(&data))
+        .unwrap_or_default()
 }
 
 fn base64_value(c: u8) -> Option<u8> {
