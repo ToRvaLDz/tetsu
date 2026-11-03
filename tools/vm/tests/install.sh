@@ -126,6 +126,86 @@ scenario_interactive() {
   stop_vm
 }
 
+# GUIDs of the db variable (image security) and of a throwaway owner, and the
+# directories of the wrapper that fails the PK write on purpose and of the seed.
+DB_GUID=d719b2cb-3d3a-4596-a3bc-dad00e67656f
+SEED_GUID=5d2c8e3a-6f41-4b7d-9a10-0c3e5f7a9b21
+FAULT_DIR=/run/tetsu-fi
+SEED_DIR=/tmp/sbseed
+
+# An efi-updatevar that fails when it writes the PK and is the real one
+# otherwise: the enrollment dies after db and KEK are in, before Setup Mode ends.
+install_pk_fault() {
+  local wrapper
+  wrapper=$(cat <<'WRAP'
+sudo -n mkdir -p /run/tetsu-fi; printf '%s\n' '#!/bin/sh' 'for last; do :; done' '[ "$last" = PK ] && { echo injected PK write failure >&2; exit 1; }' 'exec /usr/bin/efi-updatevar "$@"' | sudo -n tee /run/tetsu-fi/efi-updatevar >/dev/null; sudo -n chmod 755 /run/tetsu-fi/efi-updatevar; echo wrapper-rc=$?
+WRAP
+)
+  gexec "$wrapper"
+  assert_contains "$SCENARIO: the PK fault wrapper is in place" "$GOUT" "wrapper-rc=0"
+}
+
+# fault_enroll NAME: tetsu secureboot enroll with the failing PK write; leaves
+# the output in GOUT and checks it failed.
+fault_enroll() {
+  gexec "sudo -n env PATH=$FAULT_DIR:\$PATH tetsu secureboot enroll 2>&1; echo enroll-rc=\$?" 180
+  if LC_ALL=C grep -aEq 'enroll-rc=[1-9]' <<<"$GOUT"; then
+    pass "$SCENARIO: $1: the faulted enrollment fails"
+  else
+    fail "$SCENARIO: $1: the faulted enrollment fails" "$GOUT"
+  fi
+  evidence "$(tail -n 3 <<<"$GOUT" | tr '\n' '|')"
+}
+
+# check_still_in_setup_mode NAME: Setup Mode is on and no PK was left behind.
+check_still_in_setup_mode() {
+  check "$1: still in Setup Mode" '(^| )6 +0 +0 +0 +1$' \
+    "od -An -tu1 /sys/firmware/efi/efivars/SetupMode-$GLOBAL_GUID"
+  check "$1: the PK is not there" '^0$' \
+    "ls /sys/firmware/efi/efivars | grep -c '^PK-' || true"
+}
+
+# efivar_hashes: HASHES = sha256 of the whole db and KEK efivarfs files
+# (attributes included). Not run in a subshell: gexec counts its calls.
+efivar_hashes() {
+  gexec "sudo -n sha256sum /sys/firmware/efi/efivars/db-$DB_GUID /sys/firmware/efi/efivars/KEK-$GLOBAL_GUID 2>&1"
+  HASHES=$(LC_ALL=C grep -a 'efivars/' <<<"$GOUT" || true)
+}
+
+# Rollback and de-duplication of a partial enrollment, in Setup Mode with the
+# real efitools and OVMF: the faulted enrollment must leave db and KEK as found.
+sb_rollback_checks() {
+  local before after
+  install_pk_fault
+  # (a) Empty variables: the restore deletes what the enrollment appended.
+  fault_enroll "empty variables"
+  assert_contains "$SCENARIO: empty variables: the message says db and KEK were restored" \
+    "$GOUT" "db and KEK were restored"
+  check "empty variables: db and KEK are absent again" '^0$' \
+    "ls /sys/firmware/efi/efivars | grep -cE '^(db|KEK)-' || true"
+  check_still_in_setup_mode "empty variables"
+  # (b) Variables that were there before: byte for byte as found.
+  gexec "rm -rf $SEED_DIR; mkdir -p $SEED_DIR && openssl req -x509 -newkey rsa:2048 -nodes -keyout $SEED_DIR/seed.key -out $SEED_DIR/seed.crt -subj /CN=tetsu-vm-seed -days 2 >/dev/null 2>&1 && cert-to-efi-sig-list -g $SEED_GUID $SEED_DIR/seed.crt $SEED_DIR/seed.esl && for v in db KEK; do sign-efi-sig-list -a -k $SEED_DIR/seed.key -c $SEED_DIR/seed.crt \$v $SEED_DIR/seed.esl $SEED_DIR/seed-\$v.auth && sudo -n efi-updatevar -a -f $SEED_DIR/seed-\$v.auth \$v; done; echo seed-rc=\$?" 120
+  assert_contains "$SCENARIO: db and KEK are seeded in Setup Mode" "$GOUT" "seed-rc=0"
+  efivar_hashes
+  before=$HASHES
+  [ "$(wc -l <<<"$before")" -eq 2 ] || fail "$SCENARIO: the seeded db and KEK are hashed" "$before"
+  fault_enroll "pre-existing variables"
+  efivar_hashes
+  after=$HASHES
+  assert_eq "$SCENARIO: pre-existing variables: db and KEK are byte for byte as found" \
+    "$before" "$after"
+  check_still_in_setup_mode "pre-existing variables"
+  # (c) The same lists appended again (same owner GUID, same certificate) add nothing.
+  gexec "for v in db KEK; do sudo -n efi-updatevar -a -f $SEED_DIR/seed-\$v.auth \$v; done; echo append-rc=\$?"
+  assert_contains "$SCENARIO: the seed lists are appended a second time" "$GOUT" "append-rc=0"
+  efivar_hashes
+  after=$HASHES
+  assert_eq "$SCENARIO: appending the same entries again changes nothing" "$before" "$after"
+  gexec "sudo -n rm -rf $FAULT_DIR $SEED_DIR; echo cleaned-rc=\$?"
+  assert_contains "$SCENARIO: the fault wrapper is removed" "$GOUT" "cleaned-rc=0"
+}
+
 # Secure Boot off at install time, enrolled later.
 scenario_sb_off() {
   LEVEL=comfort
@@ -164,6 +244,7 @@ scenario_sb_off() {
   login
   check "the firmware is in Setup Mode" '(^| )6 +0 +0 +0 +1$' \
     "od -An -tu1 /sys/firmware/efi/efivars/SetupMode-$GLOBAL_GUID"
+  sb_rollback_checks
   gexec "sudo -n tetsu secureboot enroll 2>&1; echo enroll-rc=\$?" 120
   if LC_ALL=C grep -aq 'enroll-rc=0' <<<"$GOUT"; then
     pass "$SCENARIO: tetsu secureboot enroll succeeds"
