@@ -21,9 +21,9 @@ pub mod trust;
 /// Owner GUID efitools conventions use for Microsoft's certificates.
 pub const MICROSOFT_OWNER_GUID: &str = "77fa9abd-0359-4d32-bd60-28f4e78f784b";
 
-/// A random (version 4) GUID from 16 random bytes.
-pub fn guid(mut b: [u8; 16]) -> String {
-    b[6] = (b[6] & 0x0f) | 0x40;
+/// A GUID of `version` from 16 bytes, with the RFC 4122 variant bits.
+fn format_guid(mut b: [u8; 16], version: u8) -> String {
+    b[6] = (b[6] & 0x0f) | (version << 4);
     b[8] = (b[8] & 0x3f) | 0x80;
     let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
     format!(
@@ -36,20 +36,81 @@ pub fn guid(mut b: [u8; 16]) -> String {
     )
 }
 
+/// A random (version 4) GUID from 16 random bytes.
+pub fn guid(b: [u8; 16]) -> String {
+    format_guid(b, 4)
+}
+
 /// A custom (version 8) GUID from the first 16 bytes of a digest.
-pub fn derived_guid(_digest: [u8; 16]) -> String {
-    todo!("derived_guid")
+pub fn derived_guid(digest: [u8; 16]) -> String {
+    format_guid(digest, 8)
+}
+
+/// The 32 bytes of an `openssl x509 -fingerprint -sha256` line. OpenSSL 1.1
+/// prints `SHA256 Fingerprint=`, 3.x `sha256 Fingerprint=`.
+fn parse_fingerprint(output: &str) -> Option<[u8; 32]> {
+    let (label, hex) = output.trim().split_once('=')?;
+    if !label.to_ascii_lowercase().ends_with("fingerprint") {
+        return None;
+    }
+    let bytes: Vec<u8> = hex
+        .trim()
+        .split(':')
+        .map(|h| {
+            (h.len() == 2)
+                .then(|| u8::from_str_radix(h, 16).ok())
+                .flatten()
+        })
+        .collect::<Option<_>>()?;
+    bytes.try_into().ok()
 }
 
 /// The owner GUID of Tetsu's entries, derived from the SHA-256 fingerprint
-/// of the PK certificate: the same keys always give the same GUID.
-pub fn owner_guid(_runner: &dyn Runner, _pk_crt: &Path) -> Result<String, InstallError> {
-    todo!("owner_guid")
+/// of the PK certificate: the same keys always give the same GUID, so a
+/// second enrollment appends the same entries and the firmware keeps one.
+pub fn owner_guid(runner: &dyn Runner, pk_crt: &Path) -> Result<String, InstallError> {
+    let out = runner.output(
+        "openssl",
+        &crate::install::argv(&[
+            &"x509",
+            &"-in",
+            &pk_crt,
+            &"-noout",
+            &"-fingerprint",
+            &"-sha256",
+        ]),
+    )?;
+    let digest = parse_fingerprint(&out).ok_or_else(|| {
+        InstallError::Failed(format!(
+            "{}: cannot read the SHA-256 fingerprint from {:?}",
+            pk_crt.display(),
+            out.trim()
+        ))
+    })?;
+    let mut head = [0u8; 16];
+    head.copy_from_slice(&digest[..16]);
+    Ok(derived_guid(head))
 }
 
 /// `YYYY-MM-DD HH:MM:SS` (UTC) of Unix seconds, the form `sign-efi-sig-list -t` takes.
-pub fn efi_time(_secs: u64) -> String {
-    todo!("efi_time")
+pub fn efi_time(secs: u64) -> String {
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    // Days since 1970-01-01 to a civil date (proleptic Gregorian).
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z % 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + u64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
 }
 
 /// Microsoft certificates (DER or PEM) for the Secure Boot lists. The KEK
