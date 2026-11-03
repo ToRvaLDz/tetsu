@@ -278,6 +278,7 @@ compositor, the three daemons, their order and the clean end of the session.
 Run `image/build && tools/vm/tests/session.sh`; exit 77 means KVM or the image
 is missing. Logs go to `target/vm-session/session/`. The keyboard path of the
 tty1 greeter itself is a human check (`tetsu-vm start ... --gui`).
-It also runs the tetsu-agent sandbox checks (`tools/vm/tests/agent.sh`, ticket
+
+The same scenario also runs the tetsu-agent sandbox checks (`tools/vm/tests/agent.sh`, ticket
 #82); a `KNOWN-OPEN` line in its output is a reported open item (the `/proc`
 route, #144), not a pass, and appears only when the outside control succeeded.

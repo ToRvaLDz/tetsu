@@ -221,10 +221,11 @@ The sandbox, in `crates/tetsu-agent/dist/tetsu-agent.service`:
   arrives only when a consumer needs a name (#79, if a CLI backend does).
 - The secret stores in `$HOME` (the credstore pair under the config dir and
   under `~/.local/lib`, all of `~/.local/share/tetsu` with the vault and the
-  staged installer key, and `~/.local/share/keyrings`) are masked with `InaccessiblePaths=`, without
-  `-`. User tmpfiles (`usr/share/user-tmpfiles.d/tetsu.conf`) create them 0700,
-  so a mask never races a store made later, and a missing one fails the start
-  closed. The unit says `%E/credstore*`; tmpfiles has no `%E` and uses
+  staged installer key, and `~/.local/share/keyrings`) are masked with
+  `InaccessiblePaths=`, without `-`. User tmpfiles
+  (`usr/share/user-tmpfiles.d/tetsu.conf`) create these directories 0700
+  (`~/.local/share/tetsu` itself, not only its `secrets/`), so a mask never
+  races a store made later, and a missing one fails the start closed. The unit says `%E/credstore*`; tmpfiles has no `%E` and uses
   `%h/.config`, so a non-default `XDG_CONFIG_HOME` fails closed.
 - Nothing is writable but `StateDirectory=` and `CacheDirectory=`
   (`tetsu-agent`) and a private `/tmp`; there is no `ReadWritePaths=` (CLI
