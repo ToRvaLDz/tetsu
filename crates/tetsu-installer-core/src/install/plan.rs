@@ -10,6 +10,7 @@
 
 use crate::agent::AgentBackend;
 use crate::answers::Answers;
+use crate::keyboard;
 use crate::preflight::SecureBoot;
 use crate::user::Password;
 
@@ -80,6 +81,9 @@ pub enum Action {
     WriteUser,
     LockRoot,
     WriteLocale,
+    /// Generate the chosen language on the target (planned only when the
+    /// payload does not already carry it).
+    GenerateLocale,
     WriteHostname,
     WriteFstab,
     WriteCmdline,
@@ -87,6 +91,9 @@ pub enum Action {
     /// Stage the API key in the owner's home (API backends only).
     StageApiKey,
     WriteUnlockLevel,
+    /// Make the target's pacman keyring (`pacman-key --init` and
+    /// `--populate`) so the first `tetsu-tx update` finds one.
+    InitKeyring,
     BuildInitrd,
     // Stage 2: boot.
     GenerateKey(KeyKind),
@@ -175,7 +182,7 @@ impl Action {
             Self::ExtractPayload => &["tar"],
             Self::HashPassword | Self::GenerateKey(_) => &["openssl"],
             Self::WriteUser | Self::StageApiKey => &["chown"],
-            Self::BuildInitrd => &["systemd-nspawn"],
+            Self::GenerateLocale | Self::InitKeyring | Self::BuildInitrd => &["systemd-nspawn"],
             Self::BuildUki => &["ukify", "sbsign"],
             Self::InstallBootloader => &["sbsign"],
             Self::VerifySignatures => &["sbverify"],
@@ -220,12 +227,14 @@ impl Action {
             Self::WriteUser => "create the user and add it to wheel",
             Self::LockRoot => "lock the root account",
             Self::WriteLocale => "write keymap, language, timezone and clock settings",
+            Self::GenerateLocale => "generate the chosen locale",
             Self::WriteHostname => "write the hostname",
             Self::WriteFstab => "write the mounts of the shared subvolumes and the ESP",
             Self::WriteCmdline => "write the kernel command line",
             Self::WriteAgentBackend => "write the agent backend choice",
             Self::StageApiKey => "stage the agent API key in the user's home",
             Self::WriteUnlockLevel => "write the unlock level",
+            Self::InitKeyring => "initialise the pacman keyring",
             Self::BuildInitrd => "build the initrd",
             Self::GenerateKey(KeyKind::Pk) => "generate the Secure Boot platform key",
             Self::GenerateKey(KeyKind::Kek) => "generate the Secure Boot key exchange key",
@@ -295,10 +304,10 @@ impl InstallPlan {
 
 fn stage_disk(answers: &Answers) -> Vec<Action> {
     use Action::{
-        BuildInitrd, ExtractPayload, FormatEsp, FormatRoot, HashPassword, InitLayout, LockRoot,
-        LuksAddRecoveryKey, LuksFormat, LuksOpen, MountEsp, MountTop, Partition, SettleDevices,
-        StageApiKey, WipeSignatures, WriteAgentBackend, WriteCmdline, WriteFstab, WriteHostname,
-        WriteLocale, WriteUnlockLevel, WriteUser,
+        BuildInitrd, ExtractPayload, FormatEsp, FormatRoot, GenerateLocale, HashPassword,
+        InitKeyring, InitLayout, LockRoot, LuksAddRecoveryKey, LuksFormat, LuksOpen, MountEsp,
+        MountTop, Partition, SettleDevices, StageApiKey, WipeSignatures, WriteAgentBackend,
+        WriteCmdline, WriteFstab, WriteHostname, WriteLocale, WriteUnlockLevel, WriteUser,
     };
     let mut actions = vec![
         WipeSignatures,
@@ -317,21 +326,18 @@ fn stage_disk(answers: &Answers) -> Vec<Action> {
     if matches!(answers.user.password, Password::Plain(_)) {
         actions.push(HashPassword);
     }
-    actions.extend([
-        WriteUser,
-        LockRoot,
-        WriteLocale,
-        WriteHostname,
-        WriteFstab,
-        WriteCmdline,
-    ]);
+    actions.extend([WriteUser, LockRoot, WriteLocale]);
+    if !keyboard::is_pregenerated(&answers.locale.language) {
+        actions.push(GenerateLocale);
+    }
+    actions.extend([WriteHostname, WriteFstab, WriteCmdline]);
     if let Some(backend) = &answers.agent {
         actions.push(WriteAgentBackend);
         if matches!(backend, AgentBackend::Api { .. }) {
             actions.push(StageApiKey);
         }
     }
-    actions.extend([WriteUnlockLevel, BuildInitrd]);
+    actions.extend([WriteUnlockLevel, InitKeyring, BuildInitrd]);
     actions
 }
 
@@ -424,6 +430,7 @@ mod tests {
             WriteFstab,
             WriteCmdline,
             WriteUnlockLevel,
+            InitKeyring,
             BuildInitrd,
             GenerateKey(KeyKind::Pk),
             GenerateKey(KeyKind::Kek),
@@ -441,6 +448,54 @@ mod tests {
             Finish,
         ]);
         assert_eq!(plan.actions(), want);
+    }
+
+    #[test]
+    fn the_keyring_is_made_before_the_initrd_and_the_seal() {
+        let plan = InstallPlan::build(
+            &answers(UnlockLevel::Paranoid),
+            &target(SecureBoot::SetupMode),
+        );
+        let at = |x: Action| plan.actions().iter().position(|a| *a == x).unwrap();
+        assert_eq!(at(InitKeyring), at(WriteUnlockLevel) + 1);
+        assert!(at(InitKeyring) < at(BuildInitrd));
+        assert!(at(InitKeyring) < at(SealSnapshot));
+        assert_eq!(InitKeyring.programs(), ["systemd-nspawn"]);
+        assert!(plan.programs().contains(&"systemd-nspawn"));
+        assert_eq!(InitKeyring.describe(), "initialise the pacman keyring");
+    }
+
+    fn mexican(level: UnlockLevel) -> Answers {
+        let mut a = answers(level);
+        a.locale.language = "es_MX.UTF-8".into();
+        a
+    }
+
+    #[test]
+    fn a_pregenerated_language_plans_no_generation() {
+        let plan = InstallPlan::build(
+            &answers(UnlockLevel::Comfort),
+            &target(SecureBoot::SetupMode),
+        );
+        assert!(!plan.actions().contains(&GenerateLocale));
+    }
+
+    #[test]
+    fn another_language_is_generated_right_after_it_is_written() {
+        let plan = InstallPlan::build(
+            &mexican(UnlockLevel::Comfort),
+            &target(SecureBoot::SetupMode),
+        );
+        let at = |x: Action| plan.actions().iter().position(|a| *a == x).unwrap();
+        assert_eq!(at(GenerateLocale), at(WriteLocale) + 1);
+        assert!(at(ExtractPayload) < at(GenerateLocale));
+        assert!(at(GenerateLocale) < at(InitKeyring));
+        assert!(at(GenerateLocale) < at(BuildInitrd));
+        assert!(at(GenerateLocale) < at(SealSnapshot));
+        assert_eq!(GenerateLocale.stage(), Stage::Disk);
+        assert!(!GenerateLocale.is_soft());
+        assert_eq!(GenerateLocale.programs(), ["systemd-nspawn"]);
+        assert!(plan.programs().contains(&"systemd-nspawn"));
     }
 
     #[test]
@@ -505,9 +560,11 @@ mod tests {
     fn actions_never_go_back_a_stage() {
         for level in UnlockLevel::ALL {
             for sb in [SecureBoot::Off, SecureBoot::SetupMode] {
-                let plan = InstallPlan::build(&answers(level), &target(sb));
-                let stages: Vec<Stage> = plan.actions().iter().map(|a| a.stage()).collect();
-                assert!(stages.is_sorted(), "{stages:?}");
+                for a in [answers(level), mexican(level)] {
+                    let plan = InstallPlan::build(&a, &target(sb));
+                    let stages: Vec<Stage> = plan.actions().iter().map(|a| a.stage()).collect();
+                    assert!(stages.is_sorted(), "{stages:?}");
+                }
             }
         }
     }
@@ -518,7 +575,11 @@ mod tests {
             &answers(UnlockLevel::Comfort),
             &target(SecureBoot::SetupMode),
         );
-        for a in plan.actions() {
+        let mexican = InstallPlan::build(
+            &mexican(UnlockLevel::Comfort),
+            &target(SecureBoot::SetupMode),
+        );
+        for a in plan.actions().iter().chain(mexican.actions()) {
             assert_eq!(
                 a.is_soft(),
                 matches!(a, EnrollKeys | CreateBootEntry | SetBootOrder)

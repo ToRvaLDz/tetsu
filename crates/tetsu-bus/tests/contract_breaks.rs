@@ -472,6 +472,35 @@ fn untrusted_removed_from_field() {
 }
 
 #[test]
+fn sensitive_removed_from_input_parameter() {
+    let with = BASE.replacen(
+        "count: ?int",
+        "# @sensitive\n  token: ?string,\n  count: ?int",
+        1,
+    );
+    let without = BASE.replacen("count: ?int", "token: ?string,\n  count: ?int", 1);
+    expect(
+        &check_compat(&contract(&with, STREAMING), &contract(&without, STREAMING)),
+        Kind::TagRemoved,
+        "Do(in).token",
+    );
+}
+
+#[test]
+fn sensitive_added_to_input_parameter_is_additive() {
+    let with = BASE.replacen(
+        "count: ?int",
+        "# @sensitive\n  token: ?string,\n  count: ?int",
+        1,
+    );
+    let without = BASE.replacen("count: ?int", "token: ?string,\n  count: ?int", 1);
+    expect_clean(&check_compat(
+        &contract(&without, STREAMING),
+        &contract(&with, STREAMING),
+    ));
+}
+
+#[test]
 fn untrusted_removed_from_input_parameter() {
     expect(
         &mutated("# @untrusted\n  note: ?string", "note: ?string"),

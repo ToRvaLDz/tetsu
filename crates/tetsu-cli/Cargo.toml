@@ -20,8 +20,15 @@ path = "src/main.rs"
 
 [dependencies]
 rustix = { version = "1.1.5", features = ["process"] }
+serde_json = "1.0.154"
+tetsu-bus = { path = "../tetsu-bus" }
+tetsu-capd = { path = "../tetsu-capd" }
 tetsu-installer-core = { path = "../tetsu-installer-core" }
+tetsu-secrets = { path = "../tetsu-secrets" }
 tetsu-tx = { path = "../tetsu-tx" }
+tokio = { version = "1.54.1", features = ["rt", "net", "time"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tetsu-bus-contract = { path = "../tetsu-bus-contract" }
+tokio = { version = "1.54.1", features = ["rt", "net", "time", "io-util", "macros", "sync"] }

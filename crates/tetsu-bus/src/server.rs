@@ -6,8 +6,10 @@
 //! drops the stream, and the handler sees its sender close.
 
 use std::collections::VecDeque;
+use std::env;
 use std::fs;
 use std::io;
+use std::os::fd::{FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -16,11 +18,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+use tracing::instrument::WithSubscriber as _;
+use tracing::subscriber::NoSubscriber;
 use zlink::connection::{ReadConnection, WriteConnection};
 use zlink::{Call, Connection, Listener as _, Reply};
 
-use crate::activation;
 use crate::into_io;
 use crate::peer::Peer;
 
@@ -31,31 +34,32 @@ const MAX_QUEUED: usize = 16;
 /// Pause after a failed `accept`, so a full descriptor table is not a spin.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
+/// The first descriptor systemd passes to a socket-activated service.
+const LISTEN_FDS_START: RawFd = 3;
+
 /// A bound server socket. Dropping it removes the socket file, only if it
-/// is still the one this listener bound.
+/// is still the one this listener bound. A socket taken from systemd
+/// (see [`take_passed_socket`]) has no file of ours to remove.
 #[derive(Debug)]
 pub struct Listener {
     inner: zlink::tokio::unix::Listener,
-    path: PathBuf,
-    inode: u64,
-    /// Bound by us. An adopted socket belongs to systemd, which unlinks it.
-    owned: bool,
+    bound: Option<(PathBuf, u64)>,
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        if !self.owned {
+        let Some((path, inode)) = &self.bound else {
             return;
-        }
-        let ours = fs::symlink_metadata(&self.path).is_ok_and(|m| m.ino() == self.inode);
+        };
+        let ours = fs::symlink_metadata(path).is_ok_and(|m| m.ino() == *inode);
         if ours {
-            let _ = fs::remove_file(&self.path);
+            let _ = fs::remove_file(path);
         }
     }
 }
 
 /// A method call as the handler sees it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Request {
     /// Fully qualified method name.
     pub method: String,
@@ -65,6 +69,18 @@ pub struct Request {
     pub oneway: bool,
     /// The caller accepts a stream of replies.
     pub more: bool,
+}
+
+/// The parameters may hold a secret value: `Debug` leaves them out.
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("parameters", &format_args!("<redacted>"))
+            .field("oneway", &self.oneway)
+            .field("more", &self.more)
+            .finish()
+    }
 }
 
 /// A Varlink error reply.
@@ -121,6 +137,31 @@ pub enum Response {
     /// end of file and has to call again. Dropping the receiver (the
     /// caller went away) closes the sender, as with `Stream`.
     BoundedStream(mpsc::Receiver<StreamItem>),
+    /// One reply the handler sends later, from a task of its own. While it
+    /// is pending the connection keeps being read: if the caller goes away
+    /// the receiver is dropped, so the handler sees its sender close and
+    /// can cancel. Calls pipelined meanwhile are answered afterwards. If
+    /// the handler drops the sender without an answer, the connection is
+    /// dropped: the caller sees end of file.
+    Pending(oneshot::Receiver<Result<Value, ErrorReply>>),
+    /// The whole response, sent later from a task of the handler's own: a
+    /// reply, an error or a stream. While it is pending the connection
+    /// keeps being read, as with `Pending`: if the caller goes away the
+    /// receiver is dropped, so the handler sees its sender close and can
+    /// cancel. A oneway call is waited for too, so the handler can gate
+    /// its effect on the decision; no reply is written for it. If the
+    /// handler drops the sender, or answers with another `Deferred`, the
+    /// connection is dropped.
+    Deferred(oneshot::Receiver<Response>),
+}
+
+/// How a pending reply ended.
+enum Pended {
+    /// The handler answered.
+    Answer(Result<Value, ErrorReply>),
+    /// The handler dropped its sender, or the caller went away or
+    /// pipelined without end: the connection must be dropped.
+    Drop,
 }
 
 /// Where a relayed stream's items come from.
@@ -184,33 +225,6 @@ pub fn bind_system(path: &Path) -> io::Result<Listener> {
     bind_with(path, DirPolicy::System, 0o666)
 }
 
-/// Serves a session socket: the one systemd passes in for `path` (named like
-/// its file, bound to it), otherwise `bind`. An adopted socket keeps the
-/// mode and directory systemd gave it, and is never unlinked here.
-pub fn listen(path: &Path) -> io::Result<Listener> {
-    adopt_or(path, bind)
-}
-
-/// Serves a system socket: the one systemd passes in for `path`, otherwise
-/// `bind_system`. Like `listen`, an adopted socket is left to systemd.
-pub fn listen_system(path: &Path) -> io::Result<Listener> {
-    adopt_or(path, bind_system)
-}
-
-fn adopt_or(path: &Path, bind: fn(&Path) -> io::Result<Listener>) -> io::Result<Listener> {
-    let Some(std_listener) = activation::adopt(path)? else {
-        return bind(path);
-    };
-    let inode = fs::symlink_metadata(path)?.ino();
-    let tokio_listener = tokio::net::UnixListener::from_std(std_listener)?;
-    Ok(Listener {
-        inner: zlink::tokio::unix::Listener::from(tokio_listener),
-        path: path.to_owned(),
-        inode,
-        owned: false,
-    })
-}
-
 /// How the directory of a socket is created and checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirPolicy {
@@ -251,10 +265,68 @@ fn bind_with(path: &Path, dirs: DirPolicy, socket_mode: u32) -> io::Result<Liste
     let inode = fs::symlink_metadata(path)?.ino();
     Ok(Listener {
         inner,
-        path: path.to_owned(),
-        inode,
-        owned: true,
+        bound: Some((path.to_owned(), inode)),
     })
+}
+
+/// How many descriptors systemd passed to this process (`sd_listen_fds`):
+/// `LISTEN_FDS` when `LISTEN_PID` names `own_pid`, else none.
+fn passed_fds(listen_pid: Option<&str>, listen_fds: Option<&str>, own_pid: u32) -> usize {
+    let for_us = listen_pid.and_then(|p| p.parse::<u32>().ok()) == Some(own_pid);
+    match listen_fds.and_then(|n| n.parse::<usize>().ok()) {
+        Some(n) if for_us => n,
+        _ => 0,
+    }
+}
+
+/// The listening socket systemd passed by socket activation, taken out of
+/// the process but not yet registered with a runtime: see
+/// [`take_passed_socket`] and [`PassedSocket::into_listener`].
+#[derive(Debug)]
+pub struct PassedSocket(OwnedFd);
+
+/// Takes the listening socket systemd passed by socket activation, if any:
+/// fd 3 when `LISTEN_PID` is this process and `LISTEN_FDS` is at least 1.
+/// The descriptor is made close-on-exec and `LISTEN_*` is unset, so a
+/// process started later does not take it for its own.
+///
+/// This edits the process environment, so call it first thing in `main`,
+/// before a runtime or any other thread exists. Turn the result into a
+/// listener later, inside the runtime, with [`PassedSocket::into_listener`].
+/// The path belongs to the socket unit: the file is neither created,
+/// replaced nor removed here.
+pub fn take_passed_socket() -> io::Result<Option<PassedSocket>> {
+    let var = |name| env::var(name).ok();
+    let count = passed_fds(
+        var("LISTEN_PID").as_deref(),
+        var("LISTEN_FDS").as_deref(),
+        std::process::id(),
+    );
+    for name in ["LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"] {
+        // SAFETY: documented to run before this process spawns a thread, so
+        // nothing reads the environment concurrently.
+        #[expect(unsafe_code)]
+        unsafe {
+            env::remove_var(name);
+        }
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+    // SAFETY: systemd handed this process the descriptor and nothing else
+    // here owns it (LISTEN_PID names us).
+    #[expect(unsafe_code)]
+    let fd = unsafe { OwnedFd::from_raw_fd(LISTEN_FDS_START) };
+    rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
+    Ok(Some(PassedSocket(fd)))
+}
+
+impl PassedSocket {
+    /// Serves on the passed socket. Needs a running tokio runtime context.
+    pub fn into_listener(self) -> io::Result<Listener> {
+        let inner = zlink::tokio::unix::Listener::try_from(self.0).map_err(into_io)?;
+        Ok(Listener { inner, bound: None })
+    }
 }
 
 /// Creates `dir` 0700, or checks that an existing one is ours and private.
@@ -315,25 +387,23 @@ pub async fn serve<H: Handler>(mut listener: Listener, handler: Rc<H>) -> io::Re
             }
         };
         let handler = handler.clone();
-        tokio::task::spawn_local(async move {
+        let task = async move {
             if let Err(e) = run_connection(connection, handler).await {
                 eprintln!("tetsu-bus: connection closed: {e}");
             }
-        });
+        };
+        tokio::task::spawn_local(task.with_subscriber(NoSubscriber::default()));
     }
 }
 
 async fn identify(connection: &mut Connection<Socket>) -> io::Result<Peer> {
     let credentials = connection.peer_credentials().await?.clone();
     // A kernel without SO_PEERPIDFD (< 6.5) gives no pidfd: fail closed.
-    let pidfd = credentials
-        .process_fd()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "no peer pidfd"))?;
-    Peer::resolve(
+    Peer::from_credentials(
         credentials.unix_user_id().as_raw(),
         credentials.unix_primary_group_id().as_raw(),
         credentials.process_id().as_raw_nonzero().get(),
-        pidfd,
+        credentials.process_fd(),
     )
 }
 
@@ -354,6 +424,15 @@ async fn run_connection<H: Handler>(
             },
         };
         let response = handler.call(peer.clone(), call.clone()).await;
+        let response = match response {
+            Response::Deferred(deferred) => {
+                match wait_answer(deferred, &mut read, &mut queued).await {
+                    Some(Response::Deferred(_)) | None => return Ok(()),
+                    Some(response) => response,
+                }
+            }
+            response => response,
+        };
         if call.oneway {
             continue;
         }
@@ -363,6 +442,15 @@ async fn run_connection<H: Handler>(
             Response::Stream(_) | Response::BoundedStream(_) if !call.more => {
                 let error = ErrorReply::new("org.varlink.service.ExpectedMore", json!({}));
                 send_error(&mut write, &error).await?;
+            }
+            // Resolved above; a second level is refused there.
+            Response::Deferred(_) => return Ok(()),
+            Response::Pending(pending) => {
+                match wait_pending(pending, &mut read, &mut queued).await {
+                    Pended::Answer(Ok(value)) => send_reply(&mut write, value, false).await?,
+                    Pended::Answer(Err(error)) => send_error(&mut write, &error).await?,
+                    Pended::Drop => return Ok(()),
+                }
             }
             Response::Stream(stream) => {
                 let source = Source::Unbounded(stream);
@@ -413,6 +501,39 @@ async fn relay(
     }
 }
 
+/// Waits for a pending answer while still reading the connection. End of
+/// file drops `pending` on return, which the handler sees as its sender
+/// closing.
+async fn wait_pending(
+    pending: oneshot::Receiver<Result<Value, ErrorReply>>,
+    read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
+    queued: &mut VecDeque<Request>,
+) -> Pended {
+    wait_answer(pending, read, queued)
+        .await
+        .map_or(Pended::Drop, Pended::Answer)
+}
+
+/// Waits for `pending` while still reading the connection. `None` when the
+/// handler dropped its sender, or the caller went away or pipelined without
+/// end: the connection must be dropped, and `pending` with it.
+async fn wait_answer<T>(
+    mut pending: oneshot::Receiver<T>,
+    read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
+    queued: &mut VecDeque<Request>,
+) -> Option<T> {
+    loop {
+        tokio::select! {
+            answer = &mut pending => return answer.ok(),
+            call = receive(read) => match call {
+                Some(call) if queued.len() < MAX_QUEUED => queued.push_back(call),
+                // Gone, or pipelining without end: drop the connection.
+                _ => return None,
+            },
+        }
+    }
+}
+
 /// The next call, or `None` once the caller is gone or sent garbage.
 async fn receive(
     read: &mut ReadConnection<<Socket as zlink::connection::Socket>::ReadHalf>,
@@ -442,4 +563,40 @@ async fn send_error(
     error: &ErrorReply,
 ) -> io::Result<()> {
     write.send_error(error, Vec::new()).await.map_err(into_io)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Request, passed_fds};
+
+    #[test]
+    fn debug_of_a_request_redacts_the_parameters() {
+        let request = Request {
+            method: "org.example.Call".to_owned(),
+            parameters: json!({ "value": "sk-live-4242" }),
+            oneway: false,
+            more: false,
+        };
+        let shown = format!("{request:?}");
+        assert!(shown.contains("org.example.Call"), "{shown}");
+        assert!(!shown.contains("sk-live-4242"), "{shown}");
+    }
+
+    #[test]
+    fn fds_count_only_for_the_named_pid() {
+        assert_eq!(passed_fds(Some("42"), Some("1"), 42), 1);
+        assert_eq!(passed_fds(Some("42"), Some("3"), 42), 3);
+        assert_eq!(passed_fds(Some("41"), Some("1"), 42), 0);
+        assert_eq!(passed_fds(Some("42"), Some("0"), 42), 0);
+    }
+
+    #[test]
+    fn missing_or_malformed_variables_pass_nothing() {
+        assert_eq!(passed_fds(None, Some("1"), 42), 0);
+        assert_eq!(passed_fds(Some("42"), None, 42), 0);
+        assert_eq!(passed_fds(Some("x"), Some("1"), 42), 0);
+        assert_eq!(passed_fds(Some("42"), Some("-1"), 42), 0);
+    }
 }

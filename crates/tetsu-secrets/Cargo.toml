@@ -19,11 +19,18 @@ name = "tetsu-secrets"
 path = "src/main.rs"
 
 [dependencies]
-rustix = { version = "1.1.5", features = ["process"] }
+oo7 = { version = "=0.6.0", default-features = false, features = ["tokio", "native_crypto"] }
+rustix = { version = "1.1.5", features = ["process", "termios", "rand", "fs"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.154"
+tetsu-bus = { path = "../tetsu-bus" }
+tetsu-tx = { path = "../tetsu-tx" }
 thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "time", "sync", "signal"] }
 toml = "1.1.8"
+zeroize = "1.8"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tetsu-bus-contract = { path = "../tetsu-bus-contract" }
 tetsu-installer-core = { path = "../tetsu-installer-core" }

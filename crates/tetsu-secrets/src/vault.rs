@@ -1,20 +1,31 @@
-//! What the importer needs from a vault.
+//! `Secret`, and what the importer needs from a vault.
 
 use std::fmt;
 
-/// Secret text kept in memory only; `Debug` never shows it.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
+use zeroize::Zeroizing;
+
+/// Secret text kept in memory only: zeroized on drop, and `Debug` never
+/// shows it.
+#[derive(Clone)]
+pub struct Secret(Zeroizing<String>);
 
 impl Secret {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(Zeroizing::new(value.into()))
     }
 
     pub fn expose(&self) -> &str {
         &self.0
     }
 }
+
+impl PartialEq for Secret {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_str() == other.0.as_str()
+    }
+}
+
+impl Eq for Secret {}
 
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

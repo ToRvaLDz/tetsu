@@ -1,0 +1,34 @@
+[package]
+name = "tetsu-capd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Tetsu capability daemon: org.tetsu.cap.v1, the grant store and the tetsu cap command"
+
+[lints]
+workspace = true
+
+[lib]
+name = "tetsu_capd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tetsu-capd"
+path = "src/main.rs"
+
+[dependencies]
+rustix = { version = "1.1.5", features = ["process"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.154"
+tetsu-bus = { path = "../tetsu-bus" }
+tetsu-tx = { path = "../tetsu-tx" }
+toml = "1.1.8"
+tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "time", "sync", "signal"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tetsu-bus-contract = { path = "../tetsu-bus-contract" }
+tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "time", "sync"] }

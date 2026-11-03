@@ -321,7 +321,7 @@ async fn drive<B: Backend>(backend: Arc<B>, hub: Rc<Hub>, job: Job) {
     let ended = now_secs();
     match (result, begun) {
         (Ok(report), _) => {
-            let transaction = convert::finished(&job.id, &report, started, ended);
+            let transaction = convert::finished(&job.id, &job.request, &report, started, ended);
             hub.finished(transaction.clone());
             let reply = wire::TxReply::finished(transaction);
             let _ = job.caller.send(StreamItem::Last(json!(reply)));

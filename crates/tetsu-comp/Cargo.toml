@@ -6,13 +6,14 @@ rust-version.workspace = true
 license = "GPL-3.0-or-later"
 repository.workspace = true
 publish.workspace = true
-description = "Tetsu Wayland compositor: Smithay backends, xdg-shell and the window and workspace bus"
+description = "Tetsu Wayland compositor: Smithay backends, a layout engine (dwindle, master, floating, rules) and the window and workspace bus"
 
 [lints]
 workspace = true
 
 [dependencies]
-serde = "1.0.228"
+regex-lite = "0.1"
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.154"
 smithay = { git = "https://github.com/Smithay/smithay", rev = "8a270232f1bfc416c781273c98a3f52a812a0bba", default-features = false, features = [
     "wayland_frontend",
@@ -25,8 +26,10 @@ smithay = { git = "https://github.com/Smithay/smithay", rev = "8a270232f1bfc416c
     "backend_libinput",
     "backend_session_libseat",
     "renderer_gl",
+    "renderer_multi",
 ] }
 tetsu-bus = { path = "../tetsu-bus" }
+toml = "1.1.8"
 tokio = { version = "1.54.1", features = ["rt", "sync", "macros", "time"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 
@@ -34,3 +37,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 smithay-client-toolkit = { version = "0.21.1", default-features = false }
 tempfile = "3"
 tetsu-bus-contract = { path = "../tetsu-bus-contract" }
+wayland-client = "0.31"
+wayland-protocols-misc = { version = "0.3.12", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }

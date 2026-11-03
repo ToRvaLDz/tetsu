@@ -56,6 +56,19 @@ impl Peer {
         })
     }
 
+    /// Like [`Peer::resolve`], from credentials that may lack a pidfd: a
+    /// kernel without `SO_PEERPIDFD` (< 6.5) gives none, and the peer is
+    /// refused.
+    pub fn from_credentials(
+        uid: u32,
+        gid: u32,
+        pid: i32,
+        pidfd: Option<BorrowedFd<'_>>,
+    ) -> io::Result<Self> {
+        let pidfd = pidfd.ok_or_else(|| denied("no peer pidfd"))?;
+        Self::resolve(uid, gid, pid, pidfd)
+    }
+
     /// A name for the sender, derived from the credentials only: the unit
     /// when the cgroup names one, else the process name.
     pub fn sender_name(&self) -> String {

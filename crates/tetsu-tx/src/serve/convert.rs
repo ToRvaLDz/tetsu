@@ -36,13 +36,24 @@ fn civil_from_days(days: u64) -> (u64, u64, u64) {
 }
 
 /// The wire kind of a record kind.
-pub fn tx_kind(kind: TxKind) -> wire::TxKind {
-    match kind {
+pub fn tx_kind(kind: TxKind) -> Option<wire::TxKind> {
+    Some(match kind {
         TxKind::Update => wire::TxKind::Update,
         TxKind::Install => wire::TxKind::Install,
         TxKind::InstallAur => wire::TxKind::InstallAur,
         TxKind::Remove => wire::TxKind::Remove,
         TxKind::Rollback => wire::TxKind::Rollback,
+        TxKind::InitialInstall => return None,
+    })
+}
+
+/// The wire kind of a request.
+fn request_kind(request: &Request) -> wire::TxKind {
+    match request {
+        Request::Update => wire::TxKind::Update,
+        Request::Install(_) => wire::TxKind::Install,
+        Request::Remove(_) => wire::TxKind::Remove,
+        Request::Rollback(_) => wire::TxKind::Rollback,
     }
 }
 
@@ -68,10 +79,10 @@ fn record_id(record: &Record) -> String {
 /// A committed record as a wire transaction; `None` for a record that
 /// is not a transaction (the installer's, or one rebuilt from the ESP).
 pub fn from_record(record: &Record) -> Option<wire::Transaction> {
-    let kind = record.kind?;
+    let kind = tx_kind(record.kind?)?;
     Some(wire::Transaction {
         id: record_id(record),
-        kind: tx_kind(kind),
+        kind,
         packages: record.packages.clone(),
         state: wire::TxState::Succeeded,
         started_at: rfc3339_ms(record.started_at.unwrap_or(0)),
@@ -90,7 +101,7 @@ pub fn running(id: &str, request: &Request, started: u64) -> wire::Transaction {
     };
     wire::Transaction {
         id: id.to_owned(),
-        kind: tx_kind(request.kind()),
+        kind: request_kind(request),
         packages,
         state: wire::TxState::Running,
         started_at: rfc3339_ms(started),
@@ -102,10 +113,16 @@ pub fn running(id: &str, request: &Request, started: u64) -> wire::Transaction {
 }
 
 /// The transaction a report closes.
-pub fn finished(id: &str, report: &Report, started: u64, finished: u64) -> wire::Transaction {
+pub fn finished(
+    id: &str,
+    request: &Request,
+    report: &Report,
+    started: u64,
+    finished: u64,
+) -> wire::Transaction {
     wire::Transaction {
         id: id.to_owned(),
-        kind: tx_kind(report.kind),
+        kind: request_kind(request),
         packages: report.packages.clone(),
         state: wire::TxState::Succeeded,
         started_at: rfc3339_ms(started),
@@ -297,12 +314,26 @@ mod tests {
     }
 
     #[test]
+    fn the_installer_record_is_not_a_transaction() {
+        let installer = Record {
+            kind: Some(TxKind::InitialInstall),
+            ..record(1)
+        };
+        assert_eq!(from_record(&installer), None);
+    }
+
+    #[test]
+    fn the_initial_install_kind_has_no_wire_kind() {
+        assert_eq!(tx_kind(TxKind::InitialInstall), None);
+    }
+
+    #[test]
     fn every_record_kind_has_a_wire_kind() {
-        assert_eq!(tx_kind(TxKind::Update), wire::TxKind::Update);
-        assert_eq!(tx_kind(TxKind::Install), wire::TxKind::Install);
-        assert_eq!(tx_kind(TxKind::InstallAur), wire::TxKind::InstallAur);
-        assert_eq!(tx_kind(TxKind::Remove), wire::TxKind::Remove);
-        assert_eq!(tx_kind(TxKind::Rollback), wire::TxKind::Rollback);
+        assert_eq!(tx_kind(TxKind::Update), Some(wire::TxKind::Update));
+        assert_eq!(tx_kind(TxKind::Install), Some(wire::TxKind::Install));
+        assert_eq!(tx_kind(TxKind::InstallAur), Some(wire::TxKind::InstallAur));
+        assert_eq!(tx_kind(TxKind::Remove), Some(wire::TxKind::Remove));
+        assert_eq!(tx_kind(TxKind::Rollback), Some(wire::TxKind::Rollback));
     }
 
     #[test]
@@ -326,7 +357,13 @@ mod tests {
 
     #[test]
     fn a_report_closes_the_transaction() {
-        let tx = finished("tx-ab", &report(), 1_768_469_400, 1_768_469_401);
+        let tx = finished(
+            "tx-ab",
+            &Request::Remove(vec!["vim".into()]),
+            &report(),
+            1_768_469_400,
+            1_768_469_401,
+        );
         assert_eq!(tx.id, "tx-ab");
         assert_eq!(tx.kind, wire::TxKind::Remove);
         assert_eq!(tx.state, wire::TxState::Succeeded);

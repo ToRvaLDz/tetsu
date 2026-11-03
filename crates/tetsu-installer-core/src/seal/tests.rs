@@ -38,13 +38,36 @@ struct Fake {
     enroll_fails: bool,
     /// Put the key files in the mount point, as a real mount would.
     keys: Option<(&'static str, &'static str)>,
+    /// What `systemd-cryptenroll <device>` lists; `None` makes it fail.
+    listing: Option<&'static str>,
+    /// What `cryptsetup luksDump --dump-json-metadata` prints; `None` fails.
+    dump: Option<&'static str>,
 }
+
+const PASSWORDS_ONLY: &str = "SLOT TYPE\n   0 password\n   1 password\n";
+const WITH_TPM2: &str = "SLOT TYPE\n   0 password\n   1 password\n   2 tpm2\n";
+/// Tetsu's Balanced policy: signed PCR public key and a PIN.
+const TOKEN_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[7],"tpm2-pin":true,"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+/// Tetsu's Comfort policy: the same without the PIN; systemd then writes
+/// no `tpm2-pin` at all.
+const TOKEN_NO_PIN: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+/// A hand-added token with the signed PCR 11 policy but without Tetsu's
+/// PCR 7 binding.
+const TOKEN_UNBOUND: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+/// A hand-added token: PCR 0 only, no signed policy.
+const TOKEN_NO_PUBKEY: &str = r#"{"tokens":{"0":{"type":"systemd-tpm2","keyslots":["2"],
+    "tpm2-pcrs":[0],"tpm2-pin":true}}}"#;
 
 impl Fake {
     fn with_answers(answers: &[&str]) -> Self {
         Self {
             answers: RefCell::new(answers.iter().map(|a| (*a).to_owned()).collect()),
             keys: Some((PEM, "PUBLIC KEY")),
+            listing: Some(PASSWORDS_ONLY),
+            dump: None,
             ..Self::default()
         }
     }
@@ -65,12 +88,32 @@ impl Fake {
         args
     }
 
+    fn enrolled(&self) -> bool {
+        self.calls.borrow().iter().any(|c| {
+            c.program == "systemd-cryptenroll"
+                && c.args.iter().any(|a| a.starts_with("--unlock-key-file="))
+        })
+    }
+
     fn programs(&self) -> Vec<String> {
         self.calls
             .borrow()
             .iter()
             .map(|c| c.program.clone())
             .collect()
+    }
+
+    /// The enrollment itself, not the slot listing before it.
+    fn enroll_call(&self) -> Call {
+        self.calls
+            .borrow()
+            .iter()
+            .find(|c| {
+                c.program == "systemd-cryptenroll"
+                    && c.args.iter().any(|a| a.starts_with("--unlock-key-file="))
+            })
+            .cloned()
+            .expect("no enrollment ran")
     }
 
     fn call(&self, program: &str) -> Call {
@@ -127,8 +170,22 @@ impl Runner for Fake {
     }
 
     fn output(&self, program: &str, args: &[OsString]) -> Result<String, BootError> {
-        assert_eq!(program, "systemd-ask-password");
         self.record(program, args, &[]);
+        if program == "systemd-cryptenroll" {
+            return self.listing.map(str::to_owned).ok_or(BootError::Tool {
+                tool: program.to_owned(),
+                status: "exit status: 1".into(),
+                stderr: "cannot read the header".into(),
+            });
+        }
+        if program == "cryptsetup" {
+            return self.dump.map(str::to_owned).ok_or(BootError::Tool {
+                tool: program.to_owned(),
+                status: "exit status: 1".into(),
+                stderr: "cannot dump".into(),
+            });
+        }
+        assert_eq!(program, "systemd-ask-password");
         let answer = self
             .answers
             .borrow_mut()
@@ -216,13 +273,14 @@ fn comfort_asks_the_passphrase_only_and_seals() {
     assert_eq!(
         f.programs(),
         [
+            "systemd-cryptenroll",
             "mount",
             "systemd-ask-password",
             "systemd-cryptenroll",
             "umount"
         ]
     );
-    let enroll = f.call("systemd-cryptenroll");
+    let enroll = f.enroll_call();
     let key_file = enroll.args[0]
         .strip_prefix("--unlock-key-file=")
         .unwrap()
@@ -266,7 +324,7 @@ fn balanced_asks_the_pin_twice_and_passes_it_in_the_environment() {
     let m = Machine::new("balanced");
     let f = Fake::with_answers(&["correct horse", "2468", "2468"]);
     assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed);
-    let enroll = f.call("systemd-cryptenroll");
+    let enroll = f.enroll_call();
     assert!(enroll.args.contains(&"--tpm2-with-pin=yes".to_owned()));
     assert_eq!(enroll.env, [("NEWPIN".to_owned(), "2468".to_owned())]);
     for call in f.calls.borrow().iter() {
@@ -297,7 +355,7 @@ fn a_pin_mismatch_asks_again_and_gives_up_after_three() {
         run(&m.paths(), &f).unwrap_err().to_string(),
         "the PINs did not match"
     );
-    assert!(!f.programs().contains(&"systemd-cryptenroll".to_owned()));
+    assert!(!f.enrolled());
     assert!(m.level_text().contains("pending"));
     assert!(!m.work_exists());
     assert_eq!(f.programs().last().unwrap(), "umount");
@@ -305,7 +363,7 @@ fn a_pin_mismatch_asks_again_and_gives_up_after_three() {
     let m = Machine::new("balanced");
     let f = Fake::with_answers(&["pw", "1", "2", "7", "7"]);
     assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed);
-    assert_eq!(f.call("systemd-cryptenroll").env[0].1, "7");
+    assert_eq!(f.enroll_call().env[0].1, "7");
 }
 
 #[test]
@@ -327,7 +385,7 @@ fn waits_for(m: &Machine, why: &str) {
         panic!("expected a pending level");
     };
     assert!(got.contains(why), "{got}");
-    assert!(!f.programs().contains(&"systemd-cryptenroll".to_owned()));
+    assert!(!f.enrolled());
     assert!(m.level_text().contains("pending"));
 }
 
@@ -402,5 +460,201 @@ fn an_empty_answer_is_refused() {
     let m = Machine::new("comfort");
     let f = Fake::with_answers(&[""]);
     assert!(run(&m.paths(), &f).is_err());
-    assert!(!f.programs().contains(&"systemd-cryptenroll".to_owned()));
+    assert!(!f.enrolled());
+}
+
+#[test]
+fn a_tpm2_slot_with_tetsus_policy_means_sealed_whatever_the_file_says() {
+    let m = Machine::new("balanced");
+    let f = Fake {
+        listing: Some(WITH_TPM2),
+        dump: Some(TOKEN_PIN),
+        ..Fake::with_answers(&[])
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::AlreadySealed);
+    assert_eq!(f.programs(), ["systemd-cryptenroll", "cryptsetup"]);
+    let list = f.call("systemd-cryptenroll");
+    assert_eq!(list.args, ["/dev/disk/by-uuid/ab-12"]);
+    let dump = f.call("cryptsetup");
+    assert_eq!(
+        dump.args,
+        [
+            "luksDump",
+            "--dump-json-metadata",
+            "/dev/disk/by-uuid/ab-12"
+        ]
+    );
+    assert_eq!(
+        m.level_text(),
+        "level = \"balanced\"\nstate = \"sealed\"\n",
+        "the level is kept"
+    );
+    assert!(!m.work_exists());
+
+    let m = Machine::new("comfort");
+    let f = Fake {
+        listing: Some(WITH_TPM2),
+        dump: Some(TOKEN_NO_PIN),
+        ..Fake::with_answers(&[])
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::AlreadySealed);
+}
+
+/// A tpm2 slot that does not carry the chosen level's policy is replaced by
+/// the normal seal.
+fn seals_again(level: &str, answers: &[&str], dump: Option<&'static str>) {
+    let m = Machine::new(level);
+    let f = Fake {
+        listing: Some(WITH_TPM2),
+        dump,
+        ..Fake::with_answers(answers)
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed, "{dump:?}");
+    assert!(f.enrolled());
+    assert!(
+        f.enroll_call()
+            .args
+            .contains(&"--wipe-slot=tpm2".to_owned())
+    );
+}
+
+#[test]
+fn a_tpm2_slot_with_another_policy_is_sealed_again() {
+    // Balanced needs a PIN.
+    seals_again("balanced", &["pw", "1", "1"], Some(TOKEN_NO_PIN));
+    // Comfort must not have one.
+    seals_again("comfort", &["pw"], Some(TOKEN_PIN));
+    // No signed-PCR public key.
+    seals_again("balanced", &["pw", "1", "1"], Some(TOKEN_NO_PUBKEY));
+    seals_again("comfort", &["pw"], Some(TOKEN_NO_PUBKEY));
+    // Signed PCR 11 but no PCR 7 binding.
+    seals_again("comfort", &["pw"], Some(TOKEN_UNBOUND));
+    // The dump fails or is not JSON.
+    seals_again("comfort", &["pw"], None);
+    seals_again("comfort", &["pw"], Some("not json"));
+}
+
+#[test]
+fn a_failing_listing_falls_through_to_the_normal_seal() {
+    let m = Machine::new("comfort");
+    let f = Fake {
+        listing: None,
+        ..Fake::with_answers(&["pw"])
+    };
+    assert_eq!(run(&m.paths(), &f).unwrap(), Outcome::Sealed);
+    assert!(f.enrolled());
+}
+
+#[test]
+fn has_tpm2_slot_reads_the_type_column() {
+    for (listing, expect) in [
+        ("", false),
+        ("SLOT TYPE\n", false),
+        (PASSWORDS_ONLY, false),
+        (WITH_TPM2, true),
+        ("SLOT TYPE\n   0 tpm2\n", true),
+        (
+            "SLOT TYPE\n   0 password\n   1 recovery\n   3 fido2\n",
+            false,
+        ),
+        ("  1 tpm2  \n", true),
+        ("tpm2\n", false),
+        ("SLOT TYPE\n   0 tpm2-like\n", false),
+    ] {
+        assert_eq!(has_tpm2_slot(listing), expect, "{listing:?}");
+    }
+}
+
+#[test]
+fn pcr_lists_are_numbers_matched_one_by_one() {
+    assert_eq!(pcr_arg(&[11]), "11");
+    assert_eq!(pcr_arg(&[7, 11]), "7+11");
+    let token: serde_json::Value =
+        serde_json::from_str(r#"{"pcrs":[7,11],"names":["11"]}"#).unwrap();
+    assert!(has_pcrs(&token, "pcrs", &[11]));
+    assert!(has_pcrs(&token, "pcrs", &[11, 7]));
+    assert!(!has_pcrs(&token, "pcrs", &[7, 12]));
+    assert!(!has_pcrs(&token, "names", &[11]));
+    assert!(!has_pcrs(&token, "missing", &[11]));
+}
+
+#[test]
+fn has_tetsu_token_wants_the_pubkey_and_the_level_s_pin() {
+    use UnlockLevel::{Balanced, Comfort};
+    let other = r#"{"tokens":{"0":{"type":"systemd-fido2"},"1":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+    let empty_key = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"","tpm2-pin":true}}}"#;
+    let wrong_type = r#"{"tokens":{"0":{"type":"other","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD","tpm2-pin":true}}}"#;
+    // systemd never wrote the key with a hyphen.
+    let hyphen = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[11],"tpm2-pubkey":"QUJD"}}}"#;
+    // The public key must sign PCR 11, the one the UKI measures.
+    let no_pcrs =
+        r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey":"QUJD"}}}"#;
+    let other_pcr = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[7],"tpm2_pubkey_pcrs":[7],"tpm2_pubkey":"QUJD"}}}"#;
+    // The token must also be bound to PCR 7, as Tetsu enrolls it.
+    let no_bound =
+        r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+    let other_bound = r#"{"tokens":{"0":{"type":"systemd-tpm2","tpm2-pcrs":[0],"tpm2_pubkey_pcrs":[11],"tpm2_pubkey":"QUJD"}}}"#;
+    for (json, level, expect) in [
+        (TOKEN_PIN, Balanced, true),
+        (TOKEN_PIN, Comfort, false),
+        (TOKEN_NO_PIN, Comfort, true),
+        (TOKEN_NO_PIN, Balanced, false),
+        (other, Comfort, true),
+        (other, Balanced, false),
+        (TOKEN_NO_PUBKEY, Balanced, false),
+        (empty_key, Balanced, false),
+        (wrong_type, Balanced, false),
+        (hyphen, Comfort, false),
+        (no_pcrs, Comfort, false),
+        (other_pcr, Comfort, false),
+        (TOKEN_UNBOUND, Comfort, false),
+        (no_bound, Comfort, false),
+        (other_bound, Comfort, false),
+        (r#"{"tokens":{}}"#, Comfort, false),
+        (r#"{"keyslots":{}}"#, Comfort, false),
+        ("", Comfort, false),
+        ("[]", Comfort, false),
+    ] {
+        assert_eq!(has_tetsu_token(json, level), expect, "{json} {level:?}");
+    }
+}
+
+/// `cryptsetup luksDump --dump-json-metadata` of the root device of a
+/// Comfort test VM (systemd 262.1-1, installed from 689a589 and sealed by
+/// `tetsu-unlock-seal` on its first boot), captured byte for byte over the
+/// VM's guest agent before the #115 rollback check. Only the string values
+/// longer than 64 characters (`tpm2-blob`, `tpm2_pubkey`, `tpm2_srk`) are
+/// cut to their first 48; keys, their order and every other value are as
+/// systemd and cryptsetup wrote them.
+const SYSTEMD_COMFORT: &str = include_str!("testdata/systemd-262-comfort-metadata.json");
+/// The same capture from a Balanced test VM: systemd adds `tpm2-pin`,
+/// `tpm2_salt` and the `tpm2_argon2id_*` keys.
+const SYSTEMD_BALANCED: &str = include_str!("testdata/systemd-262-balanced-metadata.json");
+
+#[test]
+fn a_token_written_by_systemd_counts_as_sealed() {
+    use UnlockLevel::{Balanced, Comfort};
+    assert!(has_tetsu_token(SYSTEMD_COMFORT, Comfort));
+    assert!(!has_tetsu_token(SYSTEMD_COMFORT, Balanced));
+    assert!(has_tetsu_token(SYSTEMD_BALANCED, Balanced));
+    assert!(!has_tetsu_token(SYSTEMD_BALANCED, Comfort));
+
+    for (level, dump) in [("comfort", SYSTEMD_COMFORT), ("balanced", SYSTEMD_BALANCED)] {
+        let m = Machine::new(level);
+        let f = Fake {
+            listing: Some(WITH_TPM2),
+            dump: Some(dump),
+            ..Fake::with_answers(&[])
+        };
+        assert_eq!(
+            run(&m.paths(), &f).unwrap(),
+            Outcome::AlreadySealed,
+            "{level}"
+        );
+        assert_eq!(
+            f.programs(),
+            ["systemd-cryptenroll", "cryptsetup"],
+            "{level}"
+        );
+    }
 }

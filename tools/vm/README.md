@@ -268,3 +268,13 @@ is unset (`serve` ignores it). In protocol order:
 | `renamed` | renamed into place, ESP directory not synced yet (the FAT rename) | 1 or 2 (on trial) |
 | `committed` | the entry is committed and synced | 2 (on trial) |
 | `recorded` | the record is written, retention has not run | 2 (on trial) |
+
+## Session acceptance
+
+`tools/vm/tests/session.sh` is the acceptance test of the session (ticket
+#76): it installs the payload, boots to greetd, logs in through greetd's own
+IPC from the serial shell (the same path as the tty1 greeter), and checks the
+compositor, the three daemons, their order and the clean end of the session.
+Run `image/build && tools/vm/tests/session.sh`; exit 77 means KVM or the image
+is missing. Logs go to `target/vm-session/session/`. The keyboard path of the
+tty1 greeter itself is a human check (`tetsu-vm start ... --gui`).

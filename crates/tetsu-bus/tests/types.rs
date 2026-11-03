@@ -7,6 +7,10 @@ use serde_json::{Value, json};
 use tetsu_bus::notify::{
     Action, DismissReason, NotifyKind, NotifyReply, PendingEvent, PendingKind, ShowParams, Urgency,
 };
+use tetsu_bus::secrets::{
+    AddParams, RemoveParams, RotateParams, SecretEvent, SecretEventKind, SecretInfo, SecretKind,
+    Sensitive,
+};
 use tetsu_bus::session::{SessionEvent, SessionKind};
 use tetsu_bus::tx::{
     DefaultBoot, ListParams, PackageChange, PackageSource, PackagesParams, Phase, Progress,
@@ -195,6 +199,87 @@ fn tx_parameters_parse_with_and_without_optionals() {
     assert_eq!(limited.limit, Some(5));
     let all: ListParams = serde_json::from_value(json!({})).unwrap();
     assert_eq!(all.limit, None);
+}
+
+fn demo_secret() -> SecretInfo {
+    SecretInfo {
+        id: "anthropic".into(),
+        kind: SecretKind::Header,
+        header_name: Some("x-api-key".into()),
+        host: "api.anthropic.com".into(),
+        allowed_tools: vec![],
+        created_at: "2026-01-15T09:30:00.000Z".into(),
+        rotated_at: None,
+        last_used_at: None,
+        use_count: 0,
+    }
+}
+
+#[test]
+fn secret_events_match_the_fixtures() {
+    let iface = "org.tetsu.secrets.v1";
+    let initial: SecretEvent = round_trips(iface, "SecretEvent.initial");
+    assert_eq!(initial.kind, SecretEventKind::Initial);
+    assert_eq!(initial.secrets, Some(vec![demo_secret()]));
+    let added: SecretEvent = round_trips(iface, "SecretEvent.added");
+    assert_eq!(added.kind, SecretEventKind::Added);
+    assert_eq!(added.secret, Some(demo_secret()));
+    let changed: SecretEvent = round_trips(iface, "SecretEvent.changed");
+    let used = changed.secret.expect("changed carries the secret");
+    assert_eq!(used.use_count, 3);
+    assert_eq!(
+        used.last_used_at.as_deref(),
+        Some("2026-01-15T10:00:00.000Z")
+    );
+    let removed: SecretEvent = round_trips(iface, "SecretEvent.removed");
+    assert_eq!(removed.id.as_deref(), Some("anthropic"));
+}
+
+#[test]
+fn secret_unknown_enum_values_map_to_unknown() {
+    let event: SecretEvent = serde_json::from_value(json!({ "kind": "sealed" })).unwrap();
+    assert_eq!(event.kind, SecretEventKind::Unknown);
+    let mut info = serde_json::to_value(demo_secret()).unwrap();
+    info["kind"] = json!("oauth");
+    let info: SecretInfo = serde_json::from_value(info).unwrap();
+    assert_eq!(info.kind, SecretKind::Unknown);
+}
+
+#[test]
+fn secret_parameters_parse_with_and_without_optionals() {
+    let add: AddParams = serde_json::from_value(json!({
+        "id": "openai",
+        "kind": "bearer",
+        "host": "api.openai.com",
+        "value": "demo-value",
+        "future_field": 1
+    }))
+    .unwrap();
+    assert_eq!(add.kind, SecretKind::Bearer);
+    assert_eq!(add.header_name, None);
+    assert_eq!(add.allowed_tools, None);
+    assert_eq!(add.value.expose(), "demo-value");
+    let rotate: RotateParams =
+        serde_json::from_value(json!({ "id": "openai", "value": "other-value" })).unwrap();
+    assert_eq!(rotate.value.expose(), "other-value");
+    let remove: RemoveParams = serde_json::from_value(json!({ "id": "openai" })).unwrap();
+    assert_eq!(remove.id, "openai");
+}
+
+#[test]
+fn a_sensitive_value_is_redacted_in_debug_and_travels_on_the_wire() {
+    let add = AddParams {
+        id: "openai".into(),
+        kind: SecretKind::Bearer,
+        header_name: None,
+        host: "api.openai.com".into(),
+        allowed_tools: None,
+        value: Sensitive::new("demo-value"),
+    };
+    assert!(!format!("{add:?}").contains("demo-value"));
+    assert!(!format!("{:?}", add.value).contains("demo-value"));
+    let wire = serde_json::to_value(&add).unwrap();
+    assert_eq!(wire["value"], json!("demo-value"));
 }
 
 fn win() -> Window {

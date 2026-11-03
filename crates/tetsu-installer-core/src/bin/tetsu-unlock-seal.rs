@@ -11,6 +11,9 @@ fn main() -> ExitCode {
     match seal::run(&SealPaths::system(), &SystemRunner::new()) {
         Ok(Outcome::NotNeeded) => {}
         Ok(Outcome::Sealed) => println!("tetsu-unlock-seal: the disk is now sealed to the TPM"),
+        Ok(Outcome::AlreadySealed) => {
+            println!("tetsu-unlock-seal: the disk already holds a TPM2 slot, state set to sealed");
+        }
         Ok(Outcome::Waiting(why)) => {
             println!("tetsu-unlock-seal: unlock level stays pending: {why}");
         }

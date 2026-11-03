@@ -1,0 +1,15 @@
+# Installed as /usr/lib/systemd/user/tetsu-bar.service. It reads
+# TETSU_COMP_SOCKET from the user manager environment, set by tetsu-comp.
+[Unit]
+Description=Tetsu status bar
+Documentation=https://github.com/ToRvaLDz/tetsu
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/tetsu-bar
+Restart=on-failure
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target

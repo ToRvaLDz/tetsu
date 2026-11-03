@@ -3,19 +3,24 @@
 use crate::{Contract, Doc, ErrorDef, Field, Interface, Kind, Method, Ty, TypeDef, Violation};
 
 /// The closed set of tags.
-const TAGS: [&str; 6] = [
+const TAGS: [&str; 7] = [
     "@capability",
     "@destructive",
     "@transient",
     "@permanent",
     "@untrusted",
     "@deprecated",
+    "@sensitive",
 ];
 
 const ON_METHOD: &[&str] = &["@capability", "@destructive", "@deprecated"];
 const ON_ERROR: &[&str] = &["@transient", "@permanent"];
 // Inputs, replies and error parameters are fields too, as in type members.
 const ON_FIELD: &[&str] = &["@untrusted", "@deprecated"];
+// `@sensitive` marks secret material sent to a server, so it is allowed on
+// top-level method input parameters only: never in a reply, a type or an
+// error, which makes "never in a reply" checkable by structure.
+const ON_INPUT: &[&str] = &["@untrusted", "@deprecated", "@sensitive"];
 const ON_NOTHING: &[&str] = &[];
 
 /// Methods that change no state besides the one they exist to change in
@@ -105,7 +110,7 @@ fn check_method(m: &Method, path: &str, out: &mut Vec<Violation>) {
         ));
     }
     let in_path = format!("{path}(in)");
-    check_fields(&m.inputs, &in_path, ON_FIELD, out);
+    check_fields(&m.inputs, &in_path, ON_INPUT, out);
     for p in &m.inputs {
         if !p.doc.has_prose() {
             out.push(Violation::new(

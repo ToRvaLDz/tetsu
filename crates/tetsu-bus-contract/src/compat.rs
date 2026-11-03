@@ -190,6 +190,10 @@ fn compare_fields(
         if b.doc.has_tag("@untrusted") && !c.doc.has_tag("@untrusted") {
             push(out, Kind::TagRemoved, &fpath, "@untrusted removed");
         }
+        // Only method inputs can carry it (the rules enforce that).
+        if b.doc.has_tag("@sensitive") && !c.doc.has_tag("@sensitive") {
+            push(out, Kind::TagRemoved, &fpath, "@sensitive removed");
+        }
         compare_ty(&b.ty, &c.ty, &fpath, relax_input, out);
     }
     for c in cur {

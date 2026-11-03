@@ -4,24 +4,34 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
+use tetsu_bus::config::{ConfigEvent, GetConfigReply};
+use tetsu_bus::output::{ListOutputsReply, Output, OutputEvent, OutputKind};
 use tetsu_bus::server::StreamItem;
+use tetsu_bus::session::{GetSessionReply, SessionEvent, SessionKind};
 use tetsu_bus::window::{ListWindowsReply, Window, WindowEvent, WindowKind};
 use tetsu_bus::workspace::{ListWorkspacesReply, Workspace, WorkspaceEvent, WorkspaceKind};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
+use super::config::ConfigMirror;
 use crate::model::{Events, Model};
 
 /// Events a watcher may have queued before it is cut.
 pub const WATCH_QUEUE: usize = 256;
 
 /// The full state, to start a mirror from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
     /// For `ListWindows`.
     pub windows: ListWindowsReply,
     /// For `ListWorkspaces`.
     pub workspaces: ListWorkspacesReply,
+    /// For `ListOutputs`.
+    pub outputs: ListOutputsReply,
+    /// For `GetSession`.
+    pub locked: bool,
+    /// For `GetConfig`.
+    pub config: GetConfigReply,
 }
 
 impl Snapshot {
@@ -30,7 +40,22 @@ impl Snapshot {
         Self {
             windows: model.windows_snapshot(),
             workspaces: model.workspaces_snapshot(),
+            outputs: model.outputs_snapshot(),
+            locked: false,
+            config: GetConfigReply::default(),
         }
+    }
+
+    /// The same state with the config.
+    #[must_use]
+    pub fn with_config(self, config: GetConfigReply) -> Self {
+        Self { config, ..self }
+    }
+
+    /// The same state with the session lock state.
+    #[must_use]
+    pub fn with_locked(self, locked: bool) -> Self {
+        Self { locked, ..self }
     }
 }
 
@@ -42,6 +67,9 @@ pub struct Mirror {
     workspaces: Vec<Workspace>,
     active: BTreeMap<String, String>,
     focused_workspace: Option<String>,
+    outputs: Vec<Output>,
+    locked: bool,
+    config: ConfigMirror,
 }
 
 impl Mirror {
@@ -53,7 +81,20 @@ impl Mirror {
             workspaces: snapshot.workspaces.workspaces.clone(),
             active: snapshot.workspaces.active.clone(),
             focused_workspace: snapshot.workspaces.focused_id.clone(),
+            outputs: snapshot.outputs.outputs.clone(),
+            locked: snapshot.locked,
+            config: ConfigMirror::new(snapshot.config.clone()),
         }
+    }
+
+    /// Applies one config event.
+    pub fn apply_config(&mut self, event: &ConfigEvent) {
+        self.config.apply(event);
+    }
+
+    /// For `GetConfig`.
+    pub fn config(&self) -> GetConfigReply {
+        self.config.reply()
     }
 
     /// Applies one window event.
@@ -129,6 +170,55 @@ impl Mirror {
         }
     }
 
+    /// Applies one output event.
+    pub fn apply_output(&mut self, event: &OutputEvent) {
+        match event.kind {
+            OutputKind::Initial => self.outputs = event.outputs.clone().unwrap_or_default(),
+            OutputKind::Added => {
+                if let Some(output) = &event.output {
+                    self.outputs.push(output.clone());
+                }
+            }
+            OutputKind::Changed => {
+                if let Some(output) = &event.output
+                    && let Some(slot) = self.outputs.iter_mut().find(|o| o.id == output.id)
+                {
+                    *slot = output.clone();
+                }
+            }
+            OutputKind::Removed => {
+                if let Some(id) = &event.id {
+                    self.outputs.retain(|o| &o.id != id);
+                }
+            }
+            OutputKind::Unknown => {}
+        }
+    }
+
+    /// Applies one session event.
+    pub fn apply_session(&mut self, event: &SessionEvent) {
+        match event.kind {
+            SessionKind::Initial => self.locked = event.locked.unwrap_or(self.locked),
+            SessionKind::Locked => self.locked = true,
+            SessionKind::Unlocked => self.locked = false,
+            SessionKind::Unknown => {}
+        }
+    }
+
+    /// For `GetSession`.
+    pub fn session(&self) -> GetSessionReply {
+        GetSessionReply {
+            locked: self.locked,
+        }
+    }
+
+    /// For `ListOutputs`.
+    pub fn outputs(&self) -> ListOutputsReply {
+        ListOutputsReply {
+            outputs: self.outputs.clone(),
+        }
+    }
+
     /// For `ListWindows`.
     pub fn windows(&self) -> ListWindowsReply {
         ListWindowsReply {
@@ -150,6 +240,14 @@ impl Mirror {
         WindowEvent::initial(self.windows.clone(), self.focused_window.clone())
     }
 
+    fn outputs_initial(&self) -> OutputEvent {
+        OutputEvent::initial(self.outputs.clone())
+    }
+
+    fn session_initial(&self) -> SessionEvent {
+        SessionEvent::initial(self.locked)
+    }
+
     fn workspaces_initial(&self) -> WorkspaceEvent {
         WorkspaceEvent::initial(
             self.workspaces.clone(),
@@ -161,12 +259,15 @@ impl Mirror {
 
 type Watchers = Vec<mpsc::Sender<StreamItem>>;
 
-/// The mirror and the watchers of both interfaces.
+/// The mirror and the watchers of the four interfaces.
 #[derive(Debug)]
 pub struct Hub {
     mirror: Mirror,
     window_watchers: Watchers,
     workspace_watchers: Watchers,
+    output_watchers: Watchers,
+    session_watchers: Watchers,
+    config_watchers: Watchers,
 }
 
 impl Hub {
@@ -176,6 +277,9 @@ impl Hub {
             mirror: Mirror::from_snapshot(snapshot),
             window_watchers: Vec::new(),
             workspace_watchers: Vec::new(),
+            output_watchers: Vec::new(),
+            session_watchers: Vec::new(),
+            config_watchers: Vec::new(),
         }
     }
 
@@ -196,11 +300,42 @@ impl Hub {
             self.mirror.apply_workspace(event);
             fan_out(&mut self.workspace_watchers, event);
         }
+        for event in &events.output {
+            self.mirror.apply_output(event);
+            fan_out(&mut self.output_watchers, event);
+        }
+        for event in &events.session {
+            self.mirror.apply_session(event);
+            fan_out(&mut self.session_watchers, event);
+        }
+    }
+
+    /// Applies config events to the mirror and sends them to the watchers.
+    pub fn publish_config(&mut self, events: &[ConfigEvent]) {
+        for event in events {
+            self.mirror.apply_config(event);
+            fan_out(&mut self.config_watchers, event);
+        }
+    }
+
+    /// A new `WatchConfig` stream, `initial` already queued.
+    pub fn watch_config(&mut self) -> mpsc::Receiver<StreamItem> {
+        watch(&mut self.config_watchers, &self.mirror.config.initial())
     }
 
     /// A new `WatchWindows` stream, `initial` already queued.
     pub fn watch_windows(&mut self) -> mpsc::Receiver<StreamItem> {
         watch(&mut self.window_watchers, &self.mirror.windows_initial())
+    }
+
+    /// A new `WatchOutputs` stream, `initial` already queued.
+    pub fn watch_outputs(&mut self) -> mpsc::Receiver<StreamItem> {
+        watch(&mut self.output_watchers, &self.mirror.outputs_initial())
+    }
+
+    /// A new `WatchSession` stream, `initial` already queued.
+    pub fn watch_session(&mut self) -> mpsc::Receiver<StreamItem> {
+        watch(&mut self.session_watchers, &self.mirror.session_initial())
     }
 
     /// A new `WatchWorkspaces` stream, `initial` already queued.

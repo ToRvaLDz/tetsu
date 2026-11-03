@@ -14,6 +14,7 @@ org.tetsu.comp.window.v1.WatchWindows
 org.tetsu.comp.workspace.v1.WatchWorkspaces
 org.tetsu.notify.v1.Show
 org.tetsu.notify.v1.WatchPending
+org.tetsu.secrets.v1.WatchSecrets
 org.tetsu.tx.v1.Install
 org.tetsu.tx.v1.InstallFromAur
 org.tetsu.tx.v1.Remove

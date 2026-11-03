@@ -32,6 +32,9 @@ for tool in cargo mkosi makepkg curl sha256sum install; do
   command -v "$tool" >/dev/null || die "missing tool: $tool"
 done
 
+# The session crates come from stage-session, which also installs them.
+mapfile -t -O "${#CRATES[@]}" CRATES < <("$IMAGE"/stage-session --crates | tr ' ' '\n')
+
 # mkosi runs unprivileged (user namespaces) when it can; sudo is the fallback.
 mkosi_run() {
   local use=${TETSU_IMAGE_SUDO:-auto}
@@ -119,6 +122,7 @@ stage_payload() {
   local initrd="$REPO/crates/tetsu-installer-core/initrd" txinitrd="$REPO/crates/tetsu-tx/initrd"
   rm -rf "$root"
   mkdir -p "$root/usr/bin" "$root/usr/lib/systemd/system" \
+    "$root/usr/lib/systemd/user" "$root/usr/lib/systemd/user-preset" \
     "$root/usr/lib/initcpio/install" "$root/etc"
   for b in "${BINS_PAYLOAD[@]}"; do
     install -m 0755 "$REPO/target/release/$b" "$root/usr/bin/$b"
@@ -129,8 +133,16 @@ stage_payload() {
   install -m 0644 "$REPO/crates/tetsu-tx/systemd/tetsu-boot-check.service" "$root/usr/lib/systemd/system/"
   install -m 0644 "$txinitrd/tetsu.install" "$root/usr/lib/initcpio/install/tetsu"
   "$IMAGE/stage-bus-policy" "$root"
+  # The secrets broker runs per user: its units live in the user manager's
+  # tree and the preset enables its socket (the service is socket
+  # activated), so every user has it under default.target.
+  install -m 0644 "$REPO/crates/tetsu-secrets/dist/tetsu-secrets.service" \
+    "$REPO/crates/tetsu-secrets/dist/tetsu-secrets.socket" \
+    "$REPO/crates/tetsu-secrets/dist/tetsu-secrets-init.service" "$root/usr/lib/systemd/user/"
+  printf 'enable tetsu-secrets.socket\n' >"$root/usr/lib/systemd/user-preset/80-tetsu.preset"
   locale_gen | sort -u >"$root/etc/locale.gen"
   stage_certs "$root"
+  "$IMAGE/stage-session" "$root"
 }
 
 stage_installer() {

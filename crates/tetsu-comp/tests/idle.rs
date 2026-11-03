@@ -1,0 +1,169 @@
+//! The compositor's idle timeout on an injected clock: every decision is
+//! taken on `Instant`s the test picks, with no sleeps.
+
+use std::time::{Duration, Instant};
+
+use tetsu_comp::idle::{IdleLocker, IdleTimer, idle_locker, may_lock, timeout_in, timeout_of};
+use tetsu_comp::lock::Phase;
+
+const TIMEOUT: Duration = Duration::from_secs(10);
+
+fn secs(s: u64) -> Duration {
+    Duration::from_secs(s)
+}
+
+#[test]
+fn not_due_before_the_timeout_and_due_at_it() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
+    assert!(!timer.due(t0, true));
+    assert!(!timer.due(t0 + secs(9), true));
+    assert!(!timer.due(t0 + TIMEOUT - Duration::from_millis(1), true));
+    assert!(timer.due(t0 + TIMEOUT, true));
+}
+
+#[test]
+fn an_idle_unlocked_session_is_due_again_every_timeout() {
+    // A locker that failed or crashed leaves the session unlocked: idle
+    // retries it a full timeout after each firing (fail-closed).
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
+    assert!(timer.due(t0 + secs(11), true));
+    assert!(!timer.due(t0 + secs(12), true));
+    assert!(!timer.due(t0 + secs(21) - Duration::from_millis(1), true));
+    assert!(timer.due(t0 + secs(21), true));
+    assert!(!timer.due(t0 + secs(30), true));
+    assert!(timer.due(t0 + secs(31), true));
+}
+
+#[test]
+fn activity_rearms_from_the_new_activity() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
+    timer.activity(t0 + secs(5));
+    assert!(!timer.due(t0 + secs(10), true));
+    assert!(!timer.due(t0 + secs(14), true));
+    assert!(timer.due(t0 + secs(15), true));
+
+    timer.activity(t0 + secs(20));
+    assert!(!timer.due(t0 + secs(29), true));
+    assert!(timer.due(t0 + secs(30), true));
+}
+
+#[test]
+fn never_due_while_not_unlocked_and_the_period_is_kept() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
+    assert!(!timer.due(t0 + secs(10), false));
+    assert!(!timer.due(t0 + secs(30), false));
+    // Unlocked again with no activity: due on the next poll.
+    assert!(timer.due(t0 + secs(31), true));
+}
+
+#[test]
+fn no_timeout_is_never_due() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(None, t0);
+    assert!(!timer.due(t0 + secs(1), true));
+    assert!(!timer.due(t0 + secs(86_400 * 7), true));
+}
+
+#[test]
+fn a_lower_timeout_than_the_idle_time_is_due_on_the_next_poll() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(secs(60)), t0);
+    assert!(!timer.due(t0 + secs(20), true));
+    timer.set_timeout(Some(TIMEOUT));
+    assert!(timer.due(t0 + secs(21), true));
+}
+
+#[test]
+fn turning_the_timeout_on_counts_from_the_last_activity() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(None, t0);
+    timer.activity(t0 + secs(5));
+    assert!(!timer.due(t0 + secs(30), true));
+    timer.set_timeout(Some(secs(30)));
+    assert!(!timer.due(t0 + secs(34), true));
+    assert!(timer.due(t0 + secs(35), true));
+}
+
+#[test]
+fn a_new_timeout_after_firing_counts_from_the_firing() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
+    assert!(timer.due(t0 + TIMEOUT, true));
+    timer.set_timeout(Some(secs(5)));
+    assert!(!timer.due(t0 + secs(14), true));
+    assert!(timer.due(t0 + secs(15), true));
+}
+
+#[test]
+fn a_poll_while_locked_after_firing_keeps_the_retry_due() {
+    let t0 = Instant::now();
+    let mut timer = IdleTimer::new(Some(TIMEOUT), t0);
+    assert!(timer.due(t0 + TIMEOUT, true));
+    assert!(!timer.due(t0 + secs(25), false));
+    // The lock went away with no activity: retried on the next poll.
+    assert!(timer.due(t0 + secs(26), true));
+}
+
+#[test]
+fn zero_seconds_turns_idle_off() {
+    assert_eq!(timeout_of(0), None);
+    assert_eq!(timeout_of(30), Some(secs(30)));
+}
+
+#[test]
+fn only_an_unlocked_session_may_lock_on_idle() {
+    assert!(may_lock(Phase::Unlocked));
+    for phase in [Phase::Locking, Phase::Locked, Phase::Defunct] {
+        assert!(!may_lock(phase), "{phase:?}");
+    }
+}
+
+#[test]
+fn a_timeout_counts_in_the_unit_it_is_given() {
+    let unit = Duration::from_millis(33);
+    assert_eq!(timeout_in(0, unit), None);
+    assert_eq!(timeout_in(30, unit), Some(Duration::from_millis(990)));
+    assert_eq!(timeout_in(30, secs(1)), timeout_of(30));
+}
+
+#[test]
+fn an_idle_firing_starts_a_locker_when_none_runs() {
+    assert_eq!(idle_locker(Phase::Unlocked, false), IdleLocker::Start);
+}
+
+#[test]
+fn an_idle_firing_restarts_a_locker_that_runs_and_did_not_lock() {
+    assert_eq!(idle_locker(Phase::Unlocked, true), IdleLocker::Restart);
+}
+
+#[test]
+fn an_idle_firing_leaves_a_session_that_is_not_unlocked() {
+    for phase in [Phase::Locking, Phase::Locked, Phase::Defunct] {
+        for alive in [false, true] {
+            assert_eq!(idle_locker(phase, alive), IdleLocker::Leave, "{phase:?}");
+        }
+    }
+}
+
+#[test]
+fn retries_while_the_last_locker_hangs_keep_one_idle_locker() {
+    // Every firing finds the last locker still running: the count of idle
+    // lockers never grows past one.
+    let mut running = 0_u32;
+    for _ in 0..100 {
+        match idle_locker(Phase::Unlocked, running > 0) {
+            IdleLocker::Leave => {}
+            IdleLocker::Start => running += 1,
+            IdleLocker::Restart => {
+                running -= 1;
+                running += 1;
+            }
+        }
+        assert!(running <= 1, "{running} idle lockers");
+    }
+    assert_eq!(running, 1);
+}

@@ -1,0 +1,2 @@
+# greetd's Alias=display-manager.service puts it under graphical.target.
+enable greetd.service

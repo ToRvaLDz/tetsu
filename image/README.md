@@ -91,17 +91,20 @@ set is defined in one place; `image/tests/tetsu-base.sh` pins that shape.
 - The pacman database is at `/usr/lib/pacman` and `/var/lib/pacman` links to it
   (the layout `tetsu-tx` expects, with `@var` mounted over `/var`).
 - Nothing machine-specific: no `/etc/machine-id`, no SSH host keys (no sshd), no
-  `/etc/pacman.d/gnupg`. The keyring is made at the first boot by
-  `tetsu-keyring-init.service` (`pacman-key --init` and `--populate archlinux`),
-  so each device has its own local signing key and the payload holds public
-  keys only.
+  `/etc/pacman.d/gnupg`. The installer makes the keyring at install time, in an
+  offline container over snapshot 1 (`pacman-key --init` and `--populate
+  archlinux`), so the first `tetsu-tx update` finds it. Each device has its own
+  local signing key, made on that device, and the payload holds public keys
+  only. `tetsu-keyring-init.service` stays as a fallback: it does nothing while
+  `/etc/pacman.d/gnupg/trustdb.gpg` exists.
 - `%wheel ALL=(ALL:ALL) ALL` in `/etc/sudoers.d/10-wheel` (0440).
 - `systemd-firstboot` is masked: the installer writes keyboard, language,
   timezone and hostname. systemd-networkd (DHCP on `en*`/`eth*`),
   systemd-resolved and systemd-timesyncd are enabled, so the first
   `tx update` has a network. The pacman mirror is
   `https://geo.mirror.pkgbuild.com`.
-- Locales named by the installer's keyboard table are generated.
+- Locales named by the installer's keyboard table are generated; the
+  installer generates any other supported locale it is given, at install time.
 - Bus access policy files (`image/stage-bus-policy`, called by `image/build`;
   `image/tests/bus-policy.sh` pins them without root):
   - `tetsu-tx.socket` binds `/run/tetsu/org.tetsu.tx.v1` (0666) with a link in
@@ -142,8 +145,8 @@ boots. systemd-boot with the UKI mkosi builds; kernel command line
   `tetsu-installer --medium /usr/share/tetsu/medium` again).
 - `/usr/share/tetsu/secureboot/microsoft/{kek,db}/*.der`: Microsoft KEK CA
   2011 and KEK 2K CA 2023 in `kek/`; UEFI CA 2011, Windows Production PCA 2011,
-  Microsoft UEFI CA 2023 and Windows UEFI CA 2023 in `db/`. The Option ROM UEFI
-  CA 2023 is not included. Sources and SHA-256 pins are in
+  Microsoft UEFI CA 2023, Windows UEFI CA 2023 and Option ROM UEFI CA 2023 in
+  `db/`. Sources and SHA-256 pins are in
   `image/microsoft-certs.sha256`. The payload carries the same files, since
   `tetsu secureboot enroll` on the installed system refuses to run without them
   (unless `--without-microsoft`).
@@ -166,3 +169,34 @@ tools/vm/tetsu-vm start --disk target/image/tetsu-installer.raw --snapshot \
 tools/vm/tetsu-vm wait-for --timeout 240 'Keyboard layout'
 tools/vm/tetsu-vm stop
 ```
+
+## Session
+
+The payload boots to `graphical.target` with `greetd` on tty1 (`vt = 1`,
+`/etc/greetd/config.toml`), running the stock text greeter `agreety`. After a
+login greetd starts `/usr/bin/tetsu-session` as the user, which starts the
+user unit `tetsu-comp.service` and waits for it; when the compositor ends,
+greetd shows the greeter again.
+
+The chain, in order:
+
+1. `tetsu-session` imports `XDG_SESSION_ID`, `XDG_SEAT` and `XDG_VTNR` into
+   the user manager (libseat's logind backend finds the session from them)
+   and runs `systemctl --user --wait start tetsu-comp.service`.
+2. `tetsu-comp.service` (`Type=notify`) runs the compositor on the tty
+   backend. Its first client, `/usr/libexec/tetsu-comp-ready`, publishes
+   `WAYLAND_DISPLAY` and `TETSU_COMP_SOCKET` to the manager and sends
+   `READY=1`.
+3. `graphical-session.target` follows (the compositor is `BindsTo=` and
+   `Before=` it), then `tetsu-notifyd`, then `tetsu-capd`; `tetsu-bar` starts
+   after the target. Stopping the compositor stops the target and with it
+   every daemon.
+
+There is no socket activation: the daemons bind their own sockets, so that
+`tetsu-capd` and the clients see them as the units they expect (#75). Never
+stage or enable a `tetsu-notifyd.socket` here.
+
+`image/stage-session` installs the binaries, the user units and the launcher
+scripts into the payload tree; the greetd config and the presets are in
+`image/mkosi.profiles/payload/mkosi.extra`. `image/tests/session.sh` pins all
+of it without root or a VM; `tools/vm/tests/session.sh` proves it in a VM.

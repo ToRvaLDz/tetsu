@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tetsu_bus::server::listen_system;
+use tetsu_bus::server::{PassedSocket, bind_system, take_passed_socket};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::LocalSet;
 
@@ -236,6 +236,15 @@ pub fn main(args: &[String]) -> ExitCode {
 /// `serve`: answer the bus until SIGTERM or SIGINT. Exit code 1 with a
 /// message when it cannot bind or run.
 fn serve_main(options: &Options, proc_cmdline: String, socket: &Path) -> ExitCode {
+    // First of all: this edits the environment, so no thread (the runtime
+    // starts some) may exist yet.
+    let passed = match take_passed_socket() {
+        Ok(passed) => passed,
+        Err(e) => {
+            eprintln!("tetsu-tx: cannot take the socket from systemd: {e}");
+            return ExitCode::from(EXIT_FAILED);
+        }
+    };
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -250,7 +259,7 @@ fn serve_main(options: &Options, proc_cmdline: String, socket: &Path) -> ExitCod
         options: options.clone(),
         proc_cmdline,
     });
-    let result = LocalSet::new().block_on(&runtime, run_server(backend, socket));
+    let result = LocalSet::new().block_on(&runtime, run_server(backend, socket, passed));
     // A transaction still running on its thread dies with the process: the
     // collection of the next transaction recovers whatever it left.
     runtime.shutdown_background();
@@ -263,9 +272,20 @@ fn serve_main(options: &Options, proc_cmdline: String, socket: &Path) -> ExitCod
     }
 }
 
-async fn run_server(backend: Arc<HostBackend>, socket: &Path) -> Result<(), String> {
-    let listener =
-        listen_system(socket).map_err(|e| format!("cannot listen on {}: {e}", socket.display()))?;
+/// Serves the socket systemd passed in, else binds `socket` itself.
+async fn run_server(
+    backend: Arc<HostBackend>,
+    socket: &Path,
+    passed: Option<PassedSocket>,
+) -> Result<(), String> {
+    let listener = match passed {
+        Some(passed) => passed
+            .into_listener()
+            .map_err(|e| format!("cannot serve the socket from systemd: {e}"))?,
+        None => {
+            bind_system(socket).map_err(|e| format!("cannot bind {}: {e}", socket.display()))?
+        }
+    };
     let stop = |e: std::io::Error| format!("cannot watch for signals: {e}");
     let mut term = signal(SignalKind::terminate()).map_err(stop)?;
     let mut int = signal(SignalKind::interrupt()).map_err(stop)?;

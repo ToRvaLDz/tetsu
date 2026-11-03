@@ -28,6 +28,13 @@ depends=(
   archlinux-keyring
   pacman
   dosfstools
+  greetd
+  greetd-agreety
+  seatd
+  mesa
+  libinput
+  libxkbcommon
+  ttf-dejavu
 )
 
 package() {

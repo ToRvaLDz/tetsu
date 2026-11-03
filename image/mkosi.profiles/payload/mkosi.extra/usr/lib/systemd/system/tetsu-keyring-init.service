@@ -1,8 +1,11 @@
 [Unit]
-Description=Initialize the pacman keyring (first boot)
+Description=Initialize the pacman keyring (fallback)
 Documentation=man:pacman-key(8)
 # The payload ships no keyring secrets: every device makes its own local
-# signing key here and trusts the public Arch Linux keys on top of it.
+# signing key and trusts the public Arch Linux keys on top of it. The
+# installer does this at install time (the Init-keyring step), so this unit
+# normally finds trustdb.gpg and does nothing; it stays as a fallback for a
+# system whose keyring is missing.
 ConditionPathExists=!/etc/pacman.d/gnupg/trustdb.gpg
 After=systemd-random-seed.service
 Before=multi-user.target

@@ -218,6 +218,51 @@ fn untrusted_on_output_field_is_allowed() {
 }
 
 #[test]
+fn sensitive_on_input_parameter_is_allowed() {
+    let v = mutated("# @untrusted\n  name", "# @sensitive\n  name");
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn sensitive_on_output_field() {
+    expect(
+        &mutated(
+            "-> (result: string)",
+            "-> (\n  # @sensitive\n  result: string\n)",
+        ),
+        Kind::MisplacedTag,
+        "Do(out).result",
+    );
+}
+
+#[test]
+fn sensitive_on_type_member() {
+    expect(
+        &mutated("# @untrusted\n  title", "# @sensitive\n  title"),
+        Kind::MisplacedTag,
+        "Item.title",
+    );
+}
+
+#[test]
+fn sensitive_on_error_parameter() {
+    expect(
+        &mutated("# @untrusted\n  why", "# @sensitive\n  why"),
+        Kind::MisplacedTag,
+        "Other.why",
+    );
+}
+
+#[test]
+fn sensitive_on_method() {
+    expect(
+        &mutated("# Does a thing.", "# Does a thing.\n# @sensitive"),
+        Kind::MisplacedTag,
+        "Do",
+    );
+}
+
+#[test]
 fn deprecated_on_error_parameter_is_allowed() {
     let v = mutated("# @untrusted\n  why", "# @deprecated\n  why");
     assert!(v.is_empty(), "{v:#?}");

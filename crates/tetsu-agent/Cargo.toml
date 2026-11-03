@@ -6,6 +6,26 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+description = "Tetsu agent core: tool discovery, 1:1 tool mapping and turn orchestration"
 
 [lints]
 workspace = true
+
+[lib]
+name = "tetsu_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tetsu-agent"
+path = "src/main.rs"
+
+[dependencies]
+rustix = { version = "1.1.5", features = ["process"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.154"
+tetsu-bus = { path = "../tetsu-bus" }
+tetsu-bus-contract = { path = "../tetsu-bus-contract" }
+tokio = { version = "1.54.1", features = ["rt", "net", "io-util", "macros", "time", "sync"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

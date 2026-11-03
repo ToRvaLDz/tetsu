@@ -1,0 +1,5 @@
+# Services only, never a socket: the daemons bind their own sockets, so
+# their clients see the unit as the server (#75).
+enable tetsu-notifyd.service
+enable tetsu-capd.service
+enable tetsu-bar.service

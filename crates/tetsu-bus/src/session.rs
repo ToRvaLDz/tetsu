@@ -10,6 +10,8 @@ use crate::into_io;
 
 /// The interface name.
 pub const INTERFACE: &str = "org.tetsu.comp.session.v1";
+/// The interface definition, for `GetInterfaceDescription`.
+pub const IDL: &str = include_str!("../idl/org.tetsu.comp.session.v1.varlink");
 
 /// `SessionEvent.kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +36,37 @@ pub struct SessionEvent {
     /// `initial`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
+}
+
+impl SessionEvent {
+    fn of(kind: SessionKind) -> Self {
+        Self { kind, locked: None }
+    }
+
+    /// `initial`.
+    pub fn initial(locked: bool) -> Self {
+        Self {
+            locked: Some(locked),
+            ..Self::of(SessionKind::Initial)
+        }
+    }
+
+    /// `locked`.
+    pub fn locked() -> Self {
+        Self::of(SessionKind::Locked)
+    }
+
+    /// `unlocked`.
+    pub fn unlocked() -> Self {
+        Self::of(SessionKind::Unlocked)
+    }
+}
+
+/// The reply of `GetSession`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetSessionReply {
+    /// Whether the session is locked.
+    pub locked: bool,
 }
 
 #[derive(Debug, Serialize)]

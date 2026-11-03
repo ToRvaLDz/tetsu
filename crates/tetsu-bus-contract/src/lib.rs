@@ -2,8 +2,8 @@
 //!
 //! Parses the Varlink IDL of `tetsu-bus` into an owned model and checks it
 //! against the rules of `CONTRACT.md`: compatibility with the frozen
-//! baseline, tag and doc rules, and the event fixtures. Nothing here is
-//! linked into a daemon.
+//! baseline, tag and doc rules, and the event fixtures. The daemons do not
+//! link it; `tetsu-agent` does, for its parser and model.
 
 mod bless;
 mod compat;
