@@ -232,6 +232,9 @@ impl JournalSink {
 impl AuditSink for JournalSink {
     fn record(&self, entry: &AuditEntry) -> io::Result<()> {
         let socket = UnixDatagram::unbound()?;
+        // Never block the broker's one thread on a full journal buffer: the
+        // send then fails (`WouldBlock`) and the operation fails closed.
+        socket.set_nonblocking(true)?;
         socket.send_to(&encode(entry), &self.socket).map(|_| ())
     }
 }
