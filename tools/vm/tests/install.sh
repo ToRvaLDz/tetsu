@@ -157,6 +157,14 @@ fault_enroll() {
   evidence "$(tail -n 3 <<<"$GOUT" | tr '\n' '|')"
 }
 
+# append_seed VAR GUID: guest text that appends the seed list to VAR. efivarfs
+# makes an existing variable file immutable, so it is cleared first (chattr is
+# e2fsprogs, which `base` pulls into the payload).
+append_seed() {
+  printf '(sudo -n chattr -i /sys/firmware/efi/efivars/%s-%s 2>/dev/null || true) && sudo -n efi-updatevar -a -f %s/seed-%s.auth %s' \
+    "$1" "$2" "$SEED_DIR" "$1" "$1"
+}
+
 # check_still_in_setup_mode NAME: Setup Mode is on and no PK was left behind.
 check_still_in_setup_mode() {
   check "$1: still in Setup Mode" '(^| )6 +0 +0 +0 +1$' \
@@ -185,7 +193,7 @@ sb_rollback_checks() {
     "ls /sys/firmware/efi/efivars | grep -cE '^(db|KEK)-' || true"
   check_still_in_setup_mode "empty variables"
   # (b) Variables that were there before: byte for byte as found.
-  gexec "rm -rf $SEED_DIR; mkdir -p $SEED_DIR && openssl req -x509 -newkey rsa:2048 -nodes -keyout $SEED_DIR/seed.key -out $SEED_DIR/seed.crt -subj /CN=tetsu-vm-seed -days 2 >/dev/null 2>&1 && cert-to-efi-sig-list -g $SEED_GUID $SEED_DIR/seed.crt $SEED_DIR/seed.esl && for v in db KEK; do sign-efi-sig-list -a -k $SEED_DIR/seed.key -c $SEED_DIR/seed.crt \$v $SEED_DIR/seed.esl $SEED_DIR/seed-\$v.auth && sudo -n efi-updatevar -a -f $SEED_DIR/seed-\$v.auth \$v; done; echo seed-rc=\$?" 120
+  gexec "rm -rf $SEED_DIR; mkdir -p $SEED_DIR && openssl req -x509 -newkey rsa:2048 -nodes -keyout $SEED_DIR/seed.key -out $SEED_DIR/seed.crt -subj /CN=tetsu-vm-seed -days 2 >/dev/null 2>&1 && cert-to-efi-sig-list -g $SEED_GUID $SEED_DIR/seed.crt $SEED_DIR/seed.esl && for v in db KEK; do sign-efi-sig-list -a -k $SEED_DIR/seed.key -c $SEED_DIR/seed.crt \$v $SEED_DIR/seed.esl $SEED_DIR/seed-\$v.auth || break; done && $(append_seed db $DB_GUID) && $(append_seed KEK $GLOBAL_GUID); echo seed-rc=\$?" 120
   assert_contains "$SCENARIO: db and KEK are seeded in Setup Mode" "$GOUT" "seed-rc=0"
   efivar_hashes
   before=$HASHES
@@ -200,7 +208,7 @@ sb_rollback_checks() {
   # identical entries rests on the derived-GUID unit test, since a second real enrollment
   # cannot run once the PK ends Setup Mode.
   # (c) The same lists appended again (same owner GUID, same certificate) add nothing.
-  gexec "for v in db KEK; do sudo -n efi-updatevar -a -f $SEED_DIR/seed-\$v.auth \$v; done; echo append-rc=\$?"
+  gexec "$(append_seed db $DB_GUID) && $(append_seed KEK $GLOBAL_GUID); echo append-rc=\$?"
   assert_contains "$SCENARIO: the seed lists are appended a second time" "$GOUT" "append-rc=0"
   efivar_hashes
   after=$HASHES
