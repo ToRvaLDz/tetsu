@@ -6,7 +6,9 @@ use std::fs;
 
 use crate::error::InstallError;
 use crate::secureboot::trust::{Trust, trust_steps};
-use crate::secureboot::{Enrollment, enrollment_steps, guid, run_steps};
+use crate::secureboot::{
+    Enrollment, enroll, guid, now_unix, owner_guid, require_microsoft, run_steps,
+};
 
 use super::exec::Executor;
 use super::plan::Action;
@@ -209,24 +211,24 @@ impl Executor<'_> {
         }
     }
 
-    /// Enroll the keys; the scratch files are removed either way.
+    /// Enroll the keys; the scratch files are removed either way. A failed
+    /// write rolls db and KEK back, and the error says what is left.
     fn enroll_keys(&mut self) -> Result<(), InstallError> {
-        let mut bytes = [0u8; 16];
-        self.deps.entropy.fill(&mut bytes)?;
+        let keys_dir = self.target.keys_dir();
+        // Refuse before anything runs, as enroll does.
+        require_microsoft(&self.target.microsoft_certs, self.target.without_microsoft)?;
         let work_dir = self.run.subdir("secureboot")?;
-        let enrollment = Enrollment {
-            keys_dir: self.target.keys_dir(),
-            work_dir: work_dir.clone(),
-            owner_guid: guid(bytes),
-            microsoft: self.target.microsoft_certs.clone(),
-            without_microsoft: self.target.without_microsoft,
-            timestamp: 0,
-        };
-        let result = enrollment_steps(&enrollment).and_then(|steps| {
-            let writes = steps.writes.into_iter().map(|(_, s)| s);
-            let all: Vec<_> = steps.prepare.into_iter().chain(writes).collect();
-            run_steps(self.deps.runner, &all)
-        });
+        let result = (|| {
+            let enrollment = Enrollment {
+                owner_guid: owner_guid(self.deps.runner, &keys_dir.join("PK.crt"))?,
+                keys_dir,
+                work_dir: work_dir.clone(),
+                microsoft: self.target.microsoft_certs.clone(),
+                without_microsoft: self.target.without_microsoft,
+                timestamp: now_unix()?,
+            };
+            enroll(self.deps.runner, &enrollment, &self.target.efi_root)
+        })();
         let _ = fs::remove_dir_all(&work_dir);
         result
     }

@@ -95,6 +95,14 @@ pub fn owner_guid(runner: &dyn Runner, pk_crt: &Path) -> Result<String, InstallE
     Ok(derived_guid(head))
 }
 
+/// The clock in Unix seconds, for the timestamp of an enrollment.
+pub fn now_unix() -> Result<u64, InstallError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| InstallError::Failed(format!("the clock is before 1970: {e}")))
+}
+
 /// `YYYY-MM-DD HH:MM:SS` (UTC) of Unix seconds, the form `sign-efi-sig-list -t` takes.
 pub fn efi_time(secs: u64) -> String {
     let (days, rem) = (secs / 86_400, secs % 86_400);
