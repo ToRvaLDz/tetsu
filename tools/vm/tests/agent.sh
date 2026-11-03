@@ -100,11 +100,11 @@ agent_sandbox_checks() {
     "ucg=/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service); mkdir -p \$ucg/vm-probe-sibling && test -w \$ucg/vm-probe-sibling/cgroup.procs && echo sibling-ok"
   gexec "printf 'SIB=%s\\nGO=%s\\nCLONE3=%s\\nCAPD_PID=%s\\n' \"/sys/fs/cgroup\$(systemctl show -P ControlGroup user@\$(id -u).service)/vm-probe-sibling\" \"$pd/go\" \"$pd/clone3\" \"\$(systemctl --user show -P MainPID tetsu-capd.service)\" >$pd/probe.env; rm -f $pd/go; cat $pd/probe.env"
   assert_contains "$SCENARIO: the probe environment names capd's pid" "$GOUT" "CAPD_PID="
-  grep -qE '^CAPD_PID=[1-9][0-9]*\r?$' <<<"$GOUT" \
+  grep -qE '^CAPD_PID=[1-9][0-9]*[[:space:]]*$' <<<"$GOUT" \
     || fail "$SCENARIO: CAPD_PID is a non-empty number (capd is running)" "$(grep '^CAPD_PID=' <<<"$GOUT")"
 
   # 3. Inside: the shipped unit with only ExecStart= swapped.
-  gexec "d=\$XDG_RUNTIME_DIR/systemd/user/tetsu-agent.service.d; mkdir -p \$d && printf '[Service]\\nExecStart=\\nExecStart=/usr/bin/bash $pd/probe.sh in $pd/probe.env\\n' >\$d/zz-vm-probe.conf && systemctl --user daemon-reload && systemctl --user start --no-block tetsu-agent.service && echo started"
+  gexec "d=\$XDG_RUNTIME_DIR/systemd/user/tetsu-agent.service.d; mkdir -p \$d && printf '[Service]\\nExecStart=\\nExecStart=/usr/bin/bash %s in %s\\n' \"$pd/probe.sh\" \"$pd/probe.env\" >\$d/zz-vm-probe.conf && systemctl --user daemon-reload && systemctl --user start --no-block tetsu-agent.service && echo started"
   assert_contains "$SCENARIO: the probe unit is started" "$GOUT" "started"
   gexec "$(guest_poll 60 '[ -n "$(systemctl --user show -P InvocationID tetsu-agent.service)" ]'); systemctl --user show -P InvocationID tetsu-agent.service"
   inv=$(tail -n 1 <<<"$GOUT" | tr -dc '0-9a-f')
@@ -191,6 +191,10 @@ agent_sandbox_checks() {
     "systemctl --user show -P ExecStart tetsu-agent.service"
   check "the unmodified unit exited 0" '^ExecMainStatus=0$' \
     "systemctl --user show -p ExecMainStatus tetsu-agent.service"
+  # The unit is a one-shot that exits 0 at once and is then garbage-collected,
+  # so its InvocationID is empty by now: look the line up by unit and
+  # identifier. journald stamps _SYSTEMD_CGROUP from the live process, which
+  # is the real placement of the unmodified unit.
   check "the unit's journal line is in tetsu-agent.slice" '^_SYSTEMD_CGROUP=.*/tetsu-agent\.slice/' \
-    "$(guest_poll 30 'journalctl --user _SYSTEMD_INVOCATION_ID=$(systemctl --user show -P InvocationID tetsu-agent.service) -o verbose --no-pager | grep -q _SYSTEMD_CGROUP'); journalctl --user _SYSTEMD_INVOCATION_ID=\$(systemctl --user show -P InvocationID tetsu-agent.service) -o verbose --no-pager | grep '^ *_SYSTEMD_CGROUP=' | sed 's/^ *//' | head -n 1"
+    "$(guest_poll 30 'journalctl --user _SYSTEMD_USER_UNIT=tetsu-agent.service SYSLOG_IDENTIFIER=tetsu-agent -o cat --no-pager | grep -q "only the rules act"'); journalctl --user _SYSTEMD_USER_UNIT=tetsu-agent.service SYSLOG_IDENTIFIER=tetsu-agent -o verbose --no-pager | grep '^ *_SYSTEMD_CGROUP=' | sed 's/^ *//' | tail -n 1"
 }
