@@ -201,3 +201,48 @@ stage or enable a `tetsu-notifyd.socket` here.
 scripts into the payload tree; the greetd config and the presets are in
 `image/mkosi.profiles/payload/mkosi.extra`. `image/tests/session.sh` pins all
 of it without root or a VM; `tools/vm/tests/session.sh` proves it in a VM.
+
+### The agent unit (#82)
+
+`tetsu-agent.service` runs in `tetsu-agent.slice`, the name the capability
+gate keys the agent's identity on (`Peer::resolve`; never rename it). It has
+no `[Install]` and no preset names it: starting it belongs to the backend and
+the daemon (#79/#80). Until then the binary prints a line and exits 0.
+
+The sandbox, in `crates/tetsu-agent/dist/tetsu-agent.service`:
+
+- The user runtime dir and `/run/systemd` are allowlists: a
+  `TemporaryFileSystem=` hides everything and only `%t/tetsu` (capd and
+  notifyd, read-only), `/run/systemd/resolve` (DNS) and `/run/systemd/journal`
+  come back. A socket created later is hidden too, which no mask could
+  promise. The system bus (`/run/dbus`) is inaccessible.
+- There is no session bus. `%t/bus` is hidden and `DBUS_SESSION_BUS_ADDRESS`
+  is unset (this amends point 1 of #25). A filtering proxy with an allowlist
+  arrives only when a consumer needs a name (#79, if a CLI backend does).
+- The secret stores in `$HOME` (the credstore pair under the config dir and
+  under `~/.local/lib`, `~/.local/share/tetsu/secrets`,
+  `~/.local/share/keyrings`) are masked with `InaccessiblePaths=`, without
+  `-`. User tmpfiles (`usr/share/user-tmpfiles.d/tetsu.conf`) create them 0700,
+  so a mask never races a store made later, and a missing one fails the start
+  closed. The unit says `%E/credstore*`; tmpfiles has no `%E` and uses
+  `%h/.config`, so a non-default `XDG_CONFIG_HOME` fails closed.
+- Nothing is writable but `StateDirectory=` and `CacheDirectory=`
+  (`tetsu-agent`) and a private `/tmp`; there is no `ReadWritePaths=` (CLI
+  backend login dirs are #79's to scope). `~/.config/tetsu` and
+  `~/.local/state/tetsu` are read-only.
+- The mounts are kept in force: no capabilities, `SystemCallFilter=~@mount`,
+  `RestrictNamespaces=yes`, `NoNewPrivileges=yes`.
+- The cgroup tree: the barrier is `ReadOnlyPaths=/sys/fs/cgroup` plus
+  `SystemCallFilter=~clone3:ENOSYS` (libc falls back to `clone`, which cannot
+  take `CLONE_INTO_CGROUP`). `ProtectControlGroups=yes` is set as #28 asks,
+  but systemd 262 does not support it in per-user managers, so it is belt and
+  braces; the VM proves the two above.
+- Known open item: there is no `PrivatePIDs=`, so `/proc/<pid>/root` of a
+  same-user process (capd, say) stays reachable from the agent until #144.
+  `tools/vm/tests/agent.sh` prints it as `KNOWN-OPEN` and does not count it.
+
+`image/tests/agent-sandbox.sh` pins the staged unit keys and tmpfiles without
+root. `tools/vm/tests/agent.sh` proves the behaviour in the session VM test:
+a runtime drop-in swaps only `ExecStart=` for `agent-probe.sh`, so the probe
+runs under the shipped sandbox, and the same probe runs as a plain user
+service as the positive control.
