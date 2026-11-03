@@ -9,7 +9,7 @@ else talks to it over `org.tetsu.secrets.v1`.
 | What | Where |
 |---|---|
 | Vault (oo7 v1 keyring, 0600, dir 0700) | `~/.local/share/tetsu/secrets/vault.keyring` |
-| Sealed vault key | `~/.config/credstore.encrypted/tetsu-secrets.vault-key` |
+| Sealed vault key | `$XDG_CONFIG_HOME/credstore.encrypted/tetsu-secrets.vault-key` (default `~/.config`) |
 | Socket (owned by `tetsu-secrets.socket`) | `$XDG_RUNTIME_DIR/tetsu/org.tetsu.secrets.v1` |
 | Staged installer key (imported once, then wiped) | `~/.local/share/tetsu/staged-api-key` |
 
