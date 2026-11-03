@@ -196,6 +196,9 @@ sb_rollback_checks() {
   assert_eq "$SCENARIO: pre-existing variables: db and KEK are byte for byte as found" \
     "$before" "$after"
   check_still_in_setup_mode "pre-existing variables"
+  # (c) Proves the firmware drops an identical append; that two Tetsu enrollments produce
+  # identical entries rests on the derived-GUID unit test, since a second real enrollment
+  # cannot run once the PK ends Setup Mode.
   # (c) The same lists appended again (same owner GUID, same certificate) add nothing.
   gexec "for v in db KEK; do sudo -n efi-updatevar -a -f $SEED_DIR/seed-\$v.auth \$v; done; echo append-rc=\$?"
   assert_contains "$SCENARIO: the seed lists are appended a second time" "$GOUT" "append-rc=0"
