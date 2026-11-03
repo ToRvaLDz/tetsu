@@ -216,7 +216,7 @@ pub fn init_command(args: &[String]) -> ExitCode {
     let Some(home) = env::var_os("HOME").filter(|h| !h.is_empty()) else {
         return usage_error("HOME is not set");
     };
-    let paths = Paths::new(&PathBuf::from(home));
+    let paths = Paths::from_process(&PathBuf::from(home));
     match init(&paths, seal, &SystemRunner::new(), &mut system_random) {
         Ok(path) => {
             println!("sealed a new vault key in {}", path.display());

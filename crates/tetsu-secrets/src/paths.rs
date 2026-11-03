@@ -28,7 +28,7 @@ impl Paths {
     /// an absolute path counts; else it is `~/.config`.
     pub fn with_config_home(home: &Path, xdg_config_home: Option<&Path>) -> Self {
         let mut paths = Self::new(home);
-        if let Some(dir) = xdg_config_home.filter(|_| false) {
+        if let Some(dir) = xdg_config_home.filter(|d| d.is_absolute()) {
             paths.config_home = dir.to_owned();
         }
         paths
