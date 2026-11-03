@@ -16,6 +16,13 @@ const EXEMPT: [&str; 3] = [
     "org.tetsu.cap.v1.Check",
 ];
 
+/// The secrets write methods: managed by the user only, never agent tools.
+const NOT_TOOLS: [&str; 3] = [
+    "org.tetsu.secrets.v1.Add",
+    "org.tetsu.secrets.v1.Rotate",
+    "org.tetsu.secrets.v1.Remove",
+];
+
 fn idl_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tetsu-bus/idl")
 }
@@ -62,6 +69,9 @@ fn every_contract_method_is_exactly_one_tool() {
             expected.insert(format!("{iface}.{method}"));
         }
     }
+    for id in NOT_TOOLS {
+        assert!(expected.remove(id), "{id} is a contract method");
+    }
     let ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
     assert_eq!(ids.len(), expected.len(), "one tool per method");
     let unique: BTreeSet<String> = ids.iter().map(|s| (*s).to_owned()).collect();
@@ -71,6 +81,34 @@ fn every_contract_method_is_exactly_one_tool() {
         assert_eq!(t.id, format!("{}.{}", t.interface, t.method));
         assert!(!t.interface.starts_with("org.varlink.service"));
     }
+}
+
+#[test]
+fn the_secrets_writes_are_not_tools_and_the_reads_are() {
+    let (_, tools) = shipped();
+    for id in NOT_TOOLS {
+        assert!(tools.iter().all(|t| t.id != id), "{id} must not be a tool");
+    }
+    for id in [
+        "org.tetsu.secrets.v1.ListSecrets",
+        "org.tetsu.secrets.v1.WatchSecrets",
+    ] {
+        assert_eq!(tool(&tools, id).kind, MethodKind::Free, "{id}");
+    }
+    // The rule is the capability class, so a future write method of the
+    // class is left out too.
+    let contract = synthetic(
+        "interface org.example.v1\n\
+         # @capability secrets.manage\n\
+         method Burn() -> ()\n\
+         method GetThing() -> ()\n",
+    );
+    let ids: Vec<String> = tools::build(&contract)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(ids, ["org.example.v1.GetThing"]);
 }
 
 // 3. Wire names.
