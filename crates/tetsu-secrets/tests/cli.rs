@@ -327,3 +327,11 @@ fn no_broker_is_a_readable_failure() {
     assert_eq!(out.code, 1);
     assert!(out.err.contains("tetsu-secrets"), "{}", out.err);
 }
+
+#[test]
+fn an_unknown_option_is_not_echoed() {
+    for line in ["add demo --sk-live-4242", "log --sk-live-4242=x"] {
+        let err = parse(&args(line)).unwrap_err();
+        assert!(!err.contains("sk-live-4242"), "{err}");
+    }
+}
