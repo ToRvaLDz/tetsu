@@ -10,7 +10,7 @@ else talks to it over `org.tetsu.secrets.v1`.
 |---|---|
 | Vault (oo7 v1 keyring, 0600, dir 0700) | `~/.local/share/tetsu/secrets/vault.keyring` |
 | Sealed vault key | `~/.config/credstore.encrypted/tetsu-secrets.vault-key` |
-| Socket | `$XDG_RUNTIME_DIR/tetsu/org.tetsu.secrets.v1` |
+| Socket (owned by `tetsu-secrets.socket`) | `$XDG_RUNTIME_DIR/tetsu/org.tetsu.secrets.v1` |
 | Staged installer key (imported once, then wiped) | `~/.local/share/tetsu/staged-api-key` |
 
 ## Units (`dist/`)
@@ -19,9 +19,15 @@ else talks to it over `org.tetsu.secrets.v1`.
   sealed key does not exist: `tetsu-secrets init` makes 32 random bytes,
   pipes them to `systemd-creds encrypt --user` and never replaces a key
   or creates one beside a vault that has content.
-- `tetsu-secrets.service` has `LoadCredentialEncrypted=`: at login systemd
-  decrypts the key into `$CREDENTIALS_DIRECTORY` and the broker unlocks
-  the vault from it. The image preset enables it for every user.
+- `tetsu-secrets.socket` listens on the socket (0600, directory 0700) and
+  is wanted by the user `sockets.target`, which `default.target` pulls in:
+  it is up from the start of the user manager, with no login session
+  needed. The image preset enables it for every user.
+- `tetsu-secrets.service` is started by the first connection. It has
+  `LoadCredentialEncrypted=`: systemd decrypts the key into
+  `$CREDENTIALS_DIRECTORY` and the broker unlocks the vault from it. The
+  broker takes the listening socket from systemd (`LISTEN_PID`,
+  `LISTEN_FDS`, fd 3); started by hand it binds the path itself.
 
 `--seal auto` (the default) binds the key to the host and, when there is
 one, the TPM. `--seal host` binds it to the host key only.
@@ -67,7 +73,10 @@ With a scratch `HOME`:
 3. Add a secret, restart the broker, list it again.
 4. `journalctl --user -t tetsu-secrets` shows `unlock`, `add` and `list`.
 
-In the VM, install the image, log in, and check that
-`systemctl --user status tetsu-secrets-init tetsu-secrets` are both
-successful, that the credential exists, and that the vault unlocks again
-after a reboot with no prompt.
+In the VM, install the image and check that
+`systemctl --user status tetsu-secrets.socket` is active (listening) as
+soon as the user manager runs, also with no login session (`loginctl
+enable-linger` and no login). Connect to the socket, then check that
+`tetsu-secrets-init` and `tetsu-secrets` are both successful, that the
+credential exists, and that the vault unlocks again after a reboot with
+no prompt.
