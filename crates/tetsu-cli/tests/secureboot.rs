@@ -244,7 +244,8 @@ fn enroll_refuses_without_the_microsoft_certificates_unless_told() {
     // The explicit flag enrolls Tetsu's keys alone.
     enroll(&ctx(&m, &r, true), true).unwrap();
     let lines = r.lines.borrow();
-    assert!(lines.iter().all(|l| !l.starts_with("openssl")));
+    // No certificate is converted (the fingerprint call is the only openssl).
+    assert!(lines.iter().all(|l| !l.starts_with("openssl x509 -inform")));
     assert!(lines.last().unwrap().ends_with(" PK"));
 }
 

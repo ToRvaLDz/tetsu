@@ -1,5 +1,5 @@
 //! `tetsu secureboot enroll` and `tetsu secureboot trust <cert>`. The key
-//! enrollment is the installer's code path (`enrollment_steps`).
+//! enrollment is the installer's code path (`secureboot::enroll`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,8 @@ use tetsu_installer_core::install::rundir::RunDir;
 use tetsu_installer_core::preflight::{SecureBoot, is_uefi, secure_boot_state};
 use tetsu_installer_core::secureboot::trust::{Trust, trust_steps};
 use tetsu_installer_core::secureboot::{
-    Enrollment, MicrosoftCerts, Step, enrollment_steps, guid, run_steps,
+    Enrollment, MicrosoftCerts, Step, enroll as enroll_steps, guid, now_unix, owner_guid,
+    require_microsoft, run_steps,
 };
 use tetsu_installer_core::unlock::UnlockLevel;
 use tetsu_installer_core::unlockfile::UnlockFile;
@@ -117,29 +118,33 @@ pub fn enroll(ctx: &Context<'_>, without_microsoft: bool) -> Result<String, Stri
         &ctx.paths.keys_dir,
         &keys.iter().map(String::as_str).collect::<Vec<_>>(),
     )?;
-    let owner_guid = random_guid(ctx)?;
-    run_in_scratch(ctx, |work| {
-        let enrollment = Enrollment {
-            keys_dir: ctx.paths.keys_dir.clone(),
-            work_dir: work.to_path_buf(),
-            owner_guid,
-            microsoft: MicrosoftCerts::from_dir(&ctx.paths.microsoft_dir),
-            without_microsoft,
-            timestamp: 0,
-        };
-        enrollment_steps(&enrollment)
-            .map(|steps| {
-                let writes = steps.writes.into_iter().map(|(_, s)| s);
-                steps.prepare.into_iter().chain(writes).collect()
-            })
-            .map_err(|e| match e {
-                InstallError::NoMicrosoftCerts => format!(
-                    "{e} ({}); pass --without-microsoft to enroll Tetsu's keys alone",
-                    ctx.paths.microsoft_dir.display()
-                ),
-                other => other.to_string(),
-            })
+    // Refuse before anything runs.
+    let microsoft = MicrosoftCerts::from_dir(&ctx.paths.microsoft_dir);
+    require_microsoft(&microsoft, without_microsoft).map_err(|e| match e {
+        InstallError::NoMicrosoftCerts => format!(
+            "{e} ({}); pass --without-microsoft to enroll Tetsu's keys alone",
+            ctx.paths.microsoft_dir.display()
+        ),
+        other => other.to_string(),
     })?;
+    let owner_guid =
+        owner_guid(ctx.runner, &ctx.paths.keys_dir.join("PK.crt")).map_err(|e| e.to_string())?;
+    let timestamp = now_unix().map_err(|e| e.to_string())?;
+    let run = RunDir::create(&ctx.paths.work_dir).map_err(|e| e.to_string())?;
+    let result = enroll_steps(
+        ctx.runner,
+        &Enrollment {
+            keys_dir: ctx.paths.keys_dir.clone(),
+            work_dir: run.path().to_path_buf(),
+            owner_guid,
+            microsoft,
+            without_microsoft,
+            timestamp,
+        },
+        &ctx.paths.root,
+    );
+    let _ = fs::remove_dir_all(run.path());
+    result.map_err(|e| e.to_string())?;
     Ok(mark_enrolled(&ctx.paths.level_file))
 }
 
