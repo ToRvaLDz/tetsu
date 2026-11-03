@@ -47,6 +47,10 @@ pub const SOURCES: &[(&str, &str)] = &[
         include_str!("../../tetsu-bus/idl/org.tetsu.notify.v1.varlink"),
     ),
     (
+        "org.tetsu.secrets.v1.varlink",
+        include_str!("../../tetsu-bus/idl/org.tetsu.secrets.v1.varlink"),
+    ),
+    (
         "org.tetsu.tx.v1.varlink",
         include_str!("../../tetsu-bus/idl/org.tetsu.tx.v1.varlink"),
     ),
