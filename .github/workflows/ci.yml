@@ -85,3 +85,5 @@ jobs:
       - run: image/tests/tetsu-base.sh
       # The session: units, order, launcher scripts, greetd config, staging
       - run: image/tests/session.sh
+      # The agent unit: sandbox keys, denied stores, tmpfiles (skips systemd-analyze without it)
+      - run: image/tests/agent-sandbox.sh
