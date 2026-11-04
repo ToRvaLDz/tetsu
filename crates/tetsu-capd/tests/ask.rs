@@ -36,10 +36,7 @@ fn body(params: &ShowParams) -> Vec<String> {
 fn the_ask_names_the_method_class_and_arguments() {
     let args = json!({ "packages": ["htop", "firefox"], "reinstall": true });
     let params = render(&request(&args, None, Buttons::Two));
-    assert_eq!(
-        params.title,
-        "The agent wants to run org.tetsu.tx.v1.Install"
-    );
+    assert_eq!(params.title, "The agent wants to run a method");
     assert_eq!(
         body(&params),
         vec![
