@@ -6,9 +6,9 @@ use tetsu_bus::notify::{Action, Urgency};
 use tetsu_notifyd::core::{NoteId, NoteView, Source};
 use tetsu_notifyd::ui::draw::Painter;
 use tetsu_notifyd::ui::layout::{
-    BODY_LINE, CARD_WIDTH, Hit, MAX_ASK_POPUP_LINES, MAX_BODY_LINES, MAX_BUTTONS, Measure,
-    OPEN_PANEL_LABEL, OPEN_PANEL_WIDTH, PADDING, SENDER_LINE, TITLE_LINE, hidden_statement, panel,
-    stack,
+    BODY_LINE, CARD_WIDTH, CLOSE_SIZE, Hit, MAX_ASK_POPUP_LINES, MAX_BODY_LINES, MAX_BUTTONS,
+    Measure, OPEN_PANEL_LABEL, OPEN_PANEL_WIDTH, PADDING, SENDER_LINE, TITLE_LINE,
+    hidden_statement, panel, stack,
 };
 
 /// One body line per 40 characters.
@@ -287,7 +287,8 @@ fn the_open_panel_label_fits_its_button_with_the_real_font() {
     assert_eq!(cards[0].body.h, 16.0 + 22.0 + 14.0 * BODY_LINE);
 }
 
-/// The popup stack's height must fit a small output.
+/// Height of the panel surface in the panel tests, and what three long asks
+/// are checked against; the worst popup bound is its own test below.
 const SMALL_OUTPUT: f32 = 800.0;
 
 #[test]
@@ -409,4 +410,111 @@ fn a_one_line_ask_with_no_budget_left_says_one_line() {
     assert_eq!(cards[1].hidden_lines, 1);
     assert_eq!(hidden_statement(1), "… 1 more line not shown");
     assert_eq!(hidden_statement(2), "… 2 more lines not shown");
+}
+
+/// The text width of a card body, as the layout measures it.
+const TEXT_WIDTH: f32 = CARD_WIDTH - 2.0 * PADDING - CLOSE_SIZE;
+
+// The bodies below are literal copies of what `render` in
+// `tetsu-capd/src/ask.rs` yields: notifyd has no dependency on capd.
+fn argument_block(args: &[(String, String)]) -> Vec<String> {
+    let mut lines = vec!["Arguments:".to_owned()];
+    lines.extend(args.iter().map(|(n, v)| format!("  {n}: {v}")));
+    lines
+}
+
+fn render_body(method: &str, class: &str, rest: Vec<String>) -> String {
+    let mut lines = vec![format!("Method: {method}"), format!("Class: {class}")];
+    lines.extend(rest);
+    lines.join("\n")
+}
+
+/// The buttons of a cut-any ask: *Always allow* is not offered.
+const TWO: [(&str, &str); 2] = [("allow_once", "Allow once"), ("deny", "Deny")];
+
+#[test]
+fn twelve_arguments_are_shown_whole_with_the_real_font() {
+    let args: Vec<(String, String)> = (1..=10)
+        .map(|i| (format!("a{i:02}"), i.to_string()))
+        .collect();
+    let mut rest = argument_block(&args);
+    rest.push("… (2 more arguments not shown)".to_owned());
+    let body = render_body("org.tetsu.tx.v1.Rollback", "system.rollback", rest);
+    let mut painter = Painter::new();
+    let measured = painter.lines(&body, TEXT_WIDTH);
+    assert!(measured > MAX_BODY_LINES, "{measured} lines");
+    assert!(measured <= MAX_ASK_POPUP_LINES, "{measured} lines");
+    let (cards, _) = stack(&[note(1, &body, &TWO)], &mut painter);
+    assert_eq!(cards[0].body_lines, measured);
+    assert_eq!(cards[0].hidden_lines, 0);
+    assert_eq!(cards[0].open_panel, None);
+    assert_eq!(ids(&cards[0]), ["allow_once", "deny"]);
+}
+
+#[test]
+fn a_two_hundred_character_value_is_shown_whole_with_the_real_font() {
+    // The value is JSON-quoted (252 characters), cut at 200 as `cut` does.
+    let quoted = format!("\"{}\"", "a".repeat(250));
+    let left_out = quoted.chars().count() - 200;
+    let kept: String = quoted.chars().take(200).collect();
+    let value = format!("{kept}… ({left_out} more characters)");
+    let rest = argument_block(&[("packages".to_owned(), value)]);
+    let body = render_body("org.tetsu.tx.v1.ReviewAurPackages", "aur.review", rest);
+    let mut painter = Painter::new();
+    // An unbroken token wraps by glyph, over several lines.
+    let measured = painter.lines(&body, TEXT_WIDTH);
+    assert!(measured > MAX_BODY_LINES, "{measured} lines");
+    let (cards, _) = stack(&[note(1, &body, &TWO)], &mut painter);
+    assert_eq!(cards[0].body_lines, measured);
+    assert_eq!(cards[0].hidden_lines, 0);
+    assert_eq!(cards[0].open_panel, None);
+    assert_eq!(ids(&cards[0]), ["allow_once", "deny"]);
+}
+
+#[test]
+fn a_long_reason_past_the_budget_is_cut_in_the_popup_but_whole_in_the_panel() {
+    let args: Vec<(String, String)> = (1..=10)
+        .map(|i| (format!("a{i:02}"), format!("\"{}\"", "w".repeat(150))))
+        .collect();
+    let mut rest = argument_block(&args);
+    let reason = "because the agent said so ".repeat(7);
+    rest.push(format!(
+        "Reason given by the agent (unverified): \"{}\"",
+        reason.trim_end()
+    ));
+    let body = render_body("org.tetsu.tx.v1.Rollback", "system.rollback", rest);
+    let mut painter = Painter::new();
+    let measured = painter.lines(&body, TEXT_WIDTH);
+    assert!(measured > MAX_ASK_POPUP_LINES, "{measured} lines");
+    let (cards, _) = stack(&[note(1, &body, &TWO)], &mut painter);
+    assert!(cards[0].hidden_lines > 0);
+    assert_eq!(cards[0].body_lines + cards[0].hidden_lines, measured);
+    assert!(cards[0].buttons.is_empty());
+    assert!(cards[0].open_panel.is_some());
+    let layout = panel(&[note(1, &body, &TWO)], &[], 0, 800.0, 0.0, &mut painter);
+    assert_eq!(layout.cards[0].body_lines, measured);
+    assert_eq!(layout.cards[0].hidden_lines, 0);
+    assert_eq!(ids(&layout.cards[0]), ["allow_once", "deny"]);
+}
+
+#[test]
+fn the_worst_popup_stack_stays_under_the_smallest_output() {
+    let chat = |id| {
+        let mut n = note(id, &lines(30), &THREE);
+        n.source = Source::App("chat".into());
+        n
+    };
+    let notes = [
+        note(1, &lines(MAX_ASK_POPUP_LINES), &THREE),
+        chat(2),
+        chat(3),
+    ];
+    let (cards, height) = stack(&notes, &mut Fixed);
+    assert_eq!(cards[0].hidden_lines, 0);
+    assert!(cards[1..].iter().all(|c| c.body_lines == MAX_BODY_LINES));
+    // About 840 px, so the 800 above does not bound it.
+    assert!(height > SMALL_OUTPUT, "{height} px");
+    // 900 is the smallest logical output height we care about (a 1440x900
+    // laptop panel), with the surface margins.
+    assert!(height < 900.0, "{height} px");
 }
