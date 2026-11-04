@@ -10,7 +10,8 @@ pub mod satellite;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixListener;
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus};
+use std::sync::mpsc;
 
 use smithay::reexports::calloop::channel::{self, Event, Sender};
 use smithay::reexports::calloop::generic::Generic;
@@ -180,10 +181,25 @@ impl State {
     }
 
     /// Starts satellite with copies of the listening sockets and a reaper.
+    /// The reaper starts first and waits for the child: when it cannot
+    /// start, nothing is spawned and the caller watches the sockets again.
     fn spawn_satellite(&mut self) -> std::io::Result<()> {
         let Some(xwayland) = self.xwayland.as_mut() else {
             return Ok(());
         };
+        let exited = xwayland.exited.clone();
+        let (hand_over, child_in) = mpsc::channel::<Child>();
+        std::thread::Builder::new()
+            .name("tetsu-comp-satellite".to_owned())
+            .spawn(move || {
+                // No child comes when the spawn failed: the sender is gone.
+                let Ok(mut child) = child_in.recv() else {
+                    return;
+                };
+                if let Ok(status) = child.wait() {
+                    let _ = exited.send(status);
+                }
+            })?;
         // `dup` leaves the copies without close-on-exec: satellite inherits
         // them, and they close here once it has.
         let inherited = xwayland
@@ -199,20 +215,12 @@ impl State {
             &raw,
             &self.socket_name,
         );
-        let mut child = command.spawn()?;
+        let child = command.spawn()?;
         drop(inherited);
         let pid = child.id();
         xwayland.satellite = Some(pid);
-        let exited = xwayland.exited.clone();
-        let reaper = std::thread::Builder::new()
-            .name("tetsu-comp-satellite".to_owned())
-            .spawn(move || {
-                if let Ok(status) = child.wait() {
-                    let _ = exited.send(status);
-                }
-            });
-        if let Err(e) = reaper {
-            eprintln!("tetsu-comp: cannot watch xwayland-satellite {pid}: {e}");
+        if hand_over.send(child).is_err() {
+            eprintln!("tetsu-comp: the reaper of xwayland-satellite {pid} is gone");
         }
         eprintln!("tetsu-comp: xwayland-satellite {pid} started");
         Ok(())
