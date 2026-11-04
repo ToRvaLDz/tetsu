@@ -7,7 +7,8 @@ use tetsu_notifyd::core::{NoteId, NoteView, Source};
 use tetsu_notifyd::ui::draw::Painter;
 use tetsu_notifyd::ui::layout::{
     BODY_LINE, CARD_WIDTH, Hit, MAX_ASK_POPUP_LINES, MAX_BODY_LINES, MAX_BUTTONS, Measure,
-    OPEN_PANEL_LABEL, OPEN_PANEL_WIDTH, PADDING, SENDER_LINE, TITLE_LINE, panel, stack,
+    OPEN_PANEL_LABEL, OPEN_PANEL_WIDTH, PADDING, SENDER_LINE, TITLE_LINE, hidden_statement, panel,
+    stack,
 };
 
 /// One body line per 40 characters.
@@ -284,4 +285,128 @@ fn the_open_panel_label_fits_its_button_with_the_real_font() {
     let (cards, _) = stack(&[note(1, &body, &THREE)], &mut painter);
     assert_eq!(cards[0].body_lines, 14);
     assert_eq!(cards[0].body.h, 16.0 + 22.0 + 14.0 * BODY_LINE);
+}
+
+/// The popup stack's height must fit a small output.
+const SMALL_OUTPUT: f32 = 800.0;
+
+#[test]
+fn three_long_asks_share_one_budget_and_fit_the_output() {
+    let notes: Vec<NoteView> = (1..=3).map(|i| note(i, &lines(139), &THREE)).collect();
+    let (cards, height) = stack(&notes, &mut Fixed);
+    assert!(height < SMALL_OUTPUT, "{height} px");
+    // The first takes the whole budget: its text and the statement line.
+    assert_eq!(cards[0].body_lines, MAX_ASK_POPUP_LINES - 1);
+    assert_eq!(cards[0].hidden_lines, 139 - (MAX_ASK_POPUP_LINES - 1));
+    // The others are cut with no text line at all, every line hidden.
+    for card in &cards[1..] {
+        assert_eq!(card.body_lines, 0);
+        assert_eq!(card.hidden_lines, 139);
+        assert!(card.buttons.is_empty());
+        assert!(card.open_panel.is_some());
+        assert_eq!(card.body.h, SENDER_LINE + TITLE_LINE + BODY_LINE);
+    }
+}
+
+#[test]
+fn a_second_ask_is_cut_to_what_the_first_leaves() {
+    let notes = [note(1, &lines(14), &THREE), note(2, &lines(9), &THREE)];
+    let (cards, _) = stack(&notes, &mut Fixed);
+    assert_eq!(cards[0].body_lines, 14);
+    assert_eq!(cards[0].hidden_lines, 0);
+    assert_eq!(cards[0].buttons.len(), 3);
+    // 6 lines are left: 5 of text and the statement.
+    assert_eq!(cards[1].body_lines, 5);
+    assert_eq!(cards[1].hidden_lines, 4);
+    assert!(cards[1].buttons.is_empty());
+    assert!(cards[1].open_panel.is_some());
+}
+
+#[test]
+fn two_asks_that_exactly_fill_the_budget_are_both_whole() {
+    let half = MAX_ASK_POPUP_LINES / 2;
+    let notes = [note(1, &lines(half), &THREE), note(2, &lines(half), &THREE)];
+    let (cards, _) = stack(&notes, &mut Fixed);
+    for card in &cards {
+        assert_eq!(card.body_lines, half);
+        assert_eq!(card.hidden_lines, 0);
+        assert_eq!(card.buttons.len(), 3);
+        assert_eq!(card.open_panel, None);
+    }
+}
+
+#[test]
+fn a_cut_ask_takes_the_rest_of_the_budget_so_a_later_short_one_is_cut_too() {
+    let notes = [
+        note(1, &lines(14), &THREE),
+        note(2, &lines(9), &THREE),
+        note(3, &lines(1), &THREE),
+    ];
+    let (cards, _) = stack(&notes, &mut Fixed);
+    assert!(cards[1].hidden_lines > 0);
+    // A single line is still cut: nothing is left.
+    assert_eq!(cards[2].body_lines, 0);
+    assert_eq!(cards[2].hidden_lines, 1);
+    assert!(cards[2].buttons.is_empty());
+    assert!(cards[2].open_panel.is_some());
+}
+
+#[test]
+fn a_note_that_is_not_an_ask_does_not_use_the_budget() {
+    let mut fdo = note(2, &lines(30), &THREE);
+    fdo.source = Source::App("chat".into());
+    let notes = [
+        note(1, &lines(10), &THREE),
+        fdo,
+        note(3, &lines(10), &THREE),
+    ];
+    let (cards, _) = stack(&notes, &mut Fixed);
+    assert_eq!(cards[1].body_lines, MAX_BODY_LINES);
+    for card in [&cards[0], &cards[2]] {
+        assert_eq!(card.body_lines, 10);
+        assert_eq!(card.hidden_lines, 0);
+        assert_eq!(card.buttons.len(), 3);
+    }
+}
+
+#[test]
+fn a_press_on_a_budget_cut_card_answers_nothing() {
+    let notes = [note(1, &lines(139), &THREE), note(2, &lines(139), &THREE)];
+    let (cards, _) = stack(&notes, &mut Fixed);
+    let cut = &cards[1];
+    let open = cut.open_panel.expect("the open-panel button");
+    let (x, y) = open.center();
+    assert_eq!(cards.iter().find_map(|c| c.hit(x, y)), Some(Hit::OpenPanel));
+    // Anywhere along the button row, no answer is hit.
+    let mut x = cut.rect.x;
+    while x < cut.rect.x + cut.rect.w {
+        let hit = cards.iter().find_map(|c| c.hit(x, y));
+        assert!(!matches!(hit, Some(Hit::Action(NoteId(2), _))), "x = {x}");
+        x += 4.0;
+    }
+}
+
+#[test]
+fn the_panel_shows_three_long_asks_whole() {
+    let asks: Vec<NoteView> = (1..=3).map(|i| note(i, &lines(139), &THREE)).collect();
+    let layout = panel(&asks, &[], 0, SMALL_OUTPUT, 0.0, &mut Fixed);
+    for card in &layout.cards {
+        assert_eq!(card.body_lines, 139);
+        assert_eq!(card.hidden_lines, 0);
+        assert_eq!(card.open_panel, None);
+        assert_eq!(card.buttons.len(), 3);
+    }
+}
+
+#[test]
+fn a_one_line_ask_with_no_budget_left_says_one_line() {
+    let notes = [
+        note(1, &lines(MAX_ASK_POPUP_LINES), &THREE),
+        note(2, "x", &THREE),
+    ];
+    let (cards, _) = stack(&notes, &mut Fixed);
+    assert_eq!(cards[1].body_lines, 0);
+    assert_eq!(cards[1].hidden_lines, 1);
+    assert_eq!(hidden_statement(1), "… 1 more line not shown");
+    assert_eq!(hidden_statement(2), "… 2 more lines not shown");
 }
