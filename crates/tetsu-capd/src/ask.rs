@@ -41,7 +41,10 @@ pub struct AskRequest<'a> {
 
 /// The notification of an ask. When any part of the arguments or the
 /// reason is cut, the view is partial: *Always allow* is not offered, so a
-/// grant is never made permanent from a truncated view.
+/// grant is never made permanent from a truncated view. The title does not
+/// name the method, so it cannot clip; the `Method:` line carries it whole.
+/// notifyd may cut a tall ask, and then its popup offers no buttons at all;
+/// the panel shows everything.
 pub fn render(request: &AskRequest<'_>) -> ShowParams {
     let mut cut_any = false;
     let mut lines = vec![
@@ -68,7 +71,7 @@ pub fn render(request: &AskRequest<'_>) -> ShowParams {
         Buttons::Two => vec![Action::new(APPROVE, "Approve"), Action::new(DENY, "Deny")],
     };
     ShowParams {
-        title: format!("The agent wants to run {}", request.method),
+        title: "The agent wants to run a method".to_owned(),
         body: Some(lines.join("\n")),
         urgency: Some(Urgency::Critical),
         actions: Some(actions),
