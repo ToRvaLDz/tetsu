@@ -538,7 +538,7 @@ fn a_check_waits_for_the_users_answer() {
             .await
             .unwrap()
             .unwrap();
-        assert!(shown["title"].as_str().unwrap().contains(INSTALL));
+        assert!(shown["body"].as_str().unwrap().contains(INSTALL));
         w.answer.take().unwrap().send("allow_once").unwrap();
         let reply = raw.recv().await;
         assert_eq!(
