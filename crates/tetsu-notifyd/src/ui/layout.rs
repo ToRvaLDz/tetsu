@@ -22,7 +22,8 @@ pub const TITLE_LINE: f32 = 22.0;
 pub const BODY_LINE: f32 = 18.0;
 /// Body lines shown at most, but for an ask.
 pub const MAX_BODY_LINES: usize = 4;
-/// Body lines an ask shows at most in the popup; the panel shows it whole.
+/// Body lines the asks of one popup stack show in all, the statement line of
+/// a cut one included; the panel shows every ask whole.
 pub const MAX_ASK_POPUP_LINES: usize = 20;
 /// Label of the button that opens the panel on a cut ask.
 pub const OPEN_PANEL_LABEL: &str = "Read all in the panel";
@@ -43,7 +44,8 @@ pub const HISTORY_ROW: f32 = 40.0;
 
 /// The statement drawn under a cut ask, for `hidden` lines not shown.
 pub fn hidden_statement(hidden: usize) -> String {
-    format!("… {hidden} more lines not shown")
+    let noun = if hidden == 1 { "line" } else { "lines" };
+    format!("… {hidden} more {noun} not shown")
 }
 
 /// Measures wrapped text.
@@ -167,30 +169,48 @@ enum Mode {
     Panel,
 }
 
+/// Whether the note is a pending ask (as `Note::is_pending`: a Tetsu note
+/// with buttons); urgency says nothing.
+fn is_ask(note: &NoteView) -> bool {
+    matches!(note.source, Source::Tetsu(_)) && !note.buttons.is_empty()
+}
+
 /// How many body lines are drawn and how many are cut off, for `measured`
-/// lines of body. Only a pending ask (as `Note::is_pending`: a Tetsu note
-/// with buttons) is shown past [`MAX_BODY_LINES`]; urgency says nothing.
-fn body_split(note: &NoteView, measured: usize, mode: Mode) -> (usize, usize) {
-    let ask = matches!(note.source, Source::Tetsu(_)) && !note.buttons.is_empty();
-    match (ask, mode) {
+/// lines of body. Only an ask is shown past [`MAX_BODY_LINES`]; in the popup
+/// it may take `budget` lines at most, the rest of what the asks above left.
+fn body_split(note: &NoteView, measured: usize, mode: Mode, budget: usize) -> (usize, usize) {
+    match (is_ask(note), mode) {
         (false, _) => (measured.clamp(1, MAX_BODY_LINES), 0),
         (true, Mode::Panel) => (measured, 0),
-        (true, Mode::Popup) if measured <= MAX_ASK_POPUP_LINES => (measured, 0),
-        // The statement takes the last of the allowed lines.
+        (true, Mode::Popup) if measured <= budget => (measured, 0),
+        // The statement takes one of the lines left, so none may be left
+        // for the text.
         (true, Mode::Popup) => {
-            let drawn = MAX_ASK_POPUP_LINES - 1;
+            let drawn = budget.saturating_sub(1);
             (drawn, measured - drawn)
         }
     }
 }
 
 /// Lays out one card with its top-left corner at (`x`, `y`).
-fn card(note: &NoteView, x: f32, y: f32, mode: Mode, measure: &mut dyn Measure) -> Card {
+fn card(
+    note: &NoteView,
+    x: f32,
+    y: f32,
+    mode: Mode,
+    budget: usize,
+    measure: &mut dyn Measure,
+) -> Card {
     let text_width = CARD_WIDTH - 2.0 * PADDING - CLOSE_SIZE;
     let (body_lines, hidden_lines) = if note.body.is_empty() {
         (0, 0)
     } else {
-        body_split(note, measure.lines(&note.body, text_width).max(1), mode)
+        body_split(
+            note,
+            measure.lines(&note.body, text_width).max(1),
+            mode,
+            budget,
+        )
     };
     let cut = hidden_lines > 0;
     // A cut ask offers no answer: only the way to the panel.
@@ -264,15 +284,24 @@ pub fn stack(notes: &[NoteView], measure: &mut dyn Measure) -> (Vec<Card>, f32) 
     stack_in(notes, Mode::Popup, measure)
 }
 
+/// The body lines of the asks above are deducted from the popup budget; a
+/// cut ask spends what is left, so no later ask is shown ahead of it.
 fn stack_in(notes: &[NoteView], mode: Mode, measure: &mut dyn Measure) -> (Vec<Card>, f32) {
-    notes
-        .iter()
-        .fold((Vec::new(), 0.0), |(mut cards, y), note| {
-            let laid = card(note, 0.0, y, mode, measure);
+    let (cards, _, height) = notes.iter().fold(
+        (Vec::new(), MAX_ASK_POPUP_LINES, 0.0),
+        |(mut cards, budget, y), note| {
+            let laid = card(note, 0.0, y, mode, budget, measure);
+            let left = match (is_ask(note), mode) {
+                (true, Mode::Popup) if laid.hidden_lines > 0 => 0,
+                (true, Mode::Popup) => budget - laid.body_lines,
+                _ => budget,
+            };
             let next = y + laid.rect.h + MARGIN;
             cards.push(laid);
-            (cards, next)
-        })
+            (cards, left, next)
+        },
+    );
+    (cards, height)
 }
 
 /// The laid out panel.
