@@ -137,11 +137,8 @@ impl State {
         let Some(xwayland) = self.xwayland.as_ref() else {
             return;
         };
-        let fds: Vec<BorrowedFd<'_>> = std::iter::once(xwayland.display.unix_fd())
-            .chain(xwayland.display.abstract_fd())
-            .collect();
         let mut copies = Vec::new();
-        for fd in fds {
+        for fd in xwayland.display.listeners() {
             match drain(fd) {
                 Ok(copy) => copies.push(copy),
                 Err(e) => eprintln!("tetsu-comp: cannot watch an X11 socket: {e}"),
@@ -187,12 +184,11 @@ impl State {
         let Some(xwayland) = self.xwayland.as_mut() else {
             return Ok(());
         };
-        let fds: Vec<BorrowedFd<'_>> = std::iter::once(xwayland.display.unix_fd())
-            .chain(xwayland.display.abstract_fd())
-            .collect();
         // `dup` leaves the copies without close-on-exec: satellite inherits
         // them, and they close here once it has.
-        let inherited = fds
+        let inherited = xwayland
+            .display
+            .listeners()
             .into_iter()
             .map(|fd| rustix::io::dup(fd.as_fd()).map_err(std::io::Error::from))
             .collect::<std::io::Result<Vec<OwnedFd>>>()?;

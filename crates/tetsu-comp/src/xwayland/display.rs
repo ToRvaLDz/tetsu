@@ -49,7 +49,7 @@ pub struct X11Display {
     number: u32,
     name: String,
     unix: UnixListener,
-    abstract_listener: Option<UnixListener>,
+    abstract_listener: UnixListener,
     _socket: Unlink,
     _lock: Unlink,
 }
@@ -99,14 +99,10 @@ impl X11Display {
         &self.name
     }
 
-    /// The listening socket at `.X11-unix/X<n>`.
-    pub fn unix_fd(&self) -> BorrowedFd<'_> {
-        self.unix.as_fd()
-    }
-
-    /// The listening socket at the abstract name `<root>/.X11-unix/X<n>`.
-    pub fn abstract_fd(&self) -> Option<BorrowedFd<'_>> {
-        self.abstract_listener.as_ref().map(AsFd::as_fd)
+    /// The listening sockets: the one at `.X11-unix/X<n>`, then the one at
+    /// the abstract name `<root>/.X11-unix/X<n>`.
+    pub fn listeners(&self) -> [BorrowedFd<'_>; 2] {
+        [self.unix.as_fd(), self.abstract_listener.as_fd()]
     }
 }
 
@@ -191,7 +187,7 @@ fn create_lock(path: &Path) -> io::Result<Option<Unlink>> {
     Ok(Some(lock))
 }
 
-type Bound = (Option<UnixListener>, UnixListener, Unlink);
+type Bound = (UnixListener, UnixListener, Unlink);
 
 /// Binds the abstract name first (a live server there is never disturbed),
 /// then the file, replacing a leftover one.
@@ -201,5 +197,5 @@ fn bind(dir: &Path, number: u32) -> io::Result<Bound> {
     let abstract_listener = UnixListener::bind_addr(&SocketAddr::from_abstract_name(name)?)?;
     let _ = fs::remove_file(&path);
     let unix = UnixListener::bind(&path)?;
-    Ok((Some(abstract_listener), unix, Unlink(path)))
+    Ok((abstract_listener, unix, Unlink(path)))
 }

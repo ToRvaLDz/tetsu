@@ -110,7 +110,7 @@ mod display {
         let text = fs::read_to_string(lock(root.path(), 0)).unwrap();
         assert_eq!(text, format!("{:>10}\n", std::process::id()));
         assert!(socket(root.path(), 0).exists());
-        let abstract_fd = display.abstract_fd().unwrap();
+        let [_, abstract_fd] = display.listeners();
         let address = listener(abstract_fd).local_addr().unwrap();
         let expected = format!("{}/.X11-unix/X0", root.path().display());
         assert_eq!(address.as_abstract_name(), Some(expected.as_bytes()));
@@ -210,7 +210,7 @@ mod display {
     fn a_client_makes_the_unix_listener_readable() {
         let root = tempfile::tempdir().unwrap();
         let display = open(root.path()).unwrap();
-        let unix = listener(display.unix_fd());
+        let unix = listener(display.listeners()[0]);
         unix.set_nonblocking(true).unwrap();
         assert!(unix.accept().is_err());
         let _client = UnixStream::connect(socket(root.path(), 0)).unwrap();
