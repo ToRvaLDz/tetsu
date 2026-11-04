@@ -43,8 +43,8 @@ pub struct AskRequest<'a> {
 /// reason is cut, the view is partial: *Always allow* is not offered, so a
 /// grant is never made permanent from a truncated view. The title does not
 /// name the method, so it cannot clip; the `Method:` line carries it whole.
-/// notifyd may cut a tall ask, and then its popup offers no buttons at all;
-/// the panel shows everything.
+/// notifyd may cut a tall ask, and then its popup offers no answer buttons,
+/// only one that opens the panel, where the whole ask is shown.
 pub fn render(request: &AskRequest<'_>) -> ShowParams {
     let mut cut_any = false;
     let mut lines = vec![
