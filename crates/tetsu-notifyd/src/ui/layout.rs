@@ -22,8 +22,10 @@ pub const TITLE_LINE: f32 = 22.0;
 pub const BODY_LINE: f32 = 18.0;
 /// Body lines shown at most, but for an ask.
 pub const MAX_BODY_LINES: usize = 4;
-/// Body lines the asks of one popup stack show in all, the statement line of
-/// a cut one included; the panel shows every ask whole.
+/// Body lines the asks of one popup stack share, the statement line of a cut
+/// one included; the panel shows every ask whole. Each further cut ask, at
+/// zero budget, still draws its statement line, so the stack shows at most
+/// this plus one line per card past the first (`POPUP_LIMIT` - 1).
 pub const MAX_ASK_POPUP_LINES: usize = 20;
 /// Label of the button that opens the panel on a cut ask.
 pub const OPEN_PANEL_LABEL: &str = "Read all in the panel";
