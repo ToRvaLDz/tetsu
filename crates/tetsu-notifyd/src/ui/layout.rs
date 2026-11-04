@@ -20,7 +20,7 @@ pub const SENDER_LINE: f32 = 16.0;
 pub const TITLE_LINE: f32 = 22.0;
 /// One body line.
 pub const BODY_LINE: f32 = 18.0;
-/// Body lines shown at most.
+/// Body lines shown at most, but for an ask.
 pub const MAX_BODY_LINES: usize = 4;
 /// Body lines an ask shows at most in the popup; the panel shows it whole.
 pub const MAX_ASK_POPUP_LINES: usize = 20;
@@ -153,19 +153,50 @@ impl Card {
     }
 }
 
+/// Where a card is laid out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// The popup surface: a tall ask is cut.
+    Popup,
+    /// The panel, which scrolls: an ask is shown whole.
+    Panel,
+}
+
+/// How many body lines are drawn and how many are cut off, for `measured`
+/// lines of body. Only a pending ask (as `Note::is_pending`: a Tetsu note
+/// with buttons) is shown past [`MAX_BODY_LINES`]; urgency says nothing.
+fn body_split(note: &NoteView, measured: usize, mode: Mode) -> (usize, usize) {
+    let ask = matches!(note.source, Source::Tetsu(_)) && !note.buttons.is_empty();
+    match (ask, mode) {
+        (false, _) => (measured.clamp(1, MAX_BODY_LINES), 0),
+        (true, Mode::Panel) => (measured, 0),
+        (true, Mode::Popup) if measured <= MAX_ASK_POPUP_LINES => (measured, 0),
+        // The statement takes the last of the allowed lines.
+        (true, Mode::Popup) => {
+            let drawn = MAX_ASK_POPUP_LINES - 1;
+            (drawn, measured - drawn)
+        }
+    }
+}
+
 /// Lays out one card with its top-left corner at (`x`, `y`).
-fn card(note: &NoteView, x: f32, y: f32, measure: &mut dyn Measure) -> Card {
+fn card(note: &NoteView, x: f32, y: f32, mode: Mode, measure: &mut dyn Measure) -> Card {
     let text_width = CARD_WIDTH - 2.0 * PADDING - CLOSE_SIZE;
-    let body_lines = if note.body.is_empty() {
-        0
+    let (body_lines, hidden_lines) = if note.body.is_empty() {
+        (0, 0)
     } else {
-        measure
-            .lines(&note.body, text_width)
-            .clamp(1, MAX_BODY_LINES)
+        body_split(note, measure.lines(&note.body, text_width).max(1), mode)
     };
-    let text_height = SENDER_LINE + TITLE_LINE + body_lines as f32 * BODY_LINE;
-    let shown: Vec<&Action> = note.buttons.iter().take(MAX_BUTTONS).collect();
-    let buttons_height = if shown.is_empty() {
+    let cut = hidden_lines > 0;
+    // A cut ask offers no answer: only the way to the panel.
+    let shown: Vec<&Action> = if cut {
+        Vec::new()
+    } else {
+        note.buttons.iter().take(MAX_BUTTONS).collect()
+    };
+    let statement_lines = usize::from(cut);
+    let text_height = SENDER_LINE + TITLE_LINE + (body_lines + statement_lines) as f32 * BODY_LINE;
+    let buttons_height = if shown.is_empty() && !cut {
         0.0
     } else {
         MARGIN + BUTTON_HEIGHT
@@ -173,6 +204,12 @@ fn card(note: &NoteView, x: f32, y: f32, measure: &mut dyn Measure) -> Card {
     let height = PADDING * 2.0 + text_height + buttons_height;
     let button_y = y + PADDING + text_height + MARGIN;
     let right = x + CARD_WIDTH - PADDING;
+    let open_panel = cut.then_some(Rect {
+        x: right - OPEN_PANEL_WIDTH,
+        y: button_y,
+        w: OPEN_PANEL_WIDTH,
+        h: BUTTON_HEIGHT,
+    });
     let count = shown.len() as f32;
     let buttons = shown
         .into_iter()
@@ -211,18 +248,22 @@ fn card(note: &NoteView, x: f32, y: f32, measure: &mut dyn Measure) -> Card {
         },
         body_lines,
         buttons,
-        hidden_lines: 0,
-        open_panel: None,
+        hidden_lines,
+        open_panel,
     }
 }
 
 /// Stacks cards from the top of the popup surface. Returns the cards and
 /// the height the surface needs.
 pub fn stack(notes: &[NoteView], measure: &mut dyn Measure) -> (Vec<Card>, f32) {
+    stack_in(notes, Mode::Popup, measure)
+}
+
+fn stack_in(notes: &[NoteView], mode: Mode, measure: &mut dyn Measure) -> (Vec<Card>, f32) {
     notes
         .iter()
         .fold((Vec::new(), 0.0), |(mut cards, y), note| {
-            let laid = card(note, 0.0, y, measure);
+            let laid = card(note, 0.0, y, mode, measure);
             let next = y + laid.rect.h + MARGIN;
             cards.push(laid);
             (cards, next)
@@ -265,7 +306,7 @@ pub fn panel(
     scroll: f32,
     measure: &mut dyn Measure,
 ) -> PanelLayout {
-    let (stacked, stacked_height) = stack(&[pending, open].concat(), measure);
+    let (stacked, stacked_height) = stack_in(&[pending, open].concat(), Mode::Panel, measure);
     let top = HEADER;
     let cards = stacked
         .into_iter()

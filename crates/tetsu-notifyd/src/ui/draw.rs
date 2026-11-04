@@ -12,8 +12,8 @@ use tiny_skia::{
 };
 
 use super::layout::{
-    BODY_LINE, CLOSE_SIZE, Card, HEADER, HISTORY_ROW, MARGIN, Measure, PADDING, PanelLayout, Rect,
-    SENDER_LINE, TITLE_LINE,
+    BODY_LINE, CLOSE_SIZE, Card, HEADER, HISTORY_ROW, MARGIN, Measure, OPEN_PANEL_LABEL, PADDING,
+    PanelLayout, Rect, SENDER_LINE, TITLE_LINE,
 };
 use crate::core::{HistoryView, Icon, Outcome, Source};
 use tetsu_bus::notify::Urgency;
@@ -270,37 +270,67 @@ impl Painter {
                 },
             );
         }
-    }
-
-    /// The buttons, drawn disarmed until they accept clicks.
-    fn card_buttons(&mut self, pixmap: &mut Pixmap, card: &Card, s: f32, now: Instant) {
-        let armed = now >= card.note.armed_at;
-        for (rect, action) in &card.buttons {
-            let (fill, ink) = if armed {
-                (palette::BUTTON, palette::TEXT)
-            } else {
-                (palette::BUTTON_DISARMED, palette::MUTED)
-            };
-            rounded(pixmap, *rect, fill, s, None);
+        if card.hidden_lines > 0 {
+            // Right under the last body line drawn.
+            let lines = card.body_lines as f32;
             self.text(
                 pixmap,
                 s,
                 Text {
-                    text: &action.label,
+                    text: &format!("… {} more lines not shown", card.hidden_lines),
                     rect: Rect {
-                        x: rect.x + 8.0,
-                        y: rect.y + (rect.h - BODY_LINE) / 2.0,
-                        w: rect.w - 16.0,
+                        x: card.body.x,
+                        y: card.body.y + SENDER_LINE + TITLE_LINE + lines * BODY_LINE,
+                        w: card.body.w,
                         h: BODY_LINE,
                     },
                     size: 13.0,
                     line: BODY_LINE,
-                    color: ink,
+                    color: palette::MUTED,
                     bold: false,
                     wrap: false,
                 },
             );
         }
+    }
+
+    /// The buttons, drawn disarmed until they accept clicks. The open-panel
+    /// button of a cut ask answers nothing, so it is always drawn armed.
+    fn card_buttons(&mut self, pixmap: &mut Pixmap, card: &Card, s: f32, now: Instant) {
+        let armed = now >= card.note.armed_at;
+        for (rect, action) in &card.buttons {
+            self.button(pixmap, *rect, &action.label, armed, s);
+        }
+        if let Some(rect) = card.open_panel {
+            self.button(pixmap, rect, OPEN_PANEL_LABEL, true, s);
+        }
+    }
+
+    fn button(&mut self, pixmap: &mut Pixmap, rect: Rect, label: &str, armed: bool, s: f32) {
+        let (fill, ink) = if armed {
+            (palette::BUTTON, palette::TEXT)
+        } else {
+            (palette::BUTTON_DISARMED, palette::MUTED)
+        };
+        rounded(pixmap, rect, fill, s, None);
+        self.text(
+            pixmap,
+            s,
+            Text {
+                text: label,
+                rect: Rect {
+                    x: rect.x + 8.0,
+                    y: rect.y + (rect.h - BODY_LINE) / 2.0,
+                    w: rect.w - 16.0,
+                    h: BODY_LINE,
+                },
+                size: 13.0,
+                line: BODY_LINE,
+                color: ink,
+                bold: false,
+                wrap: false,
+            },
+        );
     }
 
     fn history_row(
