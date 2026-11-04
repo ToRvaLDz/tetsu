@@ -41,6 +41,11 @@ pub const HEADER: f32 = 44.0;
 /// One history row.
 pub const HISTORY_ROW: f32 = 40.0;
 
+/// The statement drawn under a cut ask, for `hidden` lines not shown.
+pub fn hidden_statement(hidden: usize) -> String {
+    format!("… {hidden} more lines not shown")
+}
+
 /// Measures wrapped text.
 pub trait Measure {
     /// How many lines `text` wraps to at `width`.

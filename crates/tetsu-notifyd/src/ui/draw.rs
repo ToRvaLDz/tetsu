@@ -13,7 +13,7 @@ use tiny_skia::{
 
 use super::layout::{
     BODY_LINE, CLOSE_SIZE, Card, HEADER, HISTORY_ROW, MARGIN, Measure, OPEN_PANEL_LABEL, PADDING,
-    PanelLayout, Rect, SENDER_LINE, TITLE_LINE,
+    PanelLayout, Rect, SENDER_LINE, TITLE_LINE, hidden_statement,
 };
 use crate::core::{HistoryView, Icon, Outcome, Source};
 use tetsu_bus::notify::Urgency;
@@ -277,7 +277,7 @@ impl Painter {
                 pixmap,
                 s,
                 Text {
-                    text: &format!("… {} more lines not shown", card.hidden_lines),
+                    text: &hidden_statement(card.hidden_lines),
                     rect: Rect {
                         x: card.body.x,
                         y: card.body.y + SENDER_LINE + TITLE_LINE + lines * BODY_LINE,
