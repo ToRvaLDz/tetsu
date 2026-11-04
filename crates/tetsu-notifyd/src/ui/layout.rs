@@ -22,6 +22,12 @@ pub const TITLE_LINE: f32 = 22.0;
 pub const BODY_LINE: f32 = 18.0;
 /// Body lines shown at most.
 pub const MAX_BODY_LINES: usize = 4;
+/// Body lines an ask shows at most in the popup; the panel shows it whole.
+pub const MAX_ASK_POPUP_LINES: usize = 20;
+/// Label of the button that opens the panel on a cut ask.
+pub const OPEN_PANEL_LABEL: &str = "Read all in the panel";
+/// Width of that button: the label plus the text padding, with margin.
+pub const OPEN_PANEL_WIDTH: f32 = 190.0;
 /// Button height.
 pub const BUTTON_HEIGHT: f32 = 30.0;
 /// Button width.
@@ -84,6 +90,8 @@ pub enum Hit {
     Default(NoteId),
     /// The panel's close box.
     ClosePanel,
+    /// The button of a cut ask: open the panel, which shows it whole.
+    OpenPanel,
 }
 
 /// One laid out card.
@@ -101,6 +109,11 @@ pub struct Card {
     pub body_lines: usize,
     /// The buttons drawn, left to right.
     pub buttons: Vec<(Rect, Action)>,
+    /// Body lines cut off, counted after the line the statement takes; the
+    /// statement is drawn below the body when this is not zero.
+    pub hidden_lines: usize,
+    /// The button that opens the panel, on a cut ask.
+    pub open_panel: Option<Rect>,
 }
 
 impl Card {
@@ -114,6 +127,9 @@ impl Card {
         }
         if let Some((_, action)) = self.buttons.iter().find(|(r, _)| r.contains(x, y)) {
             return Some(Hit::Action(self.note.id, action.id.clone()));
+        }
+        if self.open_panel.is_some_and(|r| r.contains(x, y)) {
+            return Some(Hit::OpenPanel);
         }
         (self.note.default_action && self.body.contains(x, y)).then_some(Hit::Default(self.note.id))
     }
@@ -132,6 +148,7 @@ impl Card {
             .into_iter()
             .map(|(r, a)| (r.shifted(dy), a))
             .collect();
+        self.open_panel = self.open_panel.map(|r| r.shifted(dy));
         self
     }
 }
@@ -194,6 +211,8 @@ fn card(note: &NoteView, x: f32, y: f32, measure: &mut dyn Measure) -> Card {
         },
         body_lines,
         buttons,
+        hidden_lines: 0,
+        open_panel: None,
     }
 }
 
@@ -277,6 +296,7 @@ impl Card {
             .into_iter()
             .map(|(r, a)| (move_x(r), a))
             .collect();
+        self.open_panel = self.open_panel.map(move_x);
         self
     }
 }

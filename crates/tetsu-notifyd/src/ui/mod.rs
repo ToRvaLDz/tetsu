@@ -164,10 +164,7 @@ impl Ui {
     fn message(&mut self, msg: UiMsg, qh: &QueueHandle<Self>) {
         match msg {
             UiMsg::View(view) => self.view = view,
-            UiMsg::OpenPanel => {
-                self.panel_wanted = true;
-                self.panel_scroll = 0.0;
-            }
+            UiMsg::OpenPanel => return self.open_panel(qh),
         }
         self.refresh(qh);
     }
@@ -385,6 +382,7 @@ impl Ui {
             },
             Some(Hit::Dismiss(note)) => Command::Dismiss(note),
             Some(Hit::ClosePanel) => return self.close_panel(qh),
+            Some(Hit::OpenPanel) => return self.open_panel(qh),
             None => return,
         };
         let _ = self.commands.send(command);
@@ -408,6 +406,13 @@ impl Ui {
         if focused {
             self.close_panel(qh);
         }
+    }
+
+    /// Opens the panel, as the daemon's `OpenPanel` does; local to the UI.
+    fn open_panel(&mut self, qh: &QueueHandle<Self>) {
+        self.panel_wanted = true;
+        self.panel_scroll = 0.0;
+        self.refresh(qh);
     }
 
     fn close_panel(&mut self, qh: &QueueHandle<Self>) {
