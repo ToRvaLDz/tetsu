@@ -19,4 +19,5 @@ sed -n 2p "$state/dbus" > "$state/dbus.pid"
 systemd-run --user --unit=tetsu-notifyd --collect -p Slice=session.slice \
     --setenv=DBUS_SESSION_BUS_ADDRESS="$(cat "$state/bus")" \
     --setenv=WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+    --setenv=TETSU_COMP_SOCKET="${TETSU_COMP_SOCKET:-}" \
     "$PWD/target/debug/tetsu-notifyd"
