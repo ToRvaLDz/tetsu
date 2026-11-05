@@ -141,9 +141,11 @@ rest is applied as above, and one `changed` follows. A switch or write
 that fails at unlock is only logged. Pending changes are lost if the
 compositor exits while locked.
 
-An edit of `render.*` in a file is not a switch: the device applies at the
-next start on every backend, and the explicit sync mode only updates what
-`GetRender` reports. Only `SetRenderDevice` switches at once.
+An edit of `render.*` in a file is not a switch: on the tty the device
+applies at the next start, and the explicit sync mode only updates what
+`GetRender` reports. Headless and winit always start on their synthetic
+device, whatever `render.device` holds, so `config.v1` and `GetRender` can
+disagree there after a restart. Only `SetRenderDevice` switches at once.
 
 ## Outputs
 
